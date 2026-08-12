@@ -1,0 +1,178 @@
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix cfc: <https://w3id.org/circularfactory/Core#> .
+@prefix svc: <https://w3id.org/circularfactory/Service#> .
+
+#################################################################
+# Ontology
+#################################################################
+
+svc: rdf:type owl:Ontology ;
+    rdfs:label "KAPPS Service Ontology" ;
+    rdfs:comment "Vocabulary for the Semantic Middleware Runtime — defines how a middleware instance wraps a shop-floor resource and exposes its functionality (Workflows, StateProperties) through the knowledge graph so other middleware instances can discover and invoke that functionality via graph queries rather than hardcoded network references." ;
+    owl:imports <https://w3id.org/circularfactory/Core> .
+
+#################################################################
+# Classes
+#################################################################
+
+svc:Service rdf:type owl:Class ;
+    rdfs:label "Service" ;
+    rdfs:comment "A distributed runtime entity wrapped by a single middleware instance (e.g. a door controller, a screwing-resource controller, a planning service). Typed via a domain-specific subclass of svc:Service that must pre-exist in the ontology. The Service is the graph representation of the middleware; it wraps a Resource but is not itself the Resource." .
+
+svc:Workflow rdf:type owl:Class ;
+    rdfs:label "Workflow" ;
+    rdfs:comment "An invokable function exposed by a Service, registered with @mw.workflow(...). Realizes exactly one Capability. Typed via a domain-specific subclass of svc:Workflow that must pre-exist in the ontology, carrying a SHACL shape describing its arguments (precondition) and return value (outcome). Distinct from AAS-tradition terms like 'Skill' or 'Action'; KAPPS reserves 'Service' for the deployable middleware-wrapped entity and 'Workflow' for what it exposes." .
+
+svc:StateProperty rdf:type owl:Class ;
+    rdfs:label "StateProperty" ;
+    rdfs:comment "A readable, potentially high-frequency-changing property of a Resource, registered with @mw.state(...). Exposed via a GET-only endpoint backed by an in-memory value; the value itself is never persisted to the graph — only one stable endpoint triple is written at registration time. Also typed via a pre-existing domain-specific subclass. Describes the graph-exposed access point to the data, not the sensor value or observation itself." .
+
+#################################################################
+# Object Properties
+#################################################################
+
+svc:hasService rdf:type owl:ObjectProperty ;
+    rdfs:label "hasService" ;
+    rdfs:comment "Relates a Resource to the Service that wraps it. A Service is the graph representation of a middleware instance wrapping a physical or logical Resource." ;
+    rdfs:domain cfc:Resource ;
+    rdfs:range svc:Service ;
+    owl:inverseOf svc:isServiceOf .
+
+svc:isServiceOf rdf:type owl:ObjectProperty ;
+    rdfs:label "isServiceOf" ;
+    rdfs:comment "Relates a Service to the Resource it wraps. Inverse of svc:hasService." ;
+    rdfs:domain svc:Service ;
+    rdfs:range cfc:Resource ;
+    owl:inverseOf svc:hasService .
+
+svc:hasWorkflow rdf:type owl:ObjectProperty ;
+    rdfs:label "hasWorkflow" ;
+    rdfs:comment "Relates a Service to a Workflow it exposes. Workflows are the invokable functions a Service makes available through the knowledge graph." ;
+    rdfs:domain svc:Service ;
+    rdfs:range svc:Workflow ;
+    owl:inverseOf svc:isWorkflowOf .
+
+svc:isWorkflowOf rdf:type owl:ObjectProperty ;
+    rdfs:label "isWorkflowOf" ;
+    rdfs:comment "Relates a Workflow to the Service that exposes it. Inverse of svc:hasWorkflow." ;
+    rdfs:domain svc:Workflow ;
+    rdfs:range svc:Service ;
+    owl:inverseOf svc:hasWorkflow .
+
+svc:hasStateProperty rdf:type owl:ObjectProperty ;
+    rdfs:label "hasStateProperty" ;
+    rdfs:comment "Relates a Service to a StateProperty it exposes. StateProperties are the readable, high-frequency-changing properties a Service makes available through the knowledge graph." ;
+    rdfs:domain svc:Service ;
+    rdfs:range svc:StateProperty ;
+    owl:inverseOf svc:isStatePropertyOf .
+
+svc:isStatePropertyOf rdf:type owl:ObjectProperty ;
+    rdfs:label "isStatePropertyOf" ;
+    rdfs:comment "Relates a StateProperty to the Service that exposes it. Inverse of svc:hasStateProperty." ;
+    rdfs:domain svc:StateProperty ;
+    rdfs:range svc:Service ;
+    owl:inverseOf svc:hasStateProperty .
+
+svc:realizedByWorkflow rdf:type owl:ObjectProperty ;
+    rdfs:label "realizedByWorkflow" ;
+    rdfs:comment "Relates a Capability to the Workflow that realizes it. This is the link that enables Operation resolution: an Operation points to a Capability via cfc:implementsCapability, then this property resolves to the concrete Workflow. Every Workflow needs a matching Capability instance before it is reachable from an Operation." ;
+    rdfs:domain cfc:Capability ;
+    rdfs:range svc:Workflow ;
+    owl:inverseOf svc:realizesCapability .
+
+svc:realizesCapability rdf:type owl:ObjectProperty ;
+    rdfs:label "realizesCapability" ;
+    rdfs:comment "Relates a Workflow to the Capability it realizes. A Workflow realizes exactly one Capability. Inverse of svc:realizedByWorkflow. This makes Capability, not Workflow, the unit planning services discover against ('find a service providing X capability'), matching the paper's framing of planning as capability-driven." ;
+    rdfs:domain svc:Workflow ;
+    rdfs:range cfc:Capability ;
+    owl:inverseOf svc:realizedByWorkflow .
+
+svc:providedByStateProperty rdf:type owl:ObjectProperty ;
+    rdfs:label "providedByStateProperty" ;
+    rdfs:comment "Relates a Capability to the StateProperty that provides (exposes) it as a readable value. The state-property analogue of svc:realizedByWorkflow: a Workflow realizes an invokable capability, a StateProperty provides a readable one. Lets a service consumer discover 'which readable endpoint gives me capability X'." ;
+    rdfs:domain cfc:Capability ;
+    rdfs:range svc:StateProperty ;
+    owl:inverseOf svc:providesCapability .
+
+svc:providesCapability rdf:type owl:ObjectProperty ;
+    rdfs:label "providesCapability" ;
+    rdfs:comment "Relates a StateProperty to the Capability it provides as a readable value. Inverse of svc:providedByStateProperty." ;
+    rdfs:domain svc:StateProperty ;
+    rdfs:range cfc:Capability ;
+    owl:inverseOf svc:providedByStateProperty .
+
+svc:precondition rdf:type owl:ObjectProperty ;
+    rdfs:label "precondition" ;
+    rdfs:comment "Points from a Workflow to the description of its arguments (input parameters). Used by the SHACL shape of a workflow subclass to describe the precondition that must be satisfied for invocation. The range is left open because the concrete SHACL shape is authored per workflow class, not defined in this vocabulary module." ;
+    rdfs:domain svc:Workflow .
+
+svc:outcome rdf:type owl:ObjectProperty ;
+    rdfs:label "outcome" ;
+    rdfs:comment "Points from a Workflow to the description of its return value. Used by the SHACL shape of a workflow subclass to describe the outcome produced by invocation. The range is left open because the concrete SHACL shape is authored per workflow class, not defined in this vocabulary module." ;
+    rdfs:domain svc:Workflow .
+
+#################################################################
+# Datatype Properties
+#################################################################
+
+svc:address rdf:type owl:DatatypeProperty ;
+    rdfs:label "address" ;
+    rdfs:comment "The Service's base URL, set at startup and removed at deregistration or when detected as stale by a watchdog-mode instance. Distinct from svc:endpoint, which is the full callable URL for a specific Workflow or StateProperty." ;
+    rdfs:domain svc:Service ;
+    rdfs:range xsd:anyURI .
+
+svc:endpoint rdf:type owl:DatatypeProperty ;
+    rdfs:label "endpoint" ;
+    rdfs:comment "The full, directly-callable URL for one specific Workflow or StateProperty. Set at startup and removed at deregistration or staleness. Stored on both the Workflow/StateProperty and derivable from the Service's address to remove coupling: any caller with just a Workflow or StateProperty IRI can invoke it with one property read, without walking the graph to find the Service and knowing route-naming conventions." ;
+    rdfs:domain [ owl:unionOf ( svc:Workflow svc:StateProperty ) ] ;
+    rdfs:range xsd:anyURI .
+
+svc:lastHeartbeat rdf:type owl:DatatypeProperty ;
+    rdfs:label "lastHeartbeat" ;
+    rdfs:comment "The Service's liveness timestamp, periodically refreshed by an internal interval-based Workflow (the heartbeat mechanism). Read by watchdog-mode middleware instances to decide whether a resource-mode Service has become stale and should have its svc:address and svc:endpoint triples removed." ;
+    rdfs:domain svc:Service ;
+    rdfs:range xsd:dateTime .
+
+#################################################################
+# Execution provenance (R12, ADR 0009)
+#
+# Written back onto a cfc:Operation by the pull-and-run terminal transition
+# (ADR 0010), folded into the done/failed status change. Together these record
+# which Workflow handled the Operation (actor/context), when, and an optional
+# serialized result — so any past Operation is reconstructible from the graph
+# alone. Whether the operation succeeded is carried by svc:operationStatus
+# (done/failed) per ADR 0009, not a separate boolean.
+#################################################################
+
+svc:operationStatus rdf:type owl:DatatypeProperty ;
+    rdfs:label "operationStatus" ;
+    rdfs:comment "The lifecycle state of an Operation: queued (created and addressed, awaiting pull) -> running (pulled, in progress) -> done | failed (terminal). Written onto a cfc:Operation to drive coordination and recovery (ADR 0009). The terminal value (done vs failed) also carries whether execution succeeded, replacing the former svc:executionSuccess boolean. Values are plain xsd:string literals; there is no status class or enumerated individuals in v1." ;
+    rdfs:domain cfc:Operation ;
+    rdfs:range xsd:string .
+
+svc:executedByWorkflow rdf:type owl:ObjectProperty ;
+    rdfs:label "executedByWorkflow" ;
+    rdfs:comment "Relates a cfc:Operation to the svc:Workflow instance that actually handled it when it was pulled and run. Records the acting workflow (and, through it, the resource) for decision-level provenance." ;
+    rdfs:domain cfc:Operation ;
+    rdfs:range svc:Workflow .
+
+svc:executionTimestamp rdf:type owl:DatatypeProperty ;
+    rdfs:label "executionTimestamp" ;
+    rdfs:comment "The time at which the Operation reached its terminal state (the pull-and-run transition). Part of the outcome recorded on the Operation." ;
+    rdfs:domain cfc:Operation ;
+    rdfs:range xsd:dateTime .
+
+svc:executionResult rdf:type owl:DatatypeProperty ;
+    rdfs:label "executionResult" ;
+    rdfs:comment "An optional serialized (string) representation of the value the Workflow returned when the Operation was pulled and run. Part of the outcome recorded on the Operation." ;
+    rdfs:domain cfc:Operation ;
+    rdfs:range xsd:string .
+
+svc:failureState rdf:type owl:DatatypeProperty ;
+    rdfs:label "failureState" ;
+    rdfs:comment "An optional JSON snapshot of the executing resource's transitional_sync_middleware datamodel captured at the moment an Operation failed, written atomically with svc:operationStatus=failed (ADR 0009). It records the observed resource state under which the failure occurred, so a failed Operation is diagnosable and replayable from the graph alone. Absent on successful (done) Operations." ;
+    rdfs:domain cfc:Operation ;
+    rdfs:range xsd:string .

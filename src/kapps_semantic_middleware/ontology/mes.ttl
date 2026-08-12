@@ -1,0 +1,90 @@
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix cfc: <https://w3id.org/circularfactory/Core#> .
+@prefix mes: <https://w3id.org/circularfactory/MES#> .
+
+#################################################################
+# Ontology
+#
+# MES (Manufacturing Execution System): a domain ontology that imports the
+# Core ontology (cfc:) and details it out with manufacturing-execution
+# functionality. Core is superior and is imported and specialized, never
+# modified (see Core Middleware ADR 0012, ontology-module layering). This
+# module is domain-facing — the vocabulary domain experts touch — and is a
+# sibling to the reachability/coordination module svc:, which both import Core.
+#
+# v1 scope (Core Middleware ADR 0011, handover primitive): a handover-ability tag with
+# six enumerated individuals. Possession is NOT re-minted here — it is Core material-flow
+# state (cfc:PossessionState / cfc:hasPossessor / cfc:hasPossessedWorkpiece; verified
+# against Core 0.9.0). Deliberately NO ability classes beyond the single tag class, NO
+# liveness, NO Place, NO topology model.
+#################################################################
+
+mes: rdf:type owl:Ontology ;
+    rdfs:label "KAPPS MES Ontology" ;
+    rdfs:comment "Manufacturing-execution functionality layered on the Circular Factory Core ontology: which handover roles a Resource is able to take part in (handover ability). Possession itself is Core material-flow state (cfc:PossessionState), not re-minted here. A domain-facing module that imports and specializes Core; distinct from the middleware-facing reachability/coordination module svc:." ;
+    owl:imports <https://w3id.org/circularfactory/Core> .
+
+#################################################################
+# Handover ability
+#
+# A tag on a Resource naming a handover role it can perform. The six roles form
+# three complementary pairs (Elfaham & Epple, at–Automatisierungstechnik 2020):
+# Put↔Receive (source active), Pick↔Release (destination active), Pass↔Retrieve
+# (both active). The handover primitive's precondition check verifies that the
+# counterpart carries the ability COMPLEMENTARY to the caller's mode; mes:complements
+# encodes those pairs so that mapping is ontology ground truth, not code-only.
+#################################################################
+
+mes:HandoverAbility rdf:type owl:Class ;
+    rdfs:label "HandoverAbility" ;
+    rdfs:comment "The kind of handover role a Resource can take part in. Enumerated: exactly the six individuals below — no subclasses (handover abilities are not modeled as Capability subclasses in v1)." ;
+    owl:oneOf ( mes:Put mes:Receive mes:Pick mes:Release mes:Pass mes:Retrieve ) .
+
+mes:hasHandoverAbility rdf:type owl:ObjectProperty ;
+    rdfs:label "hasHandoverAbility" ;
+    rdfs:comment "Tags a Resource with a handover ability it can perform (one of the six mes:HandoverAbility individuals). Read by the handover primitive to check that a counterpart holds the complementary ability for the requested mode." ;
+    rdfs:domain cfc:Resource ;
+    rdfs:range mes:HandoverAbility .
+
+mes:complements rdf:type owl:ObjectProperty , owl:SymmetricProperty ;
+    rdfs:label "complements" ;
+    rdfs:comment "Pairs each handover ability with the ability the counterpart must hold for a handover of that mode to be possible. Symmetric; relates the three complementary pairs." ;
+    rdfs:domain mes:HandoverAbility ;
+    rdfs:range mes:HandoverAbility .
+
+#################################################################
+# The six handover-ability individuals (three complementary pairs)
+#################################################################
+
+mes:Put rdf:type mes:HandoverAbility ;
+    rdfs:label "Put" ;
+    rdfs:comment "Source-active giving: the source places the product and asserts delivery. Complements Receive." ;
+    mes:complements mes:Receive .
+
+mes:Receive rdf:type mes:HandoverAbility ;
+    rdfs:label "Receive" ;
+    rdfs:comment "Passive counterpart of Put: the destination takes possession of a product the source placed. Complements Put." ;
+    mes:complements mes:Put .
+
+mes:Pick rdf:type mes:HandoverAbility ;
+    rdfs:label "Pick" ;
+    rdfs:comment "Destination-active taking: the destination removes the product from the source. Complements Release." ;
+    mes:complements mes:Release .
+
+mes:Release rdf:type mes:HandoverAbility ;
+    rdfs:label "Release" ;
+    rdfs:comment "Passive counterpart of Pick: the source relinquishes a product the destination takes. Complements Pick." ;
+    mes:complements mes:Pick .
+
+mes:Pass rdf:type mes:HandoverAbility ;
+    rdfs:label "Pass" ;
+    rdfs:comment "Both-active giving: source and destination act together in a direct hand-off. Complements Retrieve." ;
+    mes:complements mes:Retrieve .
+
+mes:Retrieve rdf:type mes:HandoverAbility ;
+    rdfs:label "Retrieve" ;
+    rdfs:comment "Both-active taking: the destination half of a direct, synchronized hand-off. Complements Pass." ;
+    mes:complements mes:Pass .

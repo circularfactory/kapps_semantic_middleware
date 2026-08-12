@@ -1,0 +1,93 @@
+/* Brand and layout overrides for the kapps-semantic-middleware docs.
+ *
+ * Colours follow the SFB1574 Circular Factory site on KIT's web platform:
+ * KIT green as the accent, SFB navy as the secondary, and a short green rule
+ * under the headings. Recorded on #116.
+ */
+
+/* -- Layout: fill the window ---------------------------------------------
+ *
+ * pydata-sphinx-theme ships two caps that together hold the text in a narrow
+ * column on a wide monitor:
+ *     .bd-page-width        { max-width: 88rem }   /- 1408px
+ *     .bd-article-container { max-width: 60em  }   /-  960px
+ * Both are released here. The sidebars keep their own widths, so the article
+ * simply takes whatever the window leaves it.
+ */
+.bd-page-width {
+  max-width: none;
+}
+
+.bd-main .bd-content .bd-article-container {
+  max-width: none;
+}
+
+/* Long code blocks and signature tables scroll inside themselves rather than
+ * pushing the page sideways once the article is free to grow. */
+.bd-article-container .bd-article {
+  padding-right: 2rem;
+}
+
+/* -- Brand colours -------------------------------------------------------- */
+
+html[data-theme="light"] {
+  /* KIT green #009682 darkened to clear AA contrast on white for link text. */
+  --pst-color-primary: #00786a;
+  --pst-color-primary-highlight: #005c51;
+  --pst-color-secondary: #1f3b63; /* SFB navy */
+  --pst-color-secondary-highlight: #152945;
+  --pst-color-accent: #009682; /* KIT green, unmodified, for rules and marks */
+}
+
+html[data-theme="dark"] {
+  /* Lightened, because the darkened link green fails against a dark ground. */
+  --pst-color-primary: #4fc3ae;
+  --pst-color-primary-highlight: #7fd6c6;
+  --pst-color-secondary: #8fa9cc;
+  --pst-color-secondary-highlight: #b3c6e0;
+  --pst-color-accent: #4fc3ae;
+}
+
+/* -- The SFB heading rule -------------------------------------------------
+ *
+ * The Circular Factory site sets a short green rule under each heading rather
+ * than a full-width border. This reproduces it.
+ */
+.bd-article h1,
+.bd-article h2 {
+  padding-bottom: 0.35rem;
+  border-bottom: none;
+}
+
+.bd-article h1::after,
+.bd-article h2::after {
+  content: "";
+  display: block;
+  width: 3.5rem;
+  height: 3px;
+  margin-top: 0.5rem;
+  background-color: var(--pst-color-accent);
+}
+
+/* The rule belongs to prose headings, not to generated API signatures. */
+.bd-article dl.py h1::after,
+.bd-article dl.py h2::after {
+  display: none;
+}
+
+/* -- Logo -----------------------------------------------------------------
+ *
+ * The SFB mark carries its own white ground, and its outer loops are dark
+ * navy. Dropped straight onto the dark theme they disappear. Rather than
+ * recolour another group's logo, it keeps its ground as a small white chip.
+ */
+.navbar-brand img {
+  height: 2.4rem;
+  width: auto;
+}
+
+html[data-theme="dark"] .navbar-brand img {
+  background-color: #fff;
+  padding: 3px 5px;
+  border-radius: 4px;
+}

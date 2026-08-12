@@ -1,0 +1,181 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Panel — TransferUnit</title>
+<style>
+  :root { --ink:#1c1c1c; --muted:#6b6b6b; --line:#d8d8d8; --warn:#b23b00;
+          --bar-line:#555; }
+  body { font:15px/1.5 system-ui,sans-serif; color:var(--ink); margin:0;
+         background:#f7f7f5; padding:24px 24px 90px; }
+  main { max-width:760px; margin:0 auto; }
+  h1 { font-size:20px; margin:0 0 2px; }
+  .sub { color:var(--muted); font-size:13px; margin:0 0 20px; }
+  .card { background:#fff; border:1px solid var(--line); border-radius:8px;
+          padding:18px 20px; margin-bottom:16px; }
+  .graphic { width:100%; max-width:400px; display:block; margin:0 auto; }
+  .belts { display:grid; grid-template-columns:1fr 1fr; gap:16px; }
+  .belt h2, .barriers h2 { font-size:14px; margin:0 0 10px; text-transform:uppercase;
+                           letter-spacing:.06em; color:var(--muted); }
+  .actual { font-size:30px; font-variant-numeric:tabular-nums; }
+  .actual small { font-size:14px; color:var(--muted); }
+  .commanded { font-size:13px; color:var(--muted); font-variant-numeric:tabular-nums;
+               min-height:20px; }
+  .commanded.diverged { color:var(--warn); font-weight:600; }
+  .row { display:flex; gap:8px; margin-top:10px; }
+  input[type=number] { width:100%; padding:7px 9px; border:1px solid var(--line);
+                       border-radius:5px; font:inherit; }
+  button { padding:7px 14px; border:1px solid var(--line); background:#fff;
+           border-radius:5px; font:inherit; cursor:pointer; }
+  button:hover { background:#f0f0ee; }
+  button.on { background:var(--warn); border-color:var(--warn); color:#fff; }
+  .barriers .row { margin-top:0; }
+  .hint { font-size:12px; color:var(--muted); margin-top:12px; }
+  .hint code { background:#f0f0ee; padding:1px 5px; border-radius:3px; }
+  .bar { position:fixed; left:0; right:0; bottom:0; background:#1c1c1c; color:#fff;
+         padding:10px 16px; display:flex; gap:14px; align-items:center; font-size:13px; }
+  .bar .proto { margin-left:auto; color:#bbb; }
+</style>
+
+<main>
+  <h1 id="title">TransferUnit</h1>
+  <p class="sub">This panel belongs to the PLC. Everything on it acts on the device
+     directly. Nothing here talks to the middleware.</p>
+
+  <div class="card">
+    <!-- panel.py substitutes static/transferunit.svg here. Inlined, not <img>: the script
+         below drives ids inside the drawing. -->
+    <!--UNIT-GRAPHIC--></div>
+
+  <div class="card belts">
+    <div class="belt" data-pos="left">
+      <h2>Conveyor belt left</h2>
+      <div class="actual"><span id="speed-left-value">0.00</span> <small>m/s</small></div>
+      <div class="commanded" id="cmd-left"></div>
+      <div class="row">
+        <input type="number" step="0.1" id="input-left" placeholder="a new speed">
+        <button onclick="setSpeed('left')">set</button>
+      </div>
+    </div>
+    <div class="belt" data-pos="right">
+      <h2>Conveyor belt right</h2>
+      <div class="actual"><span id="speed-right-value">0.00</span> <small>m/s</small></div>
+      <div class="commanded" id="cmd-right"></div>
+      <div class="row">
+        <input type="number" step="0.1" id="input-right" placeholder="new speed">
+        <button onclick="setSpeed('right')">set</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="card barriers">
+    <h2>Light barriers</h2>
+    <div class="row">
+      <button id="btn-front" onclick="toggle('front')">front — clear</button>
+      <button id="btn-back" onclick="toggle('back')">back — clear</button>
+      <button id="btn-throughput" onclick="toggleThroughput()">simulate throughput</button>
+    </div>
+    <p class="hint">A light barrier is a sensor. The middleware reads it and cannot move it,
+       so these two buttons stand in for a workpiece. They call
+       <code>transfer_unit.py &rarr; set_occupied()</code>.</p>
+    <p class="hint">The throughput button starts a loop that cycles the barriers automatically
+       while a belt runs. It calls <code>transfer_unit.py &rarr; set_throughput_simulation()</code>.</p>
+  </div>
+
+  <p class="hint">The speed you type goes to <code>transfer_unit.py &rarr; set_speed()</code>.
+     The unit publishes the new value on its MQTT topic, and the middleware reads it there.</p>
+</main>
+
+<div class="bar">
+  <span>A ramping belt shows what it is ramping to. Highlighted means it stopped short.</span>
+</div>
+
+<script>
+async function post(url, body) {
+  const r = await fetch(url, {method:'POST', headers:{'Content-Type':'application/json'},
+                             body: JSON.stringify(body)});
+  if (!r.ok) {
+    const err = await r.text();
+    alert('Error: ' + err);
+    return null;
+  }
+  return await r.json();
+}
+
+function setSpeed(pos) {
+  const el = document.getElementById('input-' + pos);
+  if (el.value === '') return;
+  post('/api/speed/' + pos, {value: parseFloat(el.value)}).then(render);
+  el.value = '';
+}
+
+function toggle(pos) {
+  const btn = document.getElementById('btn-' + pos);
+  const on = btn.classList.contains('on');
+  post('/api/barrier/' + pos, {occupied: !on}).then(render);
+}
+
+function toggleThroughput() {
+  const btn = document.getElementById('btn-throughput');
+  const on = btn.classList.contains('on');
+  post('/api/throughput', {enabled: !on}).then(render);
+}
+
+function render(s) {
+  document.getElementById('title').textContent = s.unit;
+  for (const pos of ['left', 'right']) {
+    const speed = s.speeds[pos], cmd = s.setpoints[pos];
+    document.getElementById('speed-' + pos + '-value').textContent = speed.toFixed(2);
+
+    const motion = document.getElementById('belt-' + pos + '-motion');
+    if (motion) {
+      motion.style.animationPlayState = speed === 0 ? 'paused' : 'running';
+      if (speed !== 0) motion.style.animationDuration = (1.5 / Math.abs(speed)) + 's';
+      motion.style.animationDirection = speed < 0 ? 'reverse' : 'normal';
+    }
+    const label = document.getElementById('label-' + pos);
+    if (label) label.textContent = pos + '  ' + speed.toFixed(2) + ' m/s';
+
+    const box = document.getElementById('cmd-' + pos);
+    // `diverged` means STOPPED CONVERGING, not unequal (#81, which amended #31 to say
+    // so; #93 item 3). Under #83's ramp the two are unequal during every set by design,
+    // so the old `abs(cmd - speed) > 1e-9` painted every healthy ramp as a fault.
+    // The verdict is the server's -- panel.py's ConvergenceTracker judges it on the
+    // clock, so opening a second tab cannot make a belt diverge sooner.
+    const status = (s.belt_status || {})[pos];
+    box.classList.toggle('diverged', status === 'diverged');
+    if (status === 'diverged') {
+      box.textContent = 'stopped at ' + speed.toFixed(2) + ', commanded ' + cmd.toFixed(2) + ' m/s';
+    } else if (status === 'converging') {
+      box.textContent = 'ramping to ' + cmd.toFixed(2) + ' m/s';
+    } else {
+      box.textContent = '';
+    }
+  }
+  for (const pos of ['front', 'back']) {
+    const on = s.occupied[pos];
+    const btn = document.getElementById('btn-' + pos);
+    btn.classList.toggle('on', on);
+    btn.textContent = pos + ' — ' + (on ? 'occupied' : 'clear');
+
+    const beam = document.getElementById('barrier-' + pos);
+    if (beam) beam.setAttribute('class', on ? 'occupied' : 'clear');
+    const hit = document.getElementById('barrier-' + pos + '-hit');
+    if (hit) hit.style.display = on ? '' : 'none';
+    const label = document.getElementById('label-' + pos);
+    if (label) label.textContent = pos + '  ' + (on ? 'occupied' : 'clear');
+  }
+  // Throughput simulation button state
+  const tpBtn = document.getElementById('btn-throughput');
+  if (tpBtn) {
+    const tpOn = s.throughput_simulation;
+    tpBtn.classList.toggle('on', tpOn);
+    tpBtn.textContent = 'simulate throughput' + (tpOn ? ' — on' : '');
+  }
+}
+
+async function poll() {
+  const s = await (await fetch('/api/state')).json();
+  render(s);
+}
+poll();
+setInterval(poll, 500);
+</script>

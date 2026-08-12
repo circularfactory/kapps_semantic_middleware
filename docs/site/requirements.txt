@@ -1,0 +1,10 @@
+# The docs toolchain, kept apart from the project's dev group so the publish
+# workflow installs only what a docs build needs.
+#
+# Pinned to majors, not exact versions: the archive-per-tag versioning decision
+# on #116 means an old version is never rebuilt, so this file only ever has to
+# build the CURRENT version. That is what lets it float.
+sphinx>=9,<10
+pydata-sphinx-theme>=0.20,<1
+myst-nb>=1.4,<2
+sphinx-design>=0.6,<1

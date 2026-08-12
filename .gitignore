@@ -1,0 +1,22 @@
+.venv/
+__pycache__/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+dist/
+build/
+*.egg-info/
+.ipynb_checkpoints/
+.env
+
+# Written by scripts/prepare_release.py: the reviewed branch tip that publish_release.py
+# refuses to move past. Local state about one release run, not a fact about the project.
+.release-state.json
+# Sphinx build output (#116). The docs site is deployed as a Pages artifact,
+# never committed -- the release repo keeps one clean commit of source only.
+docs/site/_build/
+# The scenario pages are the notebooks themselves, copied in from examples/ by
+# conf.py at build time (#141). Generated, so never committed -- same rule as the
+# build output above.
+docs/site/scenarios/hello-world.ipynb
+docs/site/scenarios/door.ipynb

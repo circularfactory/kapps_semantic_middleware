@@ -1,0 +1,755 @@
+@prefix : <https://w3id.org/circularfactory/Core#> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix xml: <http://www.w3.org/XML/1998/namespace> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@base <https://w3id.org/circularfactory/Core#> .
+
+<https://w3id.org/circularfactory/Core> rdf:type owl:Ontology ;
+                                         owl:versionIRI <https://w3id.org/circularfactory/Core/0.9.0> ;
+                                         <http://purl.org/dc/terms/created> "2025-08-11"^^xsd:date ;
+                                         <http://purl.org/dc/terms/creator> <https://orcid.org/0000-0002-3704-9567> ,
+                                                                            <https://orcid.org/0009-0008-1170-4122> ;
+                                         <http://purl.org/dc/terms/license> <https://creativecommons.org/licenses/by/4.0/> ;
+                                         <http://purl.org/dc/terms/title> "The Circular Factory Core Ontology"@en ;
+                                         <http://purl.org/vocab/vann/preferredNamespacePrefix> "cfc" ;
+                                         <http://purl.org/vocab/vann/preferredNamespaceUri> : ;
+                                         rdfs:comment "The core ontology defines central concepts and relations of a circular factory."@en ;
+                                         rdfs:label "Circular Factory Core Ontology"@en ;
+                                         owl:versionInfo "0.9.0" ;
+                                         <https://w3id.org/mod#createdWith> <https://chowlk.linkeddata.es/> .
+
+#################################################################
+#    Annotation properties
+#################################################################
+
+###  http://purl.org/dc/terms/created
+<http://purl.org/dc/terms/created> rdf:type owl:AnnotationProperty .
+
+
+###  http://purl.org/dc/terms/creator
+<http://purl.org/dc/terms/creator> rdf:type owl:AnnotationProperty .
+
+
+###  http://purl.org/dc/terms/license
+<http://purl.org/dc/terms/license> rdf:type owl:AnnotationProperty .
+
+
+###  http://purl.org/dc/terms/title
+<http://purl.org/dc/terms/title> rdf:type owl:AnnotationProperty .
+
+
+###  http://purl.org/vocab/vann/preferredNamespacePrefix
+<http://purl.org/vocab/vann/preferredNamespacePrefix> rdf:type owl:AnnotationProperty .
+
+
+###  http://purl.org/vocab/vann/preferredNamespaceUri
+<http://purl.org/vocab/vann/preferredNamespaceUri> rdf:type owl:AnnotationProperty .
+
+
+###  http://www.w3.org/2000/01/rdf-schema#comment
+rdfs:comment rdf:type owl:AnnotationProperty .
+
+
+###  http://www.w3.org/2000/01/rdf-schema#label
+rdfs:label rdf:type owl:AnnotationProperty .
+
+
+###  http://www.w3.org/2002/07/owl#versionIRI
+owl:versionIRI rdf:type owl:AnnotationProperty .
+
+
+###  http://www.w3.org/2002/07/owl#versionInfo
+owl:versionInfo rdf:type owl:AnnotationProperty .
+
+
+###  https://w3id.org/mod#createdWith
+<https://w3id.org/mod#createdWith> rdf:type owl:AnnotationProperty .
+
+
+#################################################################
+#    Datatypes
+#################################################################
+
+###  http://www.w3.org/2001/XMLSchema#date
+xsd:date rdf:type rdfs:Datatype .
+
+
+#################################################################
+#    Object Properties
+#################################################################
+
+###  https://w3id.org/circularfactory/Core#containsWorkpiece
+:containsWorkpiece rdf:type owl:ObjectProperty ,
+                            owl:TransitiveProperty ;
+                   rdfs:domain :Assembly ;
+                   rdfs:range :Workpiece ;
+                   rdfs:label "contains workpiece" .
+
+
+###  https://w3id.org/circularfactory/Core#enablesProcess
+:enablesProcess rdf:type owl:ObjectProperty ;
+                rdfs:domain :Capability ;
+                rdfs:range :Process ;
+                rdfs:label "enables process" .
+
+
+###  https://w3id.org/circularfactory/Core#executedOn
+:executedOn rdf:type owl:ObjectProperty ;
+            rdfs:domain :Operation ;
+            rdfs:range :Resource ;
+            rdfs:label "executed on" .
+
+
+###  https://w3id.org/circularfactory/Core#fulfillsOrder
+:fulfillsOrder rdf:type owl:ObjectProperty ;
+               rdfs:domain :Product ;
+               rdfs:range :Order ;
+               rdfs:label "fulfills order" .
+
+
+###  https://w3id.org/circularfactory/Core#hasAssemblyType
+:hasAssemblyType rdf:type owl:ObjectProperty ;
+                 rdfs:domain :Assembly ;
+                 rdfs:range :AssemblyType ;
+                 rdfs:label "has assembly type" .
+
+
+###  https://w3id.org/circularfactory/Core#hasCapability
+:hasCapability rdf:type owl:ObjectProperty ;
+               rdfs:domain :Resource ;
+               rdfs:range :Capability ;
+               rdfs:label "has capability" .
+
+
+###  https://w3id.org/circularfactory/Core#hasComponentType
+:hasComponentType rdf:type owl:ObjectProperty ;
+                  rdfs:domain :Component ;
+                  rdfs:range :ComponentType ;
+                  rdfs:label "has component type" .
+
+
+###  https://w3id.org/circularfactory/Core#hasEvaluationTime
+:hasEvaluationTime rdf:type owl:ObjectProperty ;
+                   rdfs:domain :QualityState ;
+                   rdfs:range <http://www.w3.org/2006/time#Instant> ;
+                   rdfs:label "has evaluation time" .
+
+
+###  https://w3id.org/circularfactory/Core#hasExecutionInterval
+:hasExecutionInterval rdf:type owl:ObjectProperty ;
+                      rdfs:domain :Operation ;
+                      rdfs:range <http://www.w3.org/2006/time#Interval> ;
+                      rdfs:label "has execution interval" .
+
+
+###  https://w3id.org/circularfactory/Core#hasFinalWorkpiece
+:hasFinalWorkpiece rdf:type owl:ObjectProperty ;
+                   rdfs:domain :FinishedProduct ;
+                   rdfs:range :Workpiece ;
+                   rdfs:label "has final workpiece" .
+
+
+###  https://w3id.org/circularfactory/Core#hasInputEntityType
+:hasInputEntityType rdf:type owl:ObjectProperty ;
+                    rdfs:domain :TaskType ;
+                    rdfs:range :EntityType ;
+                    rdfs:label "has input entity type" .
+
+
+###  https://w3id.org/circularfactory/Core#hasInputWorkpiece
+:hasInputWorkpiece rdf:type owl:ObjectProperty ;
+                   rdfs:domain :Task ;
+                   rdfs:range :Workpiece ;
+                   rdfs:label "has input workpiece" .
+
+
+###  https://w3id.org/circularfactory/Core#hasLocation
+:hasLocation rdf:type owl:ObjectProperty ;
+             rdfs:domain :Resource ;
+             rdfs:range :Location ;
+             rdfs:label "has location" .
+
+
+###  https://w3id.org/circularfactory/Core#hasObservationTime
+:hasObservationTime rdf:type owl:ObjectProperty ;
+                    rdfs:domain :Location ;
+                    rdfs:range <http://www.w3.org/2006/time#Instant> ;
+                    rdfs:label "has observation time" .
+
+
+###  https://w3id.org/circularfactory/Core#hasOrderItem
+:hasOrderItem rdf:type owl:ObjectProperty ;
+              rdfs:domain :Order ;
+              rdfs:range :OrderItem ;
+              rdfs:label "has order item" .
+
+
+###  https://w3id.org/circularfactory/Core#hasOrderItemProductType
+:hasOrderItemProductType rdf:type owl:ObjectProperty ;
+                         rdfs:domain :OrderItem ;
+                         rdfs:range :ProductType ;
+                         rdfs:label "has order item product type" .
+
+
+###  https://w3id.org/circularfactory/Core#hasOrigin
+:hasOrigin rdf:type owl:ObjectProperty ;
+           rdfs:domain :Assembly ,
+                       :Component ;
+           rdfs:range :Core ,
+                      [ rdf:type owl:Class ;
+                        owl:unionOf ( :Core
+                                      :VirginMaterial
+                                    )
+                      ] ;
+           rdfs:label "has origin" .
+
+
+###  https://w3id.org/circularfactory/Core#hasOutputEntityType
+:hasOutputEntityType rdf:type owl:ObjectProperty ;
+                     rdfs:domain :TaskType ;
+                     rdfs:range :EntityType ;
+                     rdfs:label "has output entity type" .
+
+
+###  https://w3id.org/circularfactory/Core#hasOutputWorkpiece
+:hasOutputWorkpiece rdf:type owl:ObjectProperty ;
+                    rdfs:domain :Task ;
+                    rdfs:range :Workpiece ;
+                    rdfs:label "has output workpiece" .
+
+
+###  https://w3id.org/circularfactory/Core#hasPlannedInterval
+:hasPlannedInterval rdf:type owl:ObjectProperty ;
+                    rdfs:domain :Task ;
+                    rdfs:range <http://www.w3.org/2006/time#Interval> ;
+                    rdfs:label "has planned interval" .
+
+
+###  https://w3id.org/circularfactory/Core#hasPossessedWorkpiece
+:hasPossessedWorkpiece rdf:type owl:ObjectProperty ;
+                       rdfs:domain :Workpiece ;
+                       rdfs:range :PossessionState ;
+                       rdfs:label "has possessed workpiece" .
+
+
+###  https://w3id.org/circularfactory/Core#hasPossessionInterval
+:hasPossessionInterval rdf:type owl:ObjectProperty ;
+                       rdfs:domain <http://www.w3.org/2006/time#Interval> ;
+                       rdfs:range :PossessionState ;
+                       rdfs:label "has possession interval" .
+
+
+###  https://w3id.org/circularfactory/Core#hasPossessor
+:hasPossessor rdf:type owl:ObjectProperty ;
+              rdfs:domain :Resource ;
+              rdfs:range :PossessionState ;
+              rdfs:label "has possessor" .
+
+
+###  https://w3id.org/circularfactory/Core#hasPreviousProductGeneration
+:hasPreviousProductGeneration rdf:type owl:ObjectProperty ,
+                                       owl:FunctionalProperty ;
+                              rdfs:domain :ProductGeneration ;
+                              rdfs:range :ProductGeneration ;
+                              rdfs:label "has previous product generation" .
+
+
+###  https://w3id.org/circularfactory/Core#hasProductGeneration
+:hasProductGeneration rdf:type owl:ObjectProperty ;
+                      rdfs:domain :ProductType ;
+                      rdfs:range :ProductGeneration ;
+                      rdfs:label "has product generation" .
+
+
+###  https://w3id.org/circularfactory/Core#hasProductType
+:hasProductType rdf:type owl:ObjectProperty ;
+                rdfs:domain :Product ;
+                rdfs:range :ProductType ;
+                rdfs:label "has product type" .
+
+
+###  https://w3id.org/circularfactory/Core#hasQualityState
+:hasQualityState rdf:type owl:ObjectProperty ;
+                 rdfs:domain :Workpiece ;
+                 rdfs:range :QualityState ;
+                 rdfs:label "has quality state" .
+
+
+###  https://w3id.org/circularfactory/Core#hasReferenceTask
+:hasReferenceTask rdf:type owl:ObjectProperty ;
+                  rdfs:domain :Task ;
+                  rdfs:range :Task ;
+                  rdfs:label "has reference task" .
+
+
+###  https://w3id.org/circularfactory/Core#hasSubTask
+:hasSubTask rdf:type owl:ObjectProperty ,
+                     owl:TransitiveProperty ;
+            rdfs:domain :CompositeTask ;
+            rdfs:range :Task ;
+            rdfs:label "has sub task" .
+
+
+###  https://w3id.org/circularfactory/Core#hasTaskType
+:hasTaskType rdf:type owl:ObjectProperty ;
+             rdfs:domain :Task ;
+             rdfs:range :TaskType ;
+             rdfs:label "has task type" .
+
+
+###  https://w3id.org/circularfactory/Core#implementsCapability
+:implementsCapability rdf:type owl:ObjectProperty ;
+                      rdfs:domain :Operation ;
+                      rdfs:range :Capability ;
+                      rdfs:label "implements capability" .
+
+
+###  https://w3id.org/circularfactory/Core#implementsProcess
+:implementsProcess rdf:type owl:ObjectProperty ;
+                   rdfs:domain :Task ;
+                   rdfs:range :Process ;
+                   rdfs:label "implements process" .
+
+
+###  https://w3id.org/circularfactory/Core#isContainedIn
+:isContainedIn rdf:type owl:ObjectProperty ;
+               owl:inverseOf :containsWorkpiece ;
+               rdfs:label "is contained in" .
+
+
+###  https://w3id.org/circularfactory/Core#isSubTaskOf
+:isSubTaskOf rdf:type owl:ObjectProperty ;
+             owl:inverseOf :hasSubTask ;
+             rdfs:label "is sub task of" .
+
+
+#################################################################
+#    Data properties
+#################################################################
+
+###  http://xmlns.com/foaf/0.1/name
+<http://xmlns.com/foaf/0.1/name> rdf:type owl:DatatypeProperty ;
+                                 rdfs:label "name" .
+
+
+###  https://w3id.org/circularfactory/Core#amount
+:amount rdf:type owl:DatatypeProperty ;
+        rdfs:domain :OrderItem ;
+        rdfs:range xsd:nonNegativeInteger ;
+        rdfs:label "amount" .
+
+
+###  https://w3id.org/circularfactory/Core#isActive
+:isActive rdf:type owl:DatatypeProperty ;
+          rdfs:domain :Workpiece ;
+          rdfs:range xsd:boolean ;
+          rdfs:label "is active" .
+
+
+#################################################################
+#    Classes
+#################################################################
+
+###  http://www.w3.org/2006/time#Instant
+<http://www.w3.org/2006/time#Instant> rdf:type owl:Class ;
+                                      rdfs:label "Instant" .
+
+
+###  http://www.w3.org/2006/time#Interval
+<http://www.w3.org/2006/time#Interval> rdf:type owl:Class ;
+                                       rdfs:subClassOf [ rdf:type owl:Restriction ;
+                                                         owl:onProperty :hasPossessionInterval ;
+                                                         owl:qualifiedCardinality "1"^^xsd:nonNegativeInteger ;
+                                                         owl:onClass :PossessionState
+                                                       ] ;
+                                       rdfs:label "Interval" .
+
+
+###  http://xmlns.com/foaf/0.1/Person
+<http://xmlns.com/foaf/0.1/Person> rdf:type owl:Class ;
+                                   rdfs:label "Person" .
+
+
+###  https://w3id.org/circularfactory/Core#Assembly
+:Assembly rdf:type owl:Class ;
+          rdfs:subClassOf :Workpiece ,
+                          [ rdf:type owl:Restriction ;
+                            owl:onProperty :containsWorkpiece ;
+                            owl:someValuesFrom :Workpiece
+                          ] ,
+                          [ rdf:type owl:Restriction ;
+                            owl:onProperty :hasAssemblyType ;
+                            owl:qualifiedCardinality "1"^^xsd:nonNegativeInteger ;
+                            owl:onClass :AssemblyType
+                          ] ;
+          owl:disjointWith :Component ;
+          rdfs:comment "A workpiece composed of other workpieces that are structurally combined into a single unit."@en ;
+          rdfs:label "Assembly" .
+
+
+###  https://w3id.org/circularfactory/Core#AssemblyType
+:AssemblyType rdf:type owl:Class ;
+              rdfs:subClassOf :EntityType ;
+              owl:disjointWith :ComponentType ;
+              rdfs:comment "A classification that defines the structure and composition of an assembly independent of individual instances"@en ;
+              rdfs:label "Assembly Type" .
+
+
+###  https://w3id.org/circularfactory/Core#AtomicTask
+:AtomicTask rdf:type owl:Class ;
+            rdfs:subClassOf :Task ;
+            owl:disjointWith :CompositeTask ;
+            rdfs:comment "A task that is indivisible and cannot be further decomposed into subtasks within the given modeling scope."@en ;
+            rdfs:label "Atomic Task" .
+
+
+###  https://w3id.org/circularfactory/Core#Capability
+:Capability rdf:type owl:Class ;
+            rdfs:subClassOf [ rdf:type owl:Restriction ;
+                              owl:onProperty :enablesProcess ;
+                              owl:qualifiedCardinality "1"^^xsd:nonNegativeInteger ;
+                              owl:onClass :Process
+                            ] ;
+            rdfs:comment "An ability or capacity of a resource that enables it to perform certain processes."@en ;
+            rdfs:label "Capability" .
+
+
+###  https://w3id.org/circularfactory/Core#ChangeabilityCapability
+:ChangeabilityCapability rdf:type owl:Class ;
+                         rdfs:subClassOf :Capability ;
+                         rdfs:comment "A capability that can be equipped with high effort in time or cost."@en ;
+                         rdfs:label "Changeability Capability" .
+
+
+###  https://w3id.org/circularfactory/Core#Component
+:Component rdf:type owl:Class ;
+           rdfs:subClassOf :Workpiece ,
+                           [ rdf:type owl:Restriction ;
+                             owl:onProperty :hasComponentType ;
+                             owl:qualifiedCardinality "1"^^xsd:nonNegativeInteger ;
+                             owl:onClass :ComponentType
+                           ] ,
+                           [ rdf:type owl:Restriction ;
+                             owl:onProperty :hasOrigin ;
+                             owl:qualifiedCardinality "1"^^xsd:nonNegativeInteger ;
+                             owl:onClass [ rdf:type owl:Class ;
+                                           owl:unionOf ( :Core
+                                                         :VirginMaterial
+                                                       )
+                                         ]
+                           ] ;
+           rdfs:comment "A workpiece that is indivisible and cannot be further decomposed into components within the given modeling scope."@en ;
+           rdfs:label "Component" .
+
+
+###  https://w3id.org/circularfactory/Core#ComponentType
+:ComponentType rdf:type owl:Class ;
+               rdfs:subClassOf :EntityType ;
+               rdfs:comment "A classification that defines the design or specification of a component independent of individual instances"@en ;
+               rdfs:label "Component Type" .
+
+
+###  https://w3id.org/circularfactory/Core#CompositeTask
+:CompositeTask rdf:type owl:Class ;
+               rdfs:subClassOf :Task ,
+                               [ rdf:type owl:Restriction ;
+                                 owl:onProperty :hasSubTask ;
+                                 owl:someValuesFrom :Task
+                               ] ;
+               rdfs:comment "A task that can be decomposed into multiple subtasks."@en ;
+               rdfs:label "Composite Task" .
+
+
+###  https://w3id.org/circularfactory/Core#ConvergingProcess
+:ConvergingProcess rdf:type owl:Class ;
+                   rdfs:subClassOf :ProductionProcess ;
+                   rdfs:comment "A production process where the amount of input-workpieces is larger that the amount of output-workpieces  "@en ;
+                   rdfs:label "Converging Process" .
+
+
+###  https://w3id.org/circularfactory/Core#Core
+:Core rdf:type owl:Class ;
+      rdfs:subClassOf :Product ;
+      rdfs:label "Core" .
+
+
+###  https://w3id.org/circularfactory/Core#DivergingProcess
+:DivergingProcess rdf:type owl:Class ;
+                  rdfs:subClassOf :ProductionProcess ;
+                  rdfs:comment "A production process where the amount of input-workpieces is smaller than amount of output-workpieces  "@en ;
+                  rdfs:label "Diverging Process" .
+
+
+###  https://w3id.org/circularfactory/Core#EntityType
+:EntityType rdf:type owl:Class ;
+            rdfs:comment "TBD"@en ;
+            rdfs:label "Entity Type" .
+
+
+###  https://w3id.org/circularfactory/Core#EquippedCapability
+:EquippedCapability rdf:type owl:Class ;
+                    rdfs:subClassOf :Capability ;
+                    rdfs:comment "A capability that is currently available and which is realized through the physical or technical configuration of a resource."@en ;
+                    rdfs:label "Equipped Capability" .
+
+
+###  https://w3id.org/circularfactory/Core#FinishedProduct
+:FinishedProduct rdf:type owl:Class ;
+                 rdfs:subClassOf :Product ,
+                                 [ rdf:type owl:Restriction ;
+                                   owl:onProperty :hasFinalWorkpiece ;
+                                   owl:qualifiedCardinality "1"^^xsd:nonNegativeInteger ;
+                                   owl:onClass :Workpiece
+                                 ] ;
+                 rdfs:comment "TBD."@en ;
+                 rdfs:label "Finished Product" .
+
+
+###  https://w3id.org/circularfactory/Core#FlexibilityCapability
+:FlexibilityCapability rdf:type owl:Class ;
+                       rdfs:subClassOf :Capability ;
+                       rdfs:comment "A capability that can be equipped with little effort in time or cost."@en ;
+                       rdfs:label "Flexibility Capability" .
+
+
+###  https://w3id.org/circularfactory/Core#Location
+:Location rdf:type owl:Class ;
+          rdfs:subClassOf [ rdf:type owl:Restriction ;
+                            owl:onProperty :hasObservationTime ;
+                            owl:qualifiedCardinality "1"^^xsd:nonNegativeInteger ;
+                            owl:onClass <http://www.w3.org/2006/time#Instant>
+                          ] ;
+          rdfs:comment "A spatial region or place where resources or production items are situated."@en ;
+          rdfs:label "Location" .
+
+
+###  https://w3id.org/circularfactory/Core#Operation
+:Operation rdf:type owl:Class ;
+           rdfs:subClassOf :Task ,
+                           [ rdf:type owl:Restriction ;
+                             owl:onProperty :executedOn ;
+                             owl:someValuesFrom :Resource
+                           ] ,
+                           [ rdf:type owl:Restriction ;
+                             owl:onProperty :hasExecutionInterval ;
+                             owl:qualifiedCardinality "1"^^xsd:nonNegativeInteger ;
+                             owl:onClass <http://www.w3.org/2006/time#Interval>
+                           ] ,
+                           [ rdf:type owl:Restriction ;
+                             owl:onProperty :implementsCapability ;
+                             owl:qualifiedCardinality "1"^^xsd:nonNegativeInteger ;
+                             owl:onClass :Capability
+                           ] ;
+           rdfs:comment "An executable form of a task which has been assigned to a concrete resource."@en ;
+           rdfs:label "Operation" .
+
+
+###  https://w3id.org/circularfactory/Core#Order
+:Order rdf:type owl:Class ;
+       rdfs:subClassOf [ rdf:type owl:Restriction ;
+                         owl:onProperty :hasOrderItem ;
+                         owl:someValuesFrom :OrderItem
+                       ] ;
+       rdfs:comment "A specification of requested production activities, defining what products or items should be produced and under which conditions."@en ;
+       rdfs:label "Order" .
+
+
+###  https://w3id.org/circularfactory/Core#OrderItem
+:OrderItem rdf:type owl:Class ;
+           rdfs:subClassOf [ rdf:type owl:Restriction ;
+                             owl:onProperty :hasOrderItemProductType ;
+                             owl:qualifiedCardinality "1"^^xsd:nonNegativeInteger ;
+                             owl:onClass :ProductType
+                           ] ,
+                           [ rdf:type owl:Restriction ;
+                             owl:onProperty :amount ;
+                             owl:qualifiedCardinality "1"^^xsd:nonNegativeInteger ;
+                             owl:onDataRange xsd:nonNegativeInteger
+                           ] ;
+           rdfs:comment "An individual item within an order that specifies a particular product variant, quantity, or requirements."@en ;
+           rdfs:label "Order Item" .
+
+
+###  https://w3id.org/circularfactory/Core#PossessionState
+:PossessionState rdf:type owl:Class ;
+                 rdfs:comment "A contextual, time-bound relationship between a resource and a workpiece, often mediated by an operation."@en ;
+                 rdfs:label "Possession State" .
+
+
+###  https://w3id.org/circularfactory/Core#Process
+:Process rdf:type owl:Class ;
+         rdfs:comment "A process is an action that changes either the product or the production system state."@en ;
+         rdfs:label "Process" .
+
+
+###  https://w3id.org/circularfactory/Core#Product
+:Product rdf:type owl:Class ;
+         rdfs:subClassOf [ rdf:type owl:Restriction ;
+                           owl:onProperty :hasProductType ;
+                           owl:qualifiedCardinality "1"^^xsd:nonNegativeInteger ;
+                           owl:onClass :ProductType
+                         ] ;
+         rdfs:comment "TBD."@en ;
+         rdfs:label "Product" .
+
+
+###  https://w3id.org/circularfactory/Core#ProductGeneration
+:ProductGeneration rdf:type owl:Class ;
+                   rdfs:comment "TBD"@en ;
+                   rdfs:label "Product Generation" .
+
+
+###  https://w3id.org/circularfactory/Core#ProductType
+:ProductType rdf:type owl:Class ;
+             rdfs:subClassOf [ rdf:type owl:Restriction ;
+                               owl:onProperty :hasProductGeneration ;
+                               owl:qualifiedCardinality "1"^^xsd:nonNegativeInteger ;
+                               owl:onClass :ProductGeneration
+                             ] ;
+             rdfs:comment "TBD."@en ;
+             rdfs:label "Product Type" .
+
+
+###  https://w3id.org/circularfactory/Core#ProductionProcess
+:ProductionProcess rdf:type owl:Class ;
+                   rdfs:subClassOf :Process ;
+                   owl:disjointWith :SupportingProcess ;
+                   rdfs:comment "A process that involves a workpiece"@en ;
+                   rdfs:label "Production Process" .
+
+
+###  https://w3id.org/circularfactory/Core#QualityState
+:QualityState rdf:type owl:Class ;
+              rdfs:subClassOf [ rdf:type owl:Restriction ;
+                                owl:onProperty :hasEvaluationTime ;
+                                owl:qualifiedCardinality "1"^^xsd:nonNegativeInteger ;
+                                owl:onClass <http://www.w3.org/2006/time#Instant>
+                              ] ;
+              rdfs:comment "The quality state a workpiece, evaluated at a given time"@en ;
+              rdfs:label "Quality State" .
+
+
+###  https://w3id.org/circularfactory/Core#Resource
+:Resource rdf:type owl:Class ;
+          rdfs:subClassOf [ rdf:type owl:Restriction ;
+                            owl:onProperty :hasLocation ;
+                            owl:someValuesFrom :Location
+                          ] ,
+                          [ rdf:type owl:Restriction ;
+                            owl:onProperty :hasPossessor ;
+                            owl:qualifiedCardinality "1"^^xsd:nonNegativeInteger ;
+                            owl:onClass :PossessionState
+                          ] ;
+          owl:disjointWith :Workpiece ;
+          rdfs:comment "An entity such as a machine, tool, human, or system that can perform or support processes."@en ;
+          rdfs:label "Resource" .
+
+
+###  https://w3id.org/circularfactory/Core#SupportingProcess
+:SupportingProcess rdf:type owl:Class ;
+                   rdfs:subClassOf :Process ;
+                   rdfs:comment "A process which does not directly involve a workpiece."@en ;
+                   rdfs:label "Supporting Process" .
+
+
+###  https://w3id.org/circularfactory/Core#Task
+:Task rdf:type owl:Class ;
+      rdfs:subClassOf [ rdf:type owl:Restriction ;
+                        owl:onProperty :hasPlannedInterval ;
+                        owl:qualifiedCardinality "1"^^xsd:nonNegativeInteger ;
+                        owl:onClass <http://www.w3.org/2006/time#Interval>
+                      ] ,
+                      [ rdf:type owl:Restriction ;
+                        owl:onProperty :implementsProcess ;
+                        owl:qualifiedCardinality "1"^^xsd:nonNegativeInteger ;
+                        owl:onClass :Process
+                      ] ;
+      rdfs:comment "An abstract unit of work that implements a specific process."@en ;
+      rdfs:label "Task" .
+
+
+###  https://w3id.org/circularfactory/Core#TaskType
+:TaskType rdf:type owl:Class ;
+          rdfs:comment "A task type acts as a blueprint for tasks."@en ;
+          rdfs:label "Task Type" .
+
+
+###  https://w3id.org/circularfactory/Core#UnitPreservingProcess
+:UnitPreservingProcess rdf:type owl:Class ;
+                       rdfs:subClassOf :ProductionProcess ;
+                       rdfs:comment "A production process where the amount of input-workpieces equals the amount of output-workpieces"@en ;
+                       rdfs:label "Unit Preserving Process" .
+
+
+###  https://w3id.org/circularfactory/Core#VirginMaterial
+:VirginMaterial rdf:type owl:Class ;
+                rdfs:label "Virgin Material" .
+
+
+###  https://w3id.org/circularfactory/Core#Workpiece
+:Workpiece rdf:type owl:Class ;
+           rdfs:subClassOf [ rdf:type owl:Restriction ;
+                             owl:onProperty :hasPossessedWorkpiece ;
+                             owl:qualifiedCardinality "1"^^xsd:nonNegativeInteger ;
+                             owl:onClass :PossessionState
+                           ] ,
+                           [ rdf:type owl:Restriction ;
+                             owl:onProperty :isActive ;
+                             owl:qualifiedCardinality "1"^^xsd:nonNegativeInteger ;
+                             owl:onDataRange xsd:boolean
+                           ] ;
+           rdfs:comment "A production item that are or were being processed or stored."@en ;
+           rdfs:label "Workpiece" .
+
+
+#################################################################
+#    Individuals
+#################################################################
+
+###  https://orcid.org/0000-0002-3704-9567
+<https://orcid.org/0000-0002-3704-9567> rdf:type owl:NamedIndividual ,
+                                                 <http://xmlns.com/foaf/0.1/Person> ;
+                                        <http://xmlns.com/foaf/0.1/name> "Jan-Felix Klein" ;
+                                        rdfs:label "Jan-Felix Klein" .
+
+
+###  https://orcid.org/0009-0008-1170-4122
+<https://orcid.org/0009-0008-1170-4122> rdf:type owl:NamedIndividual ,
+                                                 <http://xmlns.com/foaf/0.1/Person> ;
+                                        <http://xmlns.com/foaf/0.1/name> "Finn Bail" ;
+                                        rdfs:label "Finn Bail" .
+
+
+#################################################################
+#    Annotations
+#################################################################
+
+rdfs:comment rdfs:label "comment" .
+
+
+rdfs:label rdfs:label "label" .
+
+
+#################################################################
+#    General axioms
+#################################################################
+
+[ rdf:type owl:AllDisjointClasses ;
+  owl:members ( :ChangeabilityCapability
+                :EquippedCapability
+                :FlexibilityCapability
+              )
+] .
+
+
+[ rdf:type owl:AllDisjointClasses ;
+  owl:members ( :ConvergingProcess
+                :DivergingProcess
+                :UnitPreservingProcess
+              )
+] .
+
+
+###  Generated by the OWL API (version 5.1.18) https://github.com/owlcs/owlapi/

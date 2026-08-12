@@ -1,0 +1,75 @@
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix cfc: <https://w3id.org/circularfactory/Core#> .
+@prefix svc: <https://w3id.org/circularfactory/Service#> .
+@prefix ex:  <https://example.org/kapps-demo#> .
+
+#################################################################
+# Self-contained ground-truth ontology for Scenario 2 (decentralized door) ONLY.
+#
+# A transformer-cell door controlled by a small PLC: two invokable workflows
+# (open, close) and one readable, high-frequency StateProperty (status). Declares
+# exactly the classes scenario 2 needs — nothing else — so seeding inserts only
+# the door vocabulary (no unrelated hello-world classes). Same direct-subClassOf
+# discipline as scenario 1 (ADR 0003).
+#################################################################
+
+# --- Minimal Core class stubs referenced by the demo (kept local for self-containment) ---
+cfc:Resource rdf:type owl:Class .
+cfc:Capability rdf:type owl:Class .
+cfc:EquippedCapability rdf:type owl:Class ; rdfs:subClassOf cfc:Capability .
+cfc:Task rdf:type owl:Class .
+cfc:Operation rdf:type owl:Class ; rdfs:subClassOf cfc:Task .
+
+# The Operation->Capability link is declared so create_operation persists an Operation
+# through the OGM's validated write path (ADR 0008) rather than raw triples.
+cfc:implementsCapability rdf:type owl:ObjectProperty ;
+    rdfs:domain cfc:Operation ;
+    rdfs:range cfc:Capability ;
+    rdfs:label "implements capability" .
+
+ex:DoorResource rdf:type owl:Class ;
+    rdfs:subClassOf cfc:Resource ;
+    rdfs:label "Door Resource" ;
+    rdfs:comment "A decentrally-controlled transformer-cell door." .
+
+ex:DoorControllerService rdf:type owl:Class ;
+    rdfs:subClassOf svc:Service ;
+    rdfs:label "Door Controller Service" .
+
+ex:DoorOpenCapability rdf:type owl:Class ;
+    rdfs:subClassOf cfc:EquippedCapability , cfc:Capability ;
+    rdfs:label "Door Open Capability" .
+
+ex:DoorCloseCapability rdf:type owl:Class ;
+    rdfs:subClassOf cfc:EquippedCapability , cfc:Capability ;
+    rdfs:label "Door Close Capability" .
+
+ex:DoorStatusCapability rdf:type owl:Class ;
+    rdfs:subClassOf cfc:EquippedCapability , cfc:Capability ;
+    rdfs:label "Door Status Capability" ;
+    rdfs:comment "The readable capability provided by the door's status StateProperty." .
+
+ex:DoorOpenWorkflow rdf:type owl:Class ;
+    rdfs:subClassOf svc:Workflow ;
+    rdfs:label "Door Open Workflow" .
+
+ex:DoorCloseWorkflow rdf:type owl:Class ;
+    rdfs:subClassOf svc:Workflow ;
+    rdfs:label "Door Close Workflow" .
+
+ex:DoorStatusStateProperty rdf:type owl:Class ;
+    rdfs:subClassOf svc:StateProperty ;
+    rdfs:label "Door Status State Property" ;
+    rdfs:comment "The GET-readable status (opened/closed) of the door; its live value is never persisted to the graph." .
+
+# --- Mobile robot: a minimal consumer that discovers and interacts with the door ---
+ex:MobileRobotResource rdf:type owl:Class ;
+    rdfs:subClassOf cfc:Resource ;
+    rdfs:label "Mobile Robot Resource" ;
+    rdfs:comment "A minimal mobile transport robot. Scenario scope: no motion/position/motor model — just enough to discover the door through the knowledge graph and drive its state/workflow endpoints directly." .
+
+ex:MobileRobotControllerService rdf:type owl:Class ;
+    rdfs:subClassOf svc:Service ;
+    rdfs:label "Mobile Robot Controller Service" .

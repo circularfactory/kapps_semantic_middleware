@@ -1,0 +1,16 @@
+@prefix owl:  <http://www.w3.org/2002/07/owl#> .
+@prefix rdf:  <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix cfc:  <https://w3id.org/circularfactory/Core#> .
+@prefix svc:  <https://w3id.org/circularfactory/Service#> .
+@prefix fac:  <https://www.sfb1574.kit.edu/ontologies/Factory#> .
+
+fac:ControlStation rdf:type owl:Class ;
+    rdfs:subClassOf cfc:Resource ;
+    rdfs:label "Control Station" ;
+    rdfs:comment "The controller's own Resource individual. Carries no controllable parameter; it discovers and drives other resources over REST, and appears in its own discovery list (#43)." .
+
+fac:ControlStationService rdf:type owl:Class ;
+    rdfs:subClassOf svc:Service ;
+    rdfs:label "Control Station Service" ;
+    rdfs:comment "The middleware Service wrapping the control station, registering its reachability in the graph." .

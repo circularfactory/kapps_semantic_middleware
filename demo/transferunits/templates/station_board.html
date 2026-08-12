@@ -1,0 +1,404 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Station Board — Control Station</title>
+<style>
+  :root { --ink:#1c1c1c; --muted:#6b6b6b; --line:#d8d8d8; --warn:#b23b00;
+          --paper:#fff; --bg:#f7f7f5; --live:#2e7d32; --starting:#b26a00;
+          --failed:#c62828; --stopped:#8a8a8a; --settled:#2e7d32; --converging:#b26a00;
+          --diverged:#b23b00; --rejected:#c62828; }
+  body { font:15px/1.5 system-ui,sans-serif; color:var(--ink); margin:0;
+         background:var(--bg); padding:24px 24px 90px; }
+  main { max-width:1180px; margin:0 auto; }
+  h1 { font-size:20px; margin:0 0 2px; }
+  .sub { color:var(--muted); font-size:13px; margin:0 0 20px; max-width:820px; }
+  .sub code { background:#f0f0ee; padding:1px 5px; border-radius:3px; }
+  .card { background:var(--paper); border:1px solid var(--line); border-radius:8px;
+          padding:18px 20px; margin-bottom:16px; }
+  .view-frame { display:grid; grid-template-columns:1fr auto; gap:12px; align-items:end;
+                margin-bottom:20px; }
+  .view-frame pre { margin:0; font:13px/1.6 ui-monospace,monospace; color:var(--muted); }
+  .view-frame textarea { width:100%; min-height:80px; padding:9px; border:1px solid var(--line);
+                         border-radius:5px; font:inherit; resize:vertical; }
+  .view-frame .actions { display:flex; gap:8px; flex-direction:column; align-items:flex-end; }
+  .view-frame button { padding:7px 14px; border:1px solid var(--line); background:#fff;
+                       border-radius:5px; font:inherit; cursor:pointer; }
+  .view-frame button:hover { background:#f0f0ee; }
+  .error-line { font-size:12px; margin-top:8px; min-height:18px; }
+  .error-line.error { color:var(--warn); font-weight:600; }
+  .error-line.note { color:var(--muted); }
+  .algo-bar { display:flex; gap:16px; align-items:center; flex-wrap:wrap; margin-bottom:20px;
+              padding:12px 16px; background:var(--paper); border:1px solid var(--line);
+              border-radius:8px; }
+  .algo-bar .mode-toggle { display:flex; gap:6px; }
+  .algo-bar button { padding:6px 12px; border:1px solid var(--line); background:#fff;
+                     border-radius:5px; font:inherit; cursor:pointer; }
+  .algo-bar button:hover { background:#f0f0ee; }
+  .algo-bar button.active { background:var(--ink); border-color:var(--ink); color:#fff; }
+  .algo-bar .status { color:var(--muted); font-size:13px; margin-left:auto; }
+  .toggle-row { display:flex; align-items:center; gap:8px; margin-bottom:16px; }
+  .toggle-row label { font-size:13px; color:var(--muted); }
+  .station-card { cursor:pointer; }
+  .station-card.unreachable { opacity:0.6; }
+  .station-card .header { display:flex; justify-content:space-between; align-items:center;
+                          padding:12px 0; border-bottom:1px solid var(--line); }
+  .station-card .header h2 { font-size:14px; margin:0; display:flex; align-items:center; gap:8px; }
+  .station-card .header .dot { width:9px; height:9px; border-radius:50%; display:inline-block; }
+  .station-card .header .dot.live { background:var(--live); }
+  .station-card .header .dot.dead { background:var(--stopped); }
+  .station-card .header .meta { font-size:12px; color:var(--muted); }
+  .station-card .body { display:none; padding-top:16px; }
+  .station-card.expanded .body { display:block; }
+  .station-card .param-row { display:grid; grid-template-columns:1fr auto auto; gap:12px;
+                              align-items:center; padding:10px 0; border-bottom:1px dotted var(--line); }
+  .station-card .param-row:last-child { border-bottom:none; }
+  .station-card .param-row .label { font-size:13px; }
+  .station-card .param-row .value { font-size:14px; font-variant-numeric:tabular-nums; }
+  .station-card .param-row .facets { font-size:11px; color:var(--muted); margin-left:6px; }
+  .station-card .param-row .control { display:flex; gap:6px; align-items:center; }
+  .station-card .param-row input[type=number] { width:100px; padding:5px 7px; border:1px solid var(--line);
+                                                 border-radius:4px; font:inherit; }
+  .station-card .param-row button { padding:5px 10px; border:1px solid var(--line); background:#fff;
+                                    border-radius:4px; font:inherit; cursor:pointer; }
+  .station-card .param-row button:hover { background:#f0f0ee; }
+  .station-card .param-row button:disabled { opacity:0.5; cursor:not-allowed; }
+  .station-card .param-row .status-badge { font-size:11px; padding:2px 6px; border-radius:3px;
+                                           border:1px solid var(--line); }
+  .station-card .param-row .status-badge[data-status="settled"] { background:#e8f5e9; color:var(--settled); border-color:var(--settled); }
+  .station-card .param-row .status-badge[data-status="converging"] { background:#fff8e1; color:var(--converging); border-color:var(--converging); }
+  .station-card .param-row .status-badge[data-status="diverged"] { background:#ffebee; color:var(--diverged); border-color:var(--diverged); }
+  .station-card .param-row .status-badge[data-status="rejected"] { background:#ffebee; color:var(--rejected); border-color:var(--rejected); font-weight:600; }
+  .station-card .param-row .iri-view { font-size:11px; color:var(--muted); margin-top:4px; }
+  .station-card .param-row .iri-view code { background:#f0f0ee; padding:1px 5px; border-radius:3px;
+                                             word-break:break-all; }
+  .station-card .param-row .pruned-note { font-size:11px; color:var(--muted); margin-top:4px; font-style:italic; }
+  .hot { outline:2px solid var(--warn); outline-offset:2px; }
+  .teach { position:fixed; left:0; right:0; bottom:0; background:#fff; height:78px;
+           border-top:1px solid var(--line); padding:11px 20px; overflow:hidden; }
+  .teach .inner { max-width:1180px; margin:0 auto; }
+  .teach h3 { margin:0 0 3px; font-size:13px; }
+  .teach p { margin:0 0 4px; font-size:13px; color:#333; max-width:860px; }
+  .teach code { background:#f0f0ee; padding:1px 6px; border-radius:3px; font-size:12px; }
+  .teach .idle { color:var(--muted); }
+</style>
+
+<main>
+  <h1>Station Board</h1>
+  <p class="sub">This board shows one card per TransferUnit selected by the view heuristic.
+     Cards are collapsed by default — <strong>collapsed means display-only</strong>: every value
+     stays current behind a shut card, only the visual panel is closed. Click a header to expand.
+     Set controls work only while the algorithm is paused. Backend logic lives in
+     <code>demo/transferunits/station_board.py</code>; the driving algorithm itself is in
+     <code>demo/transferunits/algorithm.py</code>.</p>
+
+  <div class="card view-frame" data-teach="view-box">
+    <div>
+      <pre>SELECT ?resource WHERE {
+  ?resource a tu:TransferUnit ; svc:hasService ?s .
+  ?s svc:address ?a .</pre>
+      <textarea id="query-text" oninput="dirty=true"></textarea>
+      <pre>} </pre>
+      <div class="error-line" id="view-error"></div>
+    </div>
+    <div class="actions">
+      <button onclick="runQuery()">run</button>
+      <button onclick="resetQuery()">reset</button>
+    </div>
+  </div>
+
+  <div class="algo-bar" data-teach="algo-bar">
+    <div class="mode-toggle">
+      <button id="mode-timed" onclick="setMode('timed')">timed</button>
+      <button id="mode-event" onclick="setMode('event_driven')">event driven</button>
+    </div>
+    <button id="pause-btn" onclick="togglePause()">pause</button>
+    <div class="status" id="algo-status"></div>
+  </div>
+
+  <div class="toggle-row" data-teach="show-iris">
+    <input type="checkbox" id="show-iris" onchange="render(lastState)">
+    <label for="show-iris">Show IRIs and assignment expressions</label>
+  </div>
+
+  <div id="stations"></div>
+</main>
+
+<div class="teach" id="teach"></div>
+
+<script>
+const TEACH = __TEACH__;
+let frozen = false;
+let dirty = false;
+let lastState = null;
+// Which cards are open is the *only* state this page keeps for itself, and it is
+// display-only: every connector stays live and every value stays current behind a shut
+// card. This is not ADR 0032's collapsed monitor row, which genuinely holds no data
+// because it has not fetched.
+const expandedCards = new Set();
+
+async function post(url, body) {
+  const r = await fetch(url, {method:'POST', headers:{'Content-Type':'application/json'},
+                             body: body ? JSON.stringify(body) : undefined});
+  if (!r.ok) {
+    const err = await r.text();
+    return {ok: false, error: err};
+  }
+  return await r.json();
+}
+
+function reportViewOutcome(s) {
+  // Reads straight from the /api/state shape -- the same one every regular poll
+  // receives -- so a malformed or zero-hit heuristic is reported here whether a human
+  // just clicked "run" or the view re-ran unattended on an ordinary poll (#82: "the
+  // view re-runs on every poll", and its errors must surface the same way either time).
+  const errEl = document.getElementById('view-error');
+  if (s.view_error) {
+    errEl.textContent = s.view_error;
+    errEl.className = 'error-line error';
+  } else if ((s.units || []).length === 0) {
+    errEl.textContent = '0 live units matched this heuristic';
+    errEl.className = 'error-line note';
+  } else {
+    errEl.textContent = '';
+    errEl.className = 'error-line';
+  }
+}
+
+async function runQuery() {
+  const query = document.getElementById('query-text').value;
+  await post('/api/view/run', {query});
+  dirty = false;
+  poll();
+}
+
+async function resetQuery() {
+  await post('/api/view/reset');
+  dirty = false;
+  poll();
+}
+
+async function setMode(mode) {
+  await post('/api/algorithm/mode', {mode});
+  poll();
+}
+
+async function togglePause() {
+  const btn = document.getElementById('pause-btn');
+  const paused = btn.textContent === 'pause';
+  await post('/api/algorithm/pause', {paused});
+  poll();
+}
+
+async function setParam(resourceIri, holderIri, fieldId, value) {
+  // A rejection is recorded on the controller by the set route itself, so the next poll
+  // carries it -- nothing to remember here, and it survives a reload.
+  await post('/api/set', {resource_iri: resourceIri, holder_iri: holderIri, field_id: fieldId, value});
+  poll();
+}
+
+function formatValue(val, facets) {
+  if (typeof val === 'number') {
+    let s = val.toFixed(2);
+    if (facets && facets.hasUnit) s += ' ' + facets.hasUnit;
+    return s;
+  }
+  return String(val);
+}
+
+// The verdict itself is the server's (controller.py's WriteTracker). "Has this write
+// stopped converging?" is a domain judgement, and #82 requires it to be provable in a
+// test -- pytest cannot reach a function that lives in here. This only dresses it.
+function getRowStatus(param) {
+  const status = param.status;
+  if (!status) return {status: null, text: '', showTarget: false};
+
+  if (status === 'rejected') {
+    return {status: 'rejected', text: 'rejected: ' + (param.status_error || ''), showTarget: false};
+  }
+  if (status === 'settled') {
+    return {status: 'settled', text: 'settled', showTarget: false};
+  }
+
+  const commanded = param.commanded;
+  const cmdVal = commanded ? commanded.value : undefined;
+  if (status === 'diverged') {
+    return {status: 'diverged', text: 'diverged (stuck)', showTarget: true};
+  }
+  if (status === 'converging') {
+    return {status: 'converging', text: 'converging → ' + formatValue(cmdVal, {}), showTarget: true};
+  }
+  // A status this page does not know about: show it verbatim rather than dressing it as
+  // something familiar. Guessing here is how a new server-side state would go unnoticed.
+  return {status: status, text: status, showTarget: true};
+}
+
+function render(s) {
+  if (!s) return;
+  lastState = s;
+
+  if (!dirty && s.query !== undefined) {
+    document.getElementById('query-text').value = s.query;
+  }
+  reportViewOutcome(s);
+
+  const showIris = document.getElementById('show-iris').checked;
+  const algo = s.algorithm || {};
+
+  const modeTimed = document.getElementById('mode-timed');
+  const modeEvent = document.getElementById('mode-event');
+  modeTimed.classList.toggle('active', algo.mode === 'timed');
+  modeEvent.classList.toggle('active', algo.mode === 'event_driven');
+
+  const pauseBtn = document.getElementById('pause-btn');
+  pauseBtn.textContent = algo.paused ? 'resume' : 'pause';
+  pauseBtn.disabled = false;
+
+  // Set controls are inert while the algorithm runs, and live while paused (#82) --
+  // this line is the page's own explanation of *why*, tied to the same `algo.paused`
+  // flag that drives each row's own `disabled` attribute below, so the two can never
+  // say different things.
+  const statusEl = document.getElementById('algo-status');
+  if (algo.paused) {
+    statusEl.textContent = 'paused — set controls are live; drive a unit by hand, or resume to let the algorithm run again';
+  } else if (algo.mode === 'timed') {
+    if (algo.seconds_since_last_tick === null) {
+      statusEl.textContent = 'starting... (pause to drive a unit by hand)';
+    } else {
+      const next = Math.max(0, (algo.tick_seconds || 0) - (algo.seconds_since_last_tick || 0));
+      statusEl.textContent = 'next tick in ~' + next.toFixed(1) + 's — pause to drive a unit by hand';
+    }
+  } else {
+    if (algo.waiting_seconds !== null && algo.waiting_seconds !== undefined) {
+      statusEl.textContent = 'waiting for a change (' + algo.waiting_seconds.toFixed(1) + 's elapsed) — pause to drive a unit by hand';
+    } else {
+      statusEl.textContent = 'reacting to change — pause to drive a unit by hand';
+    }
+  }
+  
+  const stationsEl = document.getElementById('stations');
+  let html = '';
+  
+  for (const unit of (s.units || [])) {
+    const key = unit.resource_iri;
+    const expanded = expandedCards.has(key);
+    const unreachable = unit.unreachable || false;
+    
+    let ageText = '';
+    if (unreachable) {
+      if (unit.age_seconds !== null && unit.age_seconds !== undefined) {
+        ageText = 'last seen ' + Math.round(unit.age_seconds) + 's ago';
+      } else {
+        ageText = 'unknown';
+      }
+    }
+    
+    html += `<div class="card station-card ${expanded ? 'expanded' : ''} ${unreachable ? 'unreachable' : ''}"
+                 data-resource="${key}" data-teach="station-card">
+               <div class="header" onclick="toggleCard('${key.replace(/'/g, "\\'")}')">
+                 <h2>
+                   <span class="dot ${unreachable ? 'dead' : 'live'}"></span>
+                   ${unit.label || unit.resource_iri}
+                 </h2>
+                 <span class="meta">${unreachable ? ageText : ''}</span>
+               </div>
+               <div class="body">`;
+    
+    for (const param of (unit.parameters || [])) {
+      const statusInfo = getRowStatus(param);
+      const canEdit = param.access_mode === 'readwrite';
+      const disabled = !s.algorithm.paused;
+      
+      html += `<div class="param-row" data-teach="param-row">
+                 <div>
+                   <div class="label">${showIris ? param.field_iri : param.label}</div>`;
+      
+      if (showIris && param.assignment_expression) {
+        html += `<div class="iri-view"><code>${param.assignment_expression}</code></div>`;
+      }
+      if (showIris && param.pruned && param.pruned.length > 0) {
+        html += `<div class="pruned-note">pruned on load: ${param.pruned.join(', ')}</div>`;
+      }
+      
+      html += `</div>
+                 <div class="value">
+                   ${formatValue(param.value, param.facets)}
+                   ${statusInfo.status ? `<span class="status-badge" data-status="${statusInfo.status}">${statusInfo.text}</span>` : ''}
+                 </div>
+                 <div class="control">`;
+      
+      if (canEdit) {
+        html += `<input type="number" step="0.1" value="${param.value}" 
+                       ${disabled ? 'disabled' : ''}
+                       onchange="this.setAttribute('data-pending', this.value)">
+                 <button ${disabled ? 'disabled' : ''}
+                         onclick="setParam('${unit.resource_iri.replace(/'/g, "\\'")}',
+                                          '${param.holder_iri.replace(/'/g, "\\'")}',
+                                          '${param.field_id.replace(/'/g, "\\'")}',
+                                          parseFloat(this.previousElementSibling.getAttribute('data-pending') || this.previousElementSibling.value))">set</button>`;
+      }
+      
+      html += `</div>
+               </div>`;
+    }
+    
+    html += `</div>
+             </div>`;
+  }
+  
+  stationsEl.innerHTML = html || '<p class="sub">No units in view. Run a query above.</p>';
+  bind(); // Every card/row above is fresh markup -- (re)attach the teaching hovers to it.
+}
+
+function toggleCard(key) {
+  if (expandedCards.has(key)) {
+    expandedCards.delete(key);
+  } else {
+    expandedCards.add(key);
+  }
+  render(lastState);
+}
+
+// The teaching-hover mechanism (#68's pattern, mirroring templates/index.html): hovering
+// any [data-teach] element freezes the poll and shows what it is and which backend file
+// to read. Reused here for the view box, the algorithm bar, a station card's header, and
+// a parameter row -- the same four things #82's own teaching text names.
+function bind() {
+  document.querySelectorAll('[data-teach]').forEach(el => {
+    el.onmouseenter = () => teach(el.dataset.teach, el);
+    el.onmouseleave = idle;
+  });
+}
+
+function teach(key, el) {
+  const t = TEACH[key];
+  if (!t) return;
+  frozen = true;
+  el.classList.add('hot');
+  document.getElementById('teach').innerHTML =
+    `<div class="inner"><h3>${t.title}</h3><p>${t.what}</p>
+     <p>Open <code>${t.file}</code>.</p></div>`;
+}
+
+function idle() {
+  frozen = false;
+  document.querySelectorAll('.hot').forEach(n => n.classList.remove('hot'));
+  document.getElementById('teach').innerHTML =
+    '<div class="inner"><p class="idle">Point at the view box, the algorithm bar, a '
+    + 'card, or a row to read its teaching text. Hovering pauses the poll.</p></div>';
+}
+
+async function poll() {
+  if (frozen) return;
+  try {
+    const s = await (await fetch('/api/state')).json();
+    render(s);
+  } catch (e) {
+    console.error('Poll failed:', e);
+  }
+}
+
+idle();
+bind(); // Binds the static view-box/algo-bar/show-iris hovers before the first poll.
+poll();
+setInterval(poll, 2000);
+</script>
+

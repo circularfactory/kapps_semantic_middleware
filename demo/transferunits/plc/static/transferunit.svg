@@ -1,0 +1,99 @@
+<!--
+  A TransferUnit, seen from above. A workpiece enters at the front and leaves at the back.
+
+  The panel addresses these ids:
+    belt-left, belt-right                 the body of each chain conveyor
+    belt-left-motion, belt-right-motion   the chain. The panel sets animation-duration,
+                                          animation-play-state, and animation-direction
+                                          from the published speed (reverse for negative)
+    barrier-front, barrier-back           the barrier group. The panel sets class
+                                          "clear" or "occupied"
+    barrier-front-hit, barrier-back-hit   the workpiece on the beam. It shows only when
+                                          the barrier is occupied
+    label-left, label-right,              the text under each part. The panel writes the
+    label-front, label-back               live value into it
+-->
+<svg viewBox="0 0 360 300" xmlns="http://www.w3.org/2000/svg" class="graphic">
+<style>
+  .frame { fill:#e8e9ea; stroke:#8b8f93; stroke-width:2 }
+  .rail { fill:#c9ccd0; stroke:#8b8f93; stroke-width:1.5 }
+  .belt-body { fill:#3f4245; stroke:#26282a; stroke-width:1.5 }
+  .belt-edge { fill:none; stroke:#26282a; stroke-width:1.5 }
+  .chain { fill:url(#links) }
+  .roller { fill:#b9bcc0; stroke:#8b8f93; stroke-width:1 }
+  .module { fill:#d0d3d6; stroke:#8b8f93; stroke-width:1.5 }
+  .sensor { fill:#6b6f73 }
+  .beam { stroke-linecap:round }
+  .clear .beam { stroke:#2e7d32; stroke-width:2.5 }
+  .occupied .beam { stroke:#c62828; stroke-width:7 }
+  .hit { fill:#8a5a2b; stroke:#4a2f16; stroke-width:1.5 }
+  .clear .hit { display:none }
+  .label { font-family:system-ui,sans-serif; font-size:11px; fill:#4a4a4a;
+           text-anchor:middle }
+  @keyframes chain-run {
+    from { transform:translateY(0) }
+    to   { transform:translateY(-24px) }
+  }
+  #belt-left-motion, #belt-right-motion {
+    animation:chain-run 1s linear infinite;
+    animation-play-state:paused
+  }
+</style>
+
+<defs>
+  <pattern id="links" width="24" height="24" patternUnits="userSpaceOnUse">
+    <rect width="24" height="24" fill="#3f4245"/>
+    <rect x="4" y="3" width="16" height="7" rx="3" fill="#6d7276"/>
+    <rect x="4" y="15" width="16" height="7" rx="3" fill="#6d7276"/>
+  </pattern>
+  <clipPath id="clip-left"><rect x="66" y="34" width="40" height="232"/></clipPath>
+  <clipPath id="clip-right"><rect x="254" y="34" width="40" height="232"/></clipPath>
+</defs>
+
+<!-- the aluminium base frame -->
+<rect class="frame" x="30" y="24" width="300" height="252" rx="4"/>
+<rect class="rail" x="38" y="30" width="14" height="240" rx="2"/>
+<rect class="rail" x="308" y="30" width="14" height="240" rx="2"/>
+
+<!-- the transfer module between the two conveyors, with its cross rollers -->
+<rect class="module" x="106" y="118" width="148" height="74" rx="3"/>
+<rect class="roller" x="112" y="126" width="136" height="8" rx="4"/>
+<rect class="roller" x="112" y="142" width="136" height="8" rx="4"/>
+<rect class="roller" x="112" y="158" width="136" height="8" rx="4"/>
+<rect class="roller" x="112" y="174" width="136" height="8" rx="4"/>
+
+<!-- conveyor left -->
+<rect id="belt-left" class="belt-body" x="66" y="34" width="40" height="232" rx="3"/>
+<g clip-path="url(#clip-left)">
+  <rect id="belt-left-motion" class="chain" x="66" y="10" width="40" height="280"/>
+</g>
+<rect class="belt-edge" x="66" y="34" width="40" height="232" rx="3"/>
+
+<!-- conveyor right -->
+<rect id="belt-right" class="belt-body" x="254" y="34" width="40" height="232" rx="3"/>
+<g clip-path="url(#clip-right)">
+  <rect id="belt-right-motion" class="chain" x="254" y="10" width="40" height="280"/>
+</g>
+<rect class="belt-edge" x="254" y="34" width="40" height="232" rx="3"/>
+
+<!-- light barrier front, near the entry edge -->
+<g id="barrier-front" class="clear">
+  <rect class="sensor" x="44" y="228" width="10" height="16" rx="2"/>
+  <rect class="sensor" x="306" y="228" width="10" height="16" rx="2"/>
+  <line class="beam" x1="56" y1="236" x2="304" y2="236"/>
+  <rect id="barrier-front-hit" class="hit" x="160" y="222" width="40" height="28" rx="3"/>
+</g>
+
+<!-- light barrier back, near the exit edge -->
+<g id="barrier-back" class="clear">
+  <rect class="sensor" x="44" y="56" width="10" height="16" rx="2"/>
+  <rect class="sensor" x="306" y="56" width="10" height="16" rx="2"/>
+  <line class="beam" x1="56" y1="64" x2="304" y2="64"/>
+  <rect id="barrier-back-hit" class="hit" x="160" y="50" width="40" height="28" rx="3"/>
+</g>
+
+<text id="label-back" class="label" x="180" y="46">back</text>
+<text id="label-front" class="label" x="180" y="262">front</text>
+<text id="label-left" class="label" x="92" y="292">left</text>
+<text id="label-right" class="label" x="268" y="292">right</text>
+</svg>

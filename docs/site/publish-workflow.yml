@@ -1,0 +1,140 @@
+# Docs publish workflow --- #116.
+#
+# THIS FILE IS A TEMPLATE. It belongs at `.github/workflows/docs.yml` in the
+# PUBLIC RELEASE REPO under circularfactory, not in the dev repo. Kept here so
+# it is reviewed and vendored with the rest of the docs config, and so it does
+# not start firing on tags in the development repository.
+#
+# What it enacts, all decided on #116:
+#   - deploy-pages, so nothing generated is ever committed to git and `main`
+#     keeps its one clean release commit of source only (map decision #4).
+#   - deploy-pages REPLACES the whole site each run, so older versions are
+#     restored from their own release assets rather than rebuilt. An old
+#     version is never built again and therefore cannot rot.
+#   - the doctree cache goes outside the output tree (-d); leaving it inside
+#     tripled the published size, 8.1M -> 23M.
+name: docs
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write # `gh release upload` writes this version's archive
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # The interim pin block that stood here is gone, exactly as its own comment
+      # promised: "Once #120 lands, this whole block collapses to `pip install .`."
+      # #167 landed #120. All three siblings are published, `[tool.uv.sources]` is
+      # cut, and the manifest's own floors resolve from the index -- so there is
+      # nothing left for a git URL to pin and no private access involved in a docs
+      # build. The three lines it replaced pinned `aas-middleware` and `kapps-ogm`
+      # to commits on repositories that are no longer where either is developed.
+      - name: Install the library
+        run: pip install .
+
+      - name: Install the docs toolchain
+        run: pip install -r docs/site/requirements.txt
+
+      - name: Work out the version
+        id: ver
+        run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      # Older versions come back byte-identical from the archive each release
+      # attached to its own tag. Nothing old is ever rebuilt.
+      - name: Restore previously released versions
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p site/v
+          for tag in $(gh release list --limit 100 --json tagName --jq '.[].tagName'); do
+            [ "$tag" = "${GITHUB_REF_NAME}" ] && continue
+            v="${tag#v}"
+            rm -rf /tmp/prev && mkdir -p /tmp/prev
+            if gh release download "$tag" -p docs.tar.gz -D /tmp/prev 2>/dev/null; then
+              mkdir -p "site/v/$v"
+              tar xzf /tmp/prev/docs.tar.gz -C "site/v/$v"
+              echo "restored $v from $tag"
+            else
+              echo "no docs archive on $tag, skipping"
+            fi
+          done
+
+      - name: Build this version
+        run: |
+          sphinx-build -b html -W --keep-going \
+            -d /tmp/doctrees \
+            docs/site "site/v/${{ steps.ver.outputs.version }}"
+
+      - name: Archive this version onto its release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tar czf docs.tar.gz -C "site/v/${{ steps.ver.outputs.version }}" .
+          gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1 \
+            || gh release create "${GITHUB_REF_NAME}" --title "${GITHUB_REF_NAME}" --notes "Documentation build."
+          gh release upload "${GITHUB_REF_NAME}" docs.tar.gz --clobber
+
+      # `latest/` is a COPY, not a symlink: upload-pages-artifact does not
+      # preserve symlinks reliably, and a broken `latest` is a broken site.
+      - name: Assemble latest/, switcher.json and the root redirect
+        run: |
+          V="${{ steps.ver.outputs.version }}"
+          rm -rf site/latest && cp -r "site/v/$V" site/latest
+
+          # Newest first, so the switcher lists the current release at the top.
+          versions=$(ls site/v | sort -Vr)
+          {
+            echo "["
+            first=1
+            for v in $versions; do
+              [ $first -eq 0 ] && echo ","
+              first=0
+              if [ "$v" = "$V" ]; then
+                printf '  {"name": "%s (stable)", "version": "%s", "url": "%s/v/%s/", "preferred": true}' \
+                  "$v" "$v" "${{ vars.DOCS_BASE_URL || 'https://circularfactory.github.io/kapps_semantic_middleware' }}" "$v"
+              else
+                printf '  {"name": "%s", "version": "%s", "url": "%s/v/%s/"}' \
+                  "$v" "$v" "${{ vars.DOCS_BASE_URL || 'https://circularfactory.github.io/kapps_semantic_middleware' }}" "$v"
+              fi
+            done
+            echo ""
+            echo "]"
+          } > site/latest/_static/switcher.json
+
+          cat > site/index.html <<'HTML'
+          <!doctype html>
+          <meta http-equiv="refresh" content="0; URL=latest/">
+          <title>Redirecting</title>
+          <p>Redirecting to <a href="latest/">latest/</a></p>
+          HTML
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

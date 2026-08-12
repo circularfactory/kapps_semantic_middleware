@@ -1,0 +1,40 @@
+# This workflow is the backstop for commits made directly in the public repo.
+# The pre-push gate in the dev checkout cannot see those commits, so the public
+# repo needs its own CI that runs the same hygiene checks.
+#
+# Checks 2-5. Only check 1 (remotes) is left out: a runner's remote is whatever
+# actions/checkout configured and says nothing about the release. Check 2 is the
+# reason this file exists, and fetch-depth: 0 below is what lets it read the
+# whole history rather than the one commit a shallow checkout would give it.
+
+name: hygiene
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  hygiene:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Run the release hygiene checks
+        run: python scripts/release_checks.py .
+
+      # A tool published under the org but carrying no cf-tool topic is absent
+      # from the front door, which is a thing nobody notices by looking at the
+      # repository. release_checks.py is not the place for it: that file is
+      # stdlib-only and judges a tree, and this needs the API.
+      - name: Front-door registration
+        if: startsWith(github.repository, 'circularfactory/')
+        run: |
+          gh api repos/${{ github.repository }} --jq '.topics[]' | grep -qx cf-tool || {
+            echo "::error::Published under circularfactory but carries no cf-tool topic, so it is absent from the front door."
+            exit 1; }
+        env:
+          GH_TOKEN: ${{ github.token }}

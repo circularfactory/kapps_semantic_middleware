@@ -1,0 +1,36 @@
+services:
+  # GraphDB server — tag is pinnable; 10.x matches the KIT server's ShaclSail config style
+  graphdb:
+    image: ontotext/graphdb:10.8.1
+    ports:
+      - "7200:7200"
+    volumes:
+      # Data path is version-dependent; /opt/graphdb/home is correct for 10.x
+      - graphdb-data:/opt/graphdb/home
+    restart: unless-stopped
+
+  # Init container: creates the kapps-demo repository via the REST API (idempotent)
+  graphdb-init:
+    image: curlimages/curl:8.11.0
+    depends_on:
+      - graphdb
+    volumes:
+      - ./graphdb-repo-config.ttl:/config/graphdb-repo-config.ttl:ro
+    command: >-
+      /bin/sh -c "
+        until curl -sf http://graphdb:7200/rest/repositories >/dev/null 2>&1; do
+          echo 'waiting for graphdb...';
+          sleep 2;
+        done;
+        if curl -sf http://graphdb:7200/repositories/kapps-demo/size >/dev/null 2>&1; then
+          echo 'repository kapps-demo already exists';
+          exit 0;
+        fi;
+        curl -sf -X POST http://graphdb:7200/rest/repositories -H 'Content-Type: multipart/form-data' -F 'config=@/config/graphdb-repo-config.ttl' && echo 'repository kapps-demo created';
+      "
+    restart: "no"
+
+volumes:
+  graphdb-data:
+
+# No MQTT broker service here — the demo keeps its per-unit in-process amqtt broker (ADR 0034)

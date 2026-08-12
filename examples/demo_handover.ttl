@@ -1,0 +1,42 @@
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix cfc: <https://w3id.org/circularfactory/Core#> .
+@prefix ex:  <https://example.org/kapps-demo#> .
+
+#################################################################
+# Self-contained ground-truth ontology for the handover scenario ONLY.
+#
+# Declares exactly the Core possession terms the OGM must have to validate a
+# change-of-possession through its single validated write path (ADR 0008): the
+# reified cfc:PossessionState with cfc:hasPossessor (Resource -> PossessionState)
+# and cfc:hasPossessedWorkpiece (Workpiece -> PossessionState). These mirror the
+# real Core 0.9.0 exactly (verified). Plus the two handover domain classes. The
+# handover-ability vocabulary (mes:) is loaded separately from ontology/mes.ttl.
+#################################################################
+
+# --- Core possession stubs (verified against Core 0.9.0) needed for OGM-validated writes ---
+cfc:Resource rdf:type owl:Class .
+cfc:PossessionState rdf:type owl:Class .
+cfc:Workpiece rdf:type owl:Class .
+
+cfc:hasPossessor rdf:type owl:ObjectProperty ;
+    rdfs:domain cfc:Resource ;
+    rdfs:range cfc:PossessionState ;
+    rdfs:label "has possessor" .
+
+cfc:hasPossessedWorkpiece rdf:type owl:ObjectProperty ;
+    rdfs:domain cfc:Workpiece ;
+    rdfs:range cfc:PossessionState ;
+    rdfs:label "has possessed workpiece" .
+
+# --- Handover scenario domain classes ---
+ex:TransferModule rdf:type owl:Class ;
+    rdfs:subClassOf cfc:Resource ;
+    rdfs:label "Transfer Module" ;
+    rdfs:comment "A resource that can give or take a workpiece in a handover (a robot, a conveyor module, etc.)." .
+
+ex:Box rdf:type owl:Class ;
+    rdfs:subClassOf cfc:Workpiece ;
+    rdfs:label "Box" ;
+    rdfs:comment "A material-flow workpiece handed over between transfer modules." .

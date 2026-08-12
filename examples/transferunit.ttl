@@ -1,0 +1,114 @@
+@prefix owl:  <http://www.w3.org/2002/07/owl#> .
+@prefix rdf:  <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd:  <http://www.w3.org/2001/XMLSchema#> .
+@prefix cfc:  <https://w3id.org/circularfactory/Core#> .
+@prefix svc:  <https://w3id.org/circularfactory/Service#> .
+@prefix inf:  <https://www.sfb1574.kit.edu/ontologies/CrcInterfaces#> .
+@prefix tu:   <https://www.sfb1574.kit.edu/ontologies/TransferUnit#> .
+
+inf:isInterfaceAccessibleParameter rdf:type owl:ObjectProperty ;
+    rdfs:label "is interface-accessible parameter" ;
+    rdfs:comment "Marks a property whose value is reachable over some protocol interface. Its range carries the interface content that is safe to serve northbound: the access mode and nothing else." ;
+    rdfs:range [ rdf:type owl:Class ;
+        owl:intersectionOf (
+            [ rdf:type owl:Restriction ; owl:onProperty inf:accessMode ; owl:allValuesFrom xsd:string ]
+        ) ] .
+
+inf:isInterfaceAccessibleMQTTParameter rdf:type owl:ObjectProperty ;
+    rdfs:subPropertyOf inf:isInterfaceAccessibleParameter ;
+    rdfs:label "is interface-accessible MQTT parameter" ;
+    rdfs:comment "Marks a parameter reached over MQTT. Its range carries the MQTT connection contract, which is southbound only: a consumer merging only up to the parent property never sees it." ;
+    rdfs:range [ rdf:type owl:Class ;
+        owl:intersectionOf (
+            [ rdf:type owl:Restriction ; owl:onProperty inf:hasMQTTTopic     ; owl:allValuesFrom xsd:string ]
+            [ rdf:type owl:Restriction ; owl:onProperty inf:hasMQTTBrokerIP  ; owl:allValuesFrom xsd:string ]
+            [ rdf:type owl:Restriction ; owl:onProperty inf:hasMQTTBrokerPort ; owl:allValuesFrom xsd:integer ]
+            [ rdf:type owl:Restriction ; owl:onProperty inf:hasMQTTSetTopic  ; owl:allValuesFrom xsd:string ]
+            [ rdf:type owl:Restriction ; owl:onProperty inf:hasMQTTValuePath ; owl:allValuesFrom xsd:string ]
+        ) ] .
+
+inf:hasValue rdf:type owl:DatatypeProperty ;
+    rdfs:label "has value" ;
+    rdfs:comment "The parameter's value. Not typed globally: each parameter's restriction declares its own datatype. Under the locator pattern it is never authored in instance data." .
+
+inf:accessMode rdf:type owl:DatatypeProperty ;
+    rdfs:label "access mode" ;
+    rdfs:comment "The settability facet, \"read\" or \"readwrite\". Northbound content: it tells a peer whether it may write." .
+
+inf:hasMQTTTopic rdf:type owl:DatatypeProperty ;
+    rdfs:label "has MQTT topic" ;
+    rdfs:comment "The topic the device publishes this parameter's readings on." .
+
+inf:hasMQTTSetTopic rdf:type owl:DatatypeProperty ;
+    rdfs:label "has MQTT set topic" ;
+    rdfs:comment "The topic a setpoint is published to. Present only on a readwrite parameter." .
+
+inf:hasMQTTBrokerIP rdf:type owl:DatatypeProperty ;
+    rdfs:label "has MQTT broker IP" ;
+    rdfs:comment "Address of the broker carrying this parameter's topics." .
+
+inf:hasMQTTBrokerPort rdf:type owl:DatatypeProperty ;
+    rdfs:label "has MQTT broker port" ;
+    rdfs:comment "Port of the broker carrying this parameter's topics. Absent means 1883." .
+
+inf:hasMQTTValuePath rdf:type owl:DatatypeProperty ;
+    rdfs:label "has MQTT value path" ;
+    rdfs:comment "Dotted path to the value inside a JSON envelope, honoured symmetrically on read and write. Absent means the payload is a raw scalar." .
+
+tu:TransferUnit rdf:type owl:Class ;
+    rdfs:subClassOf cfc:Resource ;
+    rdfs:label "Transfer Unit" ;
+    rdfs:comment "A material-transport resource composed of conveyor belts and light barriers; moves a workpiece across a transfer point under decentralized PLC control." .
+
+tu:ConveyorBelt rdf:type owl:Class ;
+    rdfs:subClassOf cfc:Resource ;
+    rdfs:label "Conveyor Belt" ;
+    rdfs:comment "A driven belt of a TransferUnit. Its conveyor speed is a settable control variable reached over MQTT." .
+
+tu:LightBarrier rdf:type owl:Class ;
+    rdfs:subClassOf cfc:Resource ;
+    rdfs:label "Light Barrier" ;
+    rdfs:comment "A photoelectric occupancy sensor of a TransferUnit. Its blocked/clear state is read-only." .
+
+tu:hasConveyorBelt rdf:type owl:ObjectProperty ;
+    rdfs:label "hasConveyorBelt" ;
+    rdfs:comment "Relates a TransferUnit to a ConveyorBelt component it is composed of." ;
+    rdfs:domain tu:TransferUnit ;
+    rdfs:range tu:ConveyorBelt .
+
+tu:hasLightBarrier rdf:type owl:ObjectProperty ;
+    rdfs:label "hasLightBarrier" ;
+    rdfs:comment "Relates a TransferUnit to a LightBarrier component it is composed of." ;
+    rdfs:domain tu:TransferUnit ;
+    rdfs:range tu:LightBarrier .
+
+tu:hasConveyorSpeed rdf:type owl:ObjectProperty ;
+    rdfs:subPropertyOf inf:isInterfaceAccessibleMQTTParameter ;
+    rdfs:label "has conveyor speed" ;
+    rdfs:comment "MQTT-accessible speed attribute of a conveyor belt (value and unit)." ;
+    rdfs:domain tu:ConveyorBelt ;
+    rdfs:range [ rdf:type owl:Class ;
+        owl:intersectionOf (
+            [ rdf:type owl:Restriction ; owl:onProperty inf:hasValue ; owl:allValuesFrom xsd:float  ]
+            [ rdf:type owl:Restriction ; owl:onProperty tu:hasUnit   ; owl:allValuesFrom xsd:string ]
+        ) ] .
+
+tu:isOccupied rdf:type owl:ObjectProperty ;
+    rdfs:subPropertyOf inf:isInterfaceAccessibleMQTTParameter ;
+    rdfs:label "is occupied" ;
+    rdfs:comment "MQTT-accessible occupancy attribute of a light barrier (value only; an occupancy has no unit). Read-only: its ABox carries inf:accessMode \"read\" and no set topic." ;
+    rdfs:domain tu:LightBarrier ;
+    rdfs:range [ rdf:type owl:Class ;
+        owl:intersectionOf (
+            [ rdf:type owl:Restriction ; owl:onProperty inf:hasValue ; owl:allValuesFrom xsd:boolean ]
+        ) ] .
+
+tu:hasUnit rdf:type owl:DatatypeProperty ;
+    rdfs:label "has unit" ;
+    rdfs:comment "The unit of a parameter's value." .
+
+tu:TransferUnitService rdf:type owl:Class ;
+    rdfs:subClassOf svc:Service ;
+    rdfs:label "Transfer Unit Service" ;
+    rdfs:comment "The middleware Service wrapping a TransferUnit, exposing its belts' and barriers' parameters over REST and registering its reachability in the graph." .
