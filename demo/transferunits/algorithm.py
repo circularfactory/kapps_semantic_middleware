@@ -4,25 +4,25 @@ This module is the only place in the demo's **runtime control path** allowed to 
 domain terms like ``tu:TransferUnit``, ``tu:hasConveyorBelt``. The claim is narrower than
 "the only place in this demo", which it used to say and which was never true: ``seed.py``
 names them throughout, as it must -- it stands in for the TransferUnit Expert writing the
-factory into the graph, which is the other half of ADR 0033's two experts (#93 item 5).
+factory into the graph, which is the other half of the two-expert split.
 The line this draws is between the *Control* Expert's code and the generic mechanism it
 runs on. The generic ``Controller`` mechanism
 in ``controller.py`` deliberately knows nothing about any domain class -- it executes
 the view, wires connectors, and loads datamodels, but the *what* (which class, which
-heuristic) lives here, not there. This separation realizes ADR 0033's core claim: the
+heuristic) lives here, not there. This separation realizes the connector seam's core claim: the
 Control Expert and the TransferUnit Expert never meet, and neither imports the other's
 code. The knowledge graph is the entire contract.
 
 The algorithm itself is deliberately meaningless -- it demonstrates reach, not real
 control. It reads a barrier on one unit and echoes that unit's conveyor speed onto
-another unit's conveyor ("set a speed from a random other unit's speed", per ADR 0033
-step 5). A real material flow controller would route parcels across units by reading
+another unit's conveyor ("set a speed from a random other unit's speed", the Control
+Expert's step 5). A real material flow controller would route parcels across units by reading
 barriers and deciding which unit to trigger; this demo does none of that because
 building a real one is domain work, not middleware work. The graph carries no plant
 layout, so nothing here can route anything, and that is the MVP boundary rather than
 an oversight.
 
-The background loop's own runtime knobs -- mode, pause, tick length (#82) -- are
+The background loop's own runtime knobs -- mode, pause, tick length -- are
 :class:`AlgorithmState`, not module state: a demo runs one controller per process, but
 nothing here should assume that, so the state a station-board route flips lives on an
 object ``control_station.py`` constructs and threads through, not on this module.
@@ -65,7 +65,7 @@ objects already held in memory (``controller.units``), not a network call."""
 
 
 class AlgorithmMode(str, enum.Enum):
-    """The two ways the demonstration algorithm's background loop can fire (#82).
+    """The two ways the demonstration algorithm's background loop can fire.
 
     A plain ``str`` subclass so a mode round-trips through JSON with no translation
     layer between the loop, the page's toggle and a test's assertion.
@@ -81,7 +81,7 @@ class AlgorithmMode(str, enum.Enum):
 @dataclass
 class AlgorithmState:
     """Runtime knobs for the background loop, shared between it and every station-board
-    route that reads or flips one (#82).
+    route that reads or flips one.
 
     One instance is constructed in ``control_station.py``'s ``main()`` and threaded
     through to both ``run_algorithm_loop`` and ``station_board.configure_board`` --
@@ -93,21 +93,14 @@ class AlgorithmState:
     """
 
     tick_seconds: float
-    """The timed mode's interval. Must exceed one lap of PUT -> unit middleware -> MQTT
-    -> PLC -> MQTT back -> connector read (#82's own acceptance criterion), or the
-    algorithm writes again before it can observe its last write and the board
-    oscillates.
-
-    The default is still *reasoned* rather than measured -- see ``control_station.py``'s
-    ``--tick``. #94 (a belt's setpoint overwritten mid-ramp by a sibling's fan-out echo)
-    stops a belt short of its command, so no honest lap time can be taken until it is
-    fixed; #82's "measure one lap" criterion stays open on that."""
+    """The timed mode's interval. The constraint on it, and the measured lap behind its
+    default, are stated on ``control_station.DEFAULT_TICK_SECONDS``."""
 
     mode: AlgorithmMode = AlgorithmMode.TIMED
     """Which of the two firing rules is currently active. Switchable at runtime."""
 
     paused: bool = False
-    """The human-facing global pause (#82: "pause to drive"). While true, neither mode
+    """The human-facing global pause ("pause to drive"). While true, neither mode
     fires a tick, and every set control on the page is enabled -- station_board.py
     reads this one field to decide which state to show; there is no second flag to keep
     in sync with it."""
@@ -120,7 +113,7 @@ class AlgorithmState:
     """Event-driven mode only: ``time.monotonic()`` of when it started watching for a
     change with none seen yet. ``None`` whenever timed mode is active, or the instant
     after a reaction fires. Backs the page's explicit "waiting for a change" state
-    (#82: idle must not read as broken)."""
+    (idle must not read as broken)."""
 
 
 def _barrier_snapshot(controller: Controller) -> Dict[str, Tuple[bool, ...]]:
@@ -148,7 +141,7 @@ def _barrier_snapshot(controller: Controller) -> Dict[str, Tuple[bool, ...]]:
 def build_view_query() -> str:
     """Build the SPARQL SELECT query that finds live, even-indexed TransferUnits.
 
-    This realizes ADR 0033 step 1: the view is the query, and the query text supplies
+    This realizes the Control Expert's step 1: the view is the query, and the query text supplies
     the domain class and any heuristic. ``Controller.view()`` runs this verbatim and
     returns every IRI it binds to ``?resource``. Nothing in ``controller.py`` assumes
     a domain class or a column beyond ``?resource`` itself.
@@ -185,11 +178,11 @@ def build_view_query() -> str:
 def unit_class_scope() -> ClassScope:
     """Return the ClassScope that roots at tu:TransferUnit and reaches belt/barrier parameters.
 
-    This is the Control Expert's own view of one hit's shape (ADR 0018, ADR 0033). It must
+    This is the Control Expert's own view of one hit's shape. It must
     match what the unit's own middleware uses (``demo/transferunits/middleware.py``'s own
     ``class_scope``), because the expert needs to see the same nested parameters the unit
     exposes. Built from ``seed``'s constants so the demo package remains self-contained
-    (ADR 0030: "the duplication ends in its own commit").
+    ("the duplication ends in its own commit").
 
     Returns:
         A ClassScope with two property chains: belt->speed and barrier->occupied.
@@ -206,7 +199,7 @@ def _first_belt_speed(unit, unit_iri: IRI, role: str):
     """``(belt, speed_parameter)`` for a unit's first conveyor belt, or ``(None, None)``.
 
     Collapses what were four near-identical ``getattr`` -> ``if not`` -> ``warning`` ->
-    ``return None`` blocks, twice over for source and target (#93 item 5). It also takes
+    ``return None`` blocks, twice over for source and target. It also takes
     the three-deep walk with it: reaching a value means
     ``getattr(getattr(belts[0], ...)[0], INF.hasValue.lined)``, and repeating that by hand
     is how the two copies drifted in the first place.
@@ -230,13 +223,13 @@ def _first_belt_speed(unit, unit_iri: IRI, role: str):
 
 
 async def run_algorithm_once(controller: Controller) -> Optional[IRI]:
-    """Execute one tick of the demonstration algorithm (ADR 0033 step 5).
+    """Execute one tick of the demonstration algorithm (the Control Expert's step 5).
 
     Deliberately meaningless -- it demonstrates reach, not real control. Picks two
     distinct unit IRIs at random from ``controller.units``, reads a barrier on the
     source (proving it was reachable), reads the source's conveyor speed, and echoes
     that speed onto the target's conveyor ("set a speed from a random other unit's
-    speed", per ADR 0033). No HTTP call happens in this function's body -- only
+    speed"). No HTTP call happens in this function's body -- only
     ``controller.push`` drives the assignment out.
 
     If fewer than 2 units are loaded, returns ``None`` and logs at DEBUG that there was
@@ -264,7 +257,7 @@ async def run_algorithm_once(controller: Controller) -> Optional[IRI]:
     target_unit = controller.units[target_iri_str]
 
     # Read the source unit's first light barrier's isOccupied value (read-only, to
-    # prove reachability per ADR 0033 step 4's "read a barrier").
+    # prove reachability per the Control Expert's step 4, "read a barrier").
     source_barriers = getattr(source_unit, seed.TU_HAS_LIGHT_BARRIER.lined)
     if source_barriers:
         occupied_param = getattr(source_barriers[0], seed.TU_IS_OCCUPIED.lined)
@@ -285,8 +278,8 @@ async def run_algorithm_once(controller: Controller) -> Optional[IRI]:
         return None
     setattr(target_speed_param, INF.hasValue.lined, speed_value)
 
-    # Record what this write is asking for before driving it out (#82): the served
-    # datamodel carries only the observed value (ADR 0024's locator pattern), so this is
+    # Record what this write is asking for before driving it out: the served
+    # datamodel carries only the observed value (the locator pattern), so this is
     # the only place the station board could ever learn "commanded" from, for a write
     # the algorithm made and no human's browser initiated.
     controller.writes.record_commanded(
@@ -299,7 +292,7 @@ async def run_algorithm_once(controller: Controller) -> Optional[IRI]:
     # background loop that catches only CancelledError, so letting a dead unit's PUT
     # propagate would silently end the loop while the board went on counting down to a
     # tick that will never come. Recording it puts the same `rejected` badge on the row a
-    # human's failed write gets (#82), which is the visible half of the same event.
+    # human's failed write gets, which is the visible half of the same event.
     try:
         await controller.push(target_iri)
     except Exception as exc:
@@ -314,7 +307,7 @@ async def run_algorithm_once(controller: Controller) -> Optional[IRI]:
 
 
 async def run_algorithm_loop(controller: Controller, state: AlgorithmState) -> None:
-    """Run the algorithm in the background, honouring ``state``'s mode and pause (#82).
+    """Run the algorithm in the background, honouring ``state``'s mode and pause.
 
     An ``async def`` with ``try: while True: ... except asyncio.CancelledError: pass`` --
     the exact pattern ``SemanticMiddleware`` uses for its own heartbeat (see
@@ -331,7 +324,7 @@ async def run_algorithm_loop(controller: Controller, state: AlgorithmState) -> N
       switch or a startup, since there is nothing yet to compare it against.
 
     Both rules are gated the same way on every watch tick: ``state.paused`` (the
-    human's "pause to drive") and ``controller.rebuild_lock.locked()`` (#82: "the
+    human's "pause to drive") and ``controller.rebuild_lock.locked()`` ("the
     algorithm auto-pauses across a rebuild and resumes" -- the lock already marks
     exactly a rebuild's duration, so this needs no second flag to track that
     separately, and cannot drift out of step with it).
@@ -358,9 +351,9 @@ async def run_algorithm_loop(controller: Controller, state: AlgorithmState) -> N
                 # Sleep in WATCH_INTERVAL_SECONDS-sized chunks rather than one bare
                 # `asyncio.sleep(state.tick_seconds)`: a single long sleep is exactly as
                 # slow to notice a pause, a rebuild or a runtime mode switch as
-                # `tick_seconds` itself, which is 8s by default and the issue's own
-                # example widens it to 15s for a presentation -- "the toggle switches
-                # between them at runtime" (#82's own acceptance criterion) must not mean
+                # `tick_seconds` itself, which is 8s by default and which a presentation
+                # may widen to 15s -- the board's toggle switches between them at runtime,
+                # and that must not mean
                 # "eventually, once the current tick finishes". Chunking below
                 # WATCH_INTERVAL_SECONDS costs nothing when tick_seconds is itself
                 # shorter (the `min` collapses to one chunk, unchanged from a bare sleep).
@@ -383,8 +376,8 @@ async def run_algorithm_loop(controller: Controller, state: AlgorithmState) -> N
                 state.last_tick_at = time.monotonic()
                 continue
 
-            # Event-driven: quiescent until a barrier reading changes (#82: idle must
-            # show an explicit "waiting for a change" state rather than read as broken).
+            # Event-driven: quiescent until a barrier reading changes. Idle must show an
+            # explicit "waiting for a change" state rather than read as broken.
             if state.waiting_since is None:
                 state.waiting_since = time.monotonic()
             snapshot = _barrier_snapshot(controller)

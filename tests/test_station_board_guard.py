@@ -1,19 +1,19 @@
-"""Guard tests enforcing separation of concerns for the station board (#82, ADR 0029).
+"""Guard tests enforcing separation of concerns for the station board.
 
 - control_station.py names no FastAPI route decorator or response class -- it is the
   runner, not the routes file.
 - station_board.py names no subprocess/signal -- it is the routes file, not the runner.
 - Neither file (nor algorithm.py, which also drives a write) names an HTTP client
   directly -- every write reaches a peer through Controller.push(), never a raw PUT
-  issued from demo code. This is the "PUT-grep guard" #82's acceptance criteria cite:
-  ADR 0032 already states the underlying invariant ("a consumer cannot drive, because
+  issued from demo code. This is the "PUT-grep guard":
+  The monitor design already states the underlying invariant ("a consumer cannot drive, because
   its own code holds no method that sends a PUT request") and notes "the guard test
   follows the wiring rather than the source text" -- the wiring-level half of that is
   _VIEW_REGISTRY's REST-only recognition (tests/test_controller_view.py), and this is
   the source-text half, shaped after tests/test_plc_guard.py and
   tests/test_launcher_index_guard.py's own AST-based checks.
 - Every backend file named in station_board.TEACH exists on disk, so a tooltip never
-  points at a file that moved (the #68 pattern).
+  points at a file that moved (the launcher page's pattern).
 """
 
 from __future__ import annotations
@@ -95,10 +95,10 @@ def test_station_board_never_imports_from_control_station():
 
 
 def test_no_demo_file_issues_an_http_call_directly():
-    """The PUT-grep guard (#82's acceptance criteria; the invariant itself is ADR
-    0032's: "a consumer cannot drive, because its own code holds no method that sends
+    """The PUT-grep guard (the invariant itself is the
+    monitor design's: "a consumer cannot drive, because its own code holds no method that sends
     a PUT request"). station_board.py and algorithm.py are the two demo files that
-    drive a write in this ticket's own code paths -- neither may import an HTTP client.
+    drive a write in the station board's own code paths -- neither may import an HTTP client.
     Every write reaches a peer exclusively through Controller.push(), whose own PUT
     lives in the REST connector inside src/kapps_semantic_middleware/, not here.
     """
@@ -122,7 +122,7 @@ def test_station_board_names_no_raw_put_call():
 
 def test_teach_files_exist_on_disk():
     """Every backend file named in station_board.TEACH must exist, so a tooltip never
-    lies about it (the #68 pattern, mirrored from
+    lies about it (the launcher page's pattern, mirrored from
     test_launcher_index_guard.py::test_teach_files_exist_on_disk)."""
     from demo.transferunits import station_board
 
@@ -134,7 +134,7 @@ def test_teach_files_exist_on_disk():
 
 
 # The domain terms of scenario 3. `algorithm.py` is allowed to name these; nothing else in
-# the demo is (root ADR 0004, and station_board.py's own module docstring).
+# the demo is (see station_board.py's own module docstring).
 SCENARIO_3_DOMAIN_TERMS = (
     "tu:",
     "TransferUnit",

@@ -22,13 +22,11 @@ It is domain-facing. It covers possession and handover-ability vocabulary.
 `inf:` is the interface vocabulary. It defines what makes a domain parameter reachable
 over a protocol. It is authored for now under the existing CrcInterfaces IRI, so scenario
 3 stays vocabulary-compatible with the minimal example shared across `kapps_triplestore_interface`
-and `kapps_ogm`. CrcInterfaces is deprecated. The consolidation capstone (#39) re-homes
+and `kapps_ogm`. CrcInterfaces is deprecated. A planned consolidation re-homes
 these terms under the `inf:` name it mints. Code must therefore reach these terms only
 through `class INF`, never inline at a use site. A rename is then one constant
 here, plus a find-and-replace.
 """
-
-# ADR: 0012, 0021
 
 from __future__ import annotations
 
@@ -44,7 +42,7 @@ CORE_ONTOLOGY = IRI("https://w3id.org/circularfactory/Core")
 SVC_ONTOLOGY = IRI("https://w3id.org/circularfactory/Service")
 MES_ONTOLOGY = IRI("https://w3id.org/circularfactory/MES")
 
-# The three W3C namespaces. Here for the same reason as everything else in this file: ADR 0021
+# The three W3C namespaces. Here for the same reason as everything else in this file: the library
 # wants one home for every ontology IRI, and these were previously spelled out at five separate
 # use sites across the library and the demo.
 RDF_NS = "http://www.w3.org/1999/02/22-rdf-syntax-ns#"
@@ -118,9 +116,9 @@ class SVC:
     endpoint = IRI("endpoint", base=SVC_NS)  # Workflow|StateProperty -> xsd:anyURI (full URL)
     lastHeartbeat = IRI("lastHeartbeat", base=SVC_NS)  # Service -> xsd:dateTime
 
-    # Execution provenance (R12, ADR 0009) — written onto a cfc:Operation by the pull-and-run
+    # Execution provenance (R12) — written onto a cfc:Operation by the pull-and-run
     # terminal transition. Success is carried by the terminal operationStatus (done/failed).
-    operationStatus = IRI("operationStatus", base=SVC_NS)  # Operation -> xsd:string (queued/running/done/failed, ADR 0009)
+    operationStatus = IRI("operationStatus", base=SVC_NS)  # Operation -> xsd:string (queued/running/done/failed)
     executedByWorkflow = IRI("executedByWorkflow", base=SVC_NS)  # Operation -> Workflow
     executionTimestamp = IRI("executionTimestamp", base=SVC_NS)  # Operation -> xsd:dateTime
     executionResult = IRI("executionResult", base=SVC_NS)  # Operation -> xsd:string
@@ -168,8 +166,6 @@ class INF:
     The core never decides which terms are southbound by name. A binding descriptor declares its
     own ``connection_metadata``. The registry takes the union.
     """
-
-    # ADR: 0015, 0021, 0028
 
     # Interface marker properties. A domain property becomes interface-accessible by being
     # rdfs:subPropertyOf one of these. The protocol marker is a subproperty of the generic one.

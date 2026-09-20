@@ -1,24 +1,24 @@
 """The control station runner for the factory demo.
 
-It serves the Controller (ticket #43) as a resource-mode middleware, with the station
-board's own routes and template (ticket #82, ADR 0029's split) grafted onto the same
+It serves the Controller as a resource-mode middleware, with the station
+board's own routes and template grafted onto the same
 app. Uvicorn runs on the main thread, and owns the process event loop, the same way the
-middleware runner does (ADR 0029). The process reads GRAPHDB_* from its environment.
+middleware runner does. The process reads GRAPHDB_* from its environment.
 
-This file is the *runner* half of the #82 split: it names no FastAPI route of its own
+This file is the *runner* half of the station-board split: it names no FastAPI route of its own
 (a guard test, ``tests/test_station_board_guard.py``, holds that split the way
 ``tests/test_launcher_index_guard.py`` holds ``index.py``/``launcher.py``'s). Routes and
 the template live in ``station_board.py``; this file only constructs the Controller, the
 algorithm's shared runtime state, and grafts one onto the other before serving.
 
-The view mechanism (ADR 0033, ticket #80) runs here: ``main()`` calls
+The view mechanism runs here: ``main()`` calls
 ``controller.view()`` with the algorithm's SPARQL query, then ``controller.wire_view()``
 to recognize and register REST connectors for every hit. This must happen synchronously
 before the server starts serving, because connector registration must precede the app's
 lifespan connecting everything (see ``Controller.wire_view``'s docstring for why). Once
 the app starts, each wired hit's northbound datamodel loads into ``controller.units``.
 Every later re-run of the view -- the editable heuristic's "run"/"reset", and every
-poll -- goes through ``Controller.rebuild_view`` instead (ticket #82), reached from
+poll -- goes through ``Controller.rebuild_view`` instead, reached from
 ``station_board.py``'s routes, never from here again.
 """
 
@@ -39,13 +39,13 @@ from .controller import Controller
 logger = logging.getLogger(__name__)
 
 DEFAULT_TICK_SECONDS = 8.0
-"""The timed mode's default interval (#82's own acceptance criterion: it must exceed one
-lap of PUT -> unit middleware -> MQTT -> PLC -> MQTT back -> connector read).
+"""The timed mode's default interval. It must exceed one control lap -- PUT -> unit
+middleware -> MQTT -> PLC -> MQTT back -> connector read -- or the algorithm writes again
+before it can observe its last write, and the station board oscillates.
 
-**Measured 2026-08-07**, once #94 made a lap completable at all. Before that fix the belt
-froze short of its setpoint, so a lap never finished and this value shipped reasoned rather
-than measured. ``tests/test_lap_measurement.py`` (marked ``lap``, deselected by default)
-reproduces the table below against a real GraphDB, a real broker and a real middleware:
+**Measured 2026-08-07.** ``tests/test_lap_measurement.py`` (marked ``lap``, deselected by
+default) reproduces the table below against a real GraphDB, a real broker and a real
+middleware::
 
     ramp (m/s)   device settled   observed back
           0.05           0.06 s          0.02 s
@@ -55,7 +55,8 @@ reproduces the table below against a real GraphDB, a real broker and a real midd
 
 **A lap is ramp distance over ramp rate, plus about 20 ms.** Transport -- PUT, MQTT out,
 PLC, MQTT back, connector read -- is the 0.02 s row and is negligible. Everything else is
-#83's momentum (``transfer_unit.DEFAULT_RAMP_RATE``, 1 m/s per second), so the lap is a
+the belt's momentum (``transfer_unit.DEFAULT_RAMP_RATE``, 1 m/s per second, applied by
+``TransferUnit._ramp_loop``), so the lap is a
 function of *distance* and has no single value. That is why it had to be measured rather
 than assumed, and why the criterion is "exceeds one lap" rather than "equals" it.
 
@@ -74,8 +75,8 @@ def bind_free_socket(host: str) -> socket.socket:
     """Bind and listen on an OS-assigned free port, without releasing it.
 
     Reading back a discovered port, closing the socket, and letting uvicorn bind a new
-    one reopens the allocate-hand-off-bind race ADR 0029 credits self-allocation with
-    removing -- another process could take the port in between. Handing uvicorn this same,
+    one reopens the allocate-hand-off-bind race self-allocation exists to
+    remove -- another process could take the port in between. Handing uvicorn this same,
     still-listening socket instead of a bare port number closes that gap.
     """
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -140,9 +141,8 @@ async def main() -> None:
         type=float,
         default=DEFAULT_TICK_SECONDS,
         help=(
-            "Timed mode's interval in seconds (default: %(default)s). Must exceed one "
-            "lap of the loop (PUT -> unit middleware -> MQTT -> PLC -> MQTT back -> "
-            "connector read), or the board oscillates (#82)."
+            "Timed mode's interval in seconds (default: %(default)s). How long it must "
+            "be is documented on DEFAULT_TICK_SECONDS in the control_station module."
         ),
     )
     args = parser.parse_args()
@@ -169,7 +169,7 @@ async def main() -> None:
         activity_feed=True,
     )
 
-    # ADR 0033 steps 1-4: run the view, then wire a driving REST connector for every
+    # The Control Expert's steps 1-4: run the view, then wire a driving REST connector for every
     # hit. Synchronous, and before run_server -- connector registration must precede
     # the app's lifespan connecting everything (Controller.wire_view's own docstring).
     default_query = algorithm.build_view_query()
@@ -180,8 +180,8 @@ async def main() -> None:
     state = algorithm.AlgorithmState(tick_seconds=args.tick)
     _wire_algorithm(controller, state)
 
-    # Graft the board's own routes and template onto this same app (#82, ADR 0029's
-    # split): the board reads controller.units and calls controller.push()/rebuild_view()
+    # Graft the board's own routes and template onto this same app: the
+    # board reads controller.units and calls controller.push()/rebuild_view()
     # in-process, so it must share this app and this event loop rather than run as a
     # second server the way the PLC's panel does for its own, unrelated, device object.
     # station_board.py's own root route replaces the one SemanticMiddleware.app already

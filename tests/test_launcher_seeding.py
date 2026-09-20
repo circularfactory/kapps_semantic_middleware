@@ -19,7 +19,7 @@ from conftest import requires_graphdb  # noqa: E402
 
 
 class TestIRIMinting:
-    """This class tests the index-derived IRI scheme (ADR 0030)."""
+    """This class tests the index-derived IRI scheme."""
 
     def test_unit_1_matches_existing_constants(self):
         """The Unit 1 IRIs must match the frozen constants in examples/seed.py."""
@@ -59,7 +59,7 @@ class TestIRIMinting:
 
 
 class TestMQTTTopics:
-    """This class tests the MQTT topic construction (ADR 0023)."""
+    """This class tests the MQTT topic construction."""
 
     def test_speed_topic(self):
         """The speed topics follow TransferUnit<n>/ConveyorBelt/<position>/speed."""
@@ -78,7 +78,7 @@ class TestMQTTTopics:
 
 
 class TestBrokerPort:
-    """This class tests broker_port(n) = 18830 + n (#79, ADR 0029/0030 as amended).
+    """This class tests broker_port(n) = 18830 + n.
 
     Not 1883 + n: 1900 is SSDP/UPnP and is live on most Linux desktops.
     """
@@ -95,7 +95,7 @@ class TestBrokerPort:
 
 
 class TestEnvironmentHandling:
-    """This class tests that _strip_graphdb_env strips GRAPHDB_* credentials for PLC children (ADR 0029)."""
+    """This class tests that _strip_graphdb_env strips GRAPHDB_* credentials for PLC children."""
 
     def test_strip_graphdb_env_removes_all_graphdb_vars(self):
         """_strip_graphdb_env removes every GRAPHDB_* key and keeps the rest."""
@@ -119,7 +119,7 @@ class TestEnvironmentHandling:
         assert _strip_graphdb_env({}) == {}
 
     def test_spawn_plc_passes_stripped_env_to_popen(self, monkeypatch):
-        """_spawn_plc's actual Popen call carries no GRAPHDB_* var (ADR 0029: "asserted, not assumed").
+        """_spawn_plc's actual Popen call carries no GRAPHDB_* var ("asserted, not assumed").
 
         test_strip_graphdb_env_removes_all_graphdb_vars only exercises the helper in isolation;
         this asserts the wiring between "helper strips" and "spawn uses the stripped copy".
@@ -147,7 +147,7 @@ class TestEnvironmentHandling:
     def test_spawn_plc_echoes_its_panel_line_to_launcher_stdout(self, monkeypatch, capsys):
         """The panel address is announced synchronously (blocking read in _spawn_plc), so it
         needs its own echo point, distinct from the background-thread drain used by
-        middleware/controller (#85)."""
+        middleware/controller."""
 
         def fake_popen(cmdline, *, stdout, stderr, env, text, bufsize, creationflags):
             proc = MagicMock()
@@ -182,8 +182,8 @@ class TestLiveSeeding:
             assert result.get("boolean", False), f"TransferUnit{n} should exist"
 
     def test_seed_writes_each_unit_s_own_broker_port_as_an_integer(self, graphdb):
-        """#79's acceptance: unit 2's parameters declare port 18832, as xsd:integer -- the
-        round trip must hand back 18832, not "18832" (ADR 0031's rule, extended per-unit)."""
+        """Unit 2's parameters declare port 18832, as xsd:integer -- the
+        round trip must hand back 18832, not "18832" (the default-port rule, extended per-unit)."""
         from kapps_ogm import OGM
         from kapps_semantic_middleware.vocabulary import INF
 
@@ -207,11 +207,11 @@ class TestLiveSeeding:
     def test_seed_writes_a_human_readable_label_for_each_unit_and_the_control_station(
         self, graphdb
     ):
-        """Every seeded individual carries an rdfs:label (#89 item 5).
+        """Every seeded individual carries an rdfs:label.
 
         Controller.discover_resources binds ?label straight off rdfs:label; before this
         was seeded, the SPARQL OPTIONAL never bound and discovery returned label=None for
-        every unit. #82 (not yet built) renders unit identity on every card, so this
+        every unit. The station board renders unit identity on every card, so this
         seeds a real name rather than drop the field from ResourceInfo.
         """
         from kapps_ogm import OGM

@@ -1,4 +1,4 @@
-"""SemanticMiddleware's connector flavours, through the constructor (#40, ADR 0022).
+"""SemanticMiddleware's connector flavours, through the constructor.
 
 The seam is tested directly in ``test_semantic_connectors.py`` and against live data in
 ``test_scenario3_wiring_integration.py``. What is left is that the constructor parameters
@@ -66,7 +66,7 @@ class TestWithoutAClassScope:
 
 @requires_graphdb
 class TestFlavours:
-    """Three flavours of one library, differing only in what they connect (ADR 0022)."""
+    """Three flavours of one library, differing only in what they connect."""
 
     def test_a_controller_wires_both_directions(self, seeded_unit, unit_scope):
         middleware = _middleware(seeded_unit, class_scope=unit_scope)
@@ -98,7 +98,7 @@ class TestFlavours:
         assert not middleware.connection_registry.connections
 
     def test_an_inspector_still_projects(self, seeded_unit, unit_scope):
-        """The flag gates wiring, never recognition or the projection (ADR 0028)."""
+        """The flag gates wiring, never recognition or the projection."""
         middleware = _middleware(
             seeded_unit, class_scope=unit_scope, autoregister_connectors=False
         )
@@ -112,7 +112,7 @@ class TestRegistrationTiming:
     def test_connectors_are_registered_before_startup(self, seeded_unit, unit_scope):
         """lifespan connects everything in the registry *before* on_start_up, and
         initiate_sync never calls connect(). A connector registered later never connects
-        and its inbound direction dies silently (ADR 0023) — so registration must already
+        and its inbound direction dies silently — so registration must already
         have happened by the time the constructor returns.
         """
         middleware = _middleware(seeded_unit, class_scope=unit_scope)
@@ -129,7 +129,7 @@ class TestRegistrationTiming:
 
 @requires_graphdb
 class TestEnsureTransport:
-    """``ensure_transport`` (ADR 0034) reaches the wiring plan through the constructor."""
+    """``ensure_transport`` reaches the wiring plan through the constructor."""
 
     def test_the_hook_reaches_plan_wiring(self, seeded_unit, unit_scope):
         calls = []

@@ -1,25 +1,25 @@
-"""A clean stop takes every unit's reachability out of the graph (#66, #106).
+"""A clean stop takes every unit's reachability out of the graph.
 
-This is the box #66 calls "the observable proof that ADR 0029's process shape turned on the
-deregistration #65 documents as dead", and until #106 nothing asserted it. The smoke suite
-stops its children through the launcher and says in a comment that this is "so every
-middleware deregisters", then never asks the graph.
+This is the observable proof that the process-per-participant shape turned on the
+deregistration the single-process demo had documented as dead, and until this file nothing
+asserted it. The smoke suite stops its children through the launcher and says in a comment
+that this is "so every middleware deregisters", then never asks the graph.
 
-**#66's box is worded wrongly, and this file asserts the design instead.** The box says "the
-graph holds no ``svc:Service`` for any unit". It does hold one, on purpose:
+**The acceptance criterion was worded wrongly, and this file asserts the design instead.** It
+said "the graph holds no ``svc:Service`` for any unit". It does hold one, on purpose:
 ``registration.deregister_service`` clears the address and the workflow/state endpoints and
 says in its own docstring that "structural triples and rdf:type are preserved (paper:
 availability vs. existence)". A Service that stopped answering has not stopped existing. So
 what a clean stop must remove is **reachability**, and that is what is checked below.
 
 Its own module rather than a case inside ``test_factory_smoke.py``, for two reasons that are
-both about the launcher's fixed port (ADR 0029 -- it is the only bookmarkable address, so it
+both about the launcher's fixed port (it is the only bookmarkable address, so it
 cannot be dynamic). That file's ``factory`` fixture is module-scoped and holds the port for
 the whole file, so a second factory cannot exist beside it, and a test asserting on state
 *after* teardown has no fixture left to run in. Modules are torn down before the next one
 starts, so a separate file gets the port to itself.
 
-One unit, not two: this proves deregistration happens, and #79's per-unit isolation is
+One unit, not two: this proves deregistration happens, and per-unit isolation is
 already proven next door.
 """
 
@@ -42,6 +42,7 @@ from conftest import requires_graphdb  # noqa: E402
 from demo.transferunits import seed  # noqa: E402
 from demo.transferunits.__main__ import LAUNCHER_HOST, LAUNCHER_PORT  # noqa: E402
 from demo.transferunits.middleware import _listening  # noqa: E402
+from kapps_semantic_middleware.credentials import DEMO_REPOSITORY, graphdb_for  # noqa: E402
 from kapps_semantic_middleware.vocabulary import SVC  # noqa: E402
 
 # The two waiting helpers come from the smoke suite rather than being written again. They are
@@ -58,7 +59,7 @@ READY_TIMEOUT_SECONDS = 180.0
 """Matches the smoke suite's own boot budget: a cold GraphDB seed dominates it."""
 
 STOP_TIMEOUT_SECONDS = 60.0
-"""A clean stop waits on the ordered teardown of ADR 0029, not on a signal."""
+"""A clean stop waits on the ordered teardown, not on a signal."""
 
 
 def _kill_factory(proc: subprocess.Popen) -> None:
@@ -96,7 +97,7 @@ def _unit_service_addresses(db) -> List[str]:
     """Every `svc:address` currently attached to a Service of one of this factory's units.
 
     Asks by unit IRI rather than by Service IRI, because the Service IRI is minted per
-    middleware instance (ADR 0022) and this test never learns it. Empty means no unit of
+    middleware instance and this test never learns it. Empty means no unit of
     this factory is reachable.
     """
     found: List[str] = []
@@ -117,7 +118,22 @@ def _unit_service_addresses(db) -> List[str]:
 
 
 @pytest.fixture
-def stopped_factory(graphdb) -> Iterator[None]:
+def demo_graphdb() -> Iterator[object]:
+    """A live client bound to ``kapps-demo``, the repository the factory registers into.
+
+    Not ``conftest.py``'s ``graphdb`` fixture: that one is bound to ``TEST_REPOSITORY``
+    ("Tests"), which the factory launched below never writes to -- it spawns every
+    middleware with ``--repository kapps-demo`` (``DEMO_REPOSITORY``). Reading ``Tests``
+    for this factory's addresses always returns empty. Stated explicitly here so the
+    next split of demos from tests cannot repeat that mismatch silently.
+    """
+    db = graphdb_for(DEMO_REPOSITORY)
+    yield db
+    db.close()
+
+
+@pytest.fixture
+def stopped_factory(demo_graphdb) -> Iterator[None]:
     """Boot a factory, wait until its unit is reachable, then stop it through the launcher.
 
     Yields once the stop has returned. The test that follows reads the graph, so the point of
@@ -165,7 +181,7 @@ def stopped_factory(graphdb) -> Iterator[None]:
         # The unit has to be reachable *before* the stop, or the assertion afterwards would
         # pass against a factory that never registered at all.
         _await(
-            lambda: bool(_unit_service_addresses(graphdb)),
+            lambda: bool(_unit_service_addresses(demo_graphdb)),
             READY_TIMEOUT_SECONDS,
             f"No unit ever registered an svc:address, so a later absence would prove "
             f"nothing. The launcher said:\n{_tail()}",
@@ -177,36 +193,36 @@ def stopped_factory(graphdb) -> Iterator[None]:
         _kill_factory(proc)
 
 
-def test_a_clean_stop_leaves_no_unit_reachable(stopped_factory, graphdb):
-    """#66's "observable proof": after a clean stop, no unit advertises an address.
+def test_a_clean_stop_leaves_no_unit_reachable(stopped_factory, demo_graphdb):
+    """The observable proof: after a clean stop, no unit advertises an address.
 
     The fixture has already established that a unit *was* reachable, so this is a
     transition and not a statement about an empty graph.
 
     A short retry rather than a single read: the stop route returns when the children have
     been told to go, and each middleware's own deregistration is a graph write that lands
-    just after. Nothing here waits on a heartbeat sweep -- that is ADR 0007's separate
+    just after. Nothing here waits on a heartbeat sweep -- that is the watchdog's separate
     mechanism, and a clean stop must not need it.
     """
     _await(
-        lambda: _unit_service_addresses(graphdb) == [],
+        lambda: _unit_service_addresses(demo_graphdb) == [],
         STOP_TIMEOUT_SECONDS,
         "A unit still advertises an svc:address after a clean stop through the launcher. "
-        "ADR 0029's ordered teardown exists so every middleware deregisters while its PLC "
+        "The ordered teardown exists so every middleware deregisters while its PLC "
         "still answers; something in that order did not happen.",
     )
 
 
-def test_the_service_individual_survives_its_deregistration(stopped_factory, graphdb):
+def test_the_service_individual_survives_its_deregistration(stopped_factory, demo_graphdb):
     """Availability is not existence: the Service is still there, it just answers nowhere.
 
-    Guards the correction this file was written to make. #66's acceptance box asks for "no
-    `svc:Service` for any unit", and satisfying that literally would mean deleting the
+    Guards the correction this file was written to make. The acceptance criterion asked for
+    "no `svc:Service` for any unit", and satisfying that literally would mean deleting the
     individual -- which `deregister_service` deliberately does not do. If someone later
     "fixes" the box by deleting Services, this test fails and says why.
     """
     unit_iri = seed._mint_transfer_unit_iri(1)
-    rows = graphdb.query(
+    rows = demo_graphdb.query(
         f"SELECT ?service WHERE {{ ?service <{SVC.isServiceOf}> <{unit_iri}> . }}",
         convert_bindings=True,
     )

@@ -15,20 +15,20 @@ to a debugger — the numbered `step_N_*` functions are the breakpoints. The thr
 deliberately show *three different* interaction patterns:
 
 - **Scenario 1** (hello-world) — the **operation-coordination** pattern. A planner dispatches
-  an operation through the event trigger and the resource pulls-and-runs it (ADR 0009/0010).
+  an operation through the event trigger and the resource pulls-and-runs it.
 - **Scenario 2** (a door + a minimal mobile robot) — the **direct workflow/state invocation**
   pattern. The robot discovers the door purely through the knowledge graph (SPARQL). It reads
   the door's live status over the StateProperty GET endpoint. It invokes the open workflow of
   the door directly, at the endpoint it found. The door has no operation queue and executes
   synchronously. Not operation based.
 - **Scenario 3** (a TransferUnit + a mock PLC) — **retired from this directory.** It lives in
-  [`demo/transferunits/`](../demo/transferunits/) as the runnable factory, and ADR 0029 promised
-  this move when the factory landed. Read it there to see the **ontology-driven wiring** pattern:
+  [`demo/transferunits/`](../demo/transferunits/) as the runnable factory; the factory design
+  promised this move when it landed. Read it there to see the **ontology-driven wiring** pattern:
   no topic and no broker address appears anywhere in the scenario code, and the middleware builds
-  its connectors from what the graph tells it (ADR 0023).
+  its connectors from what the graph tells it.
 
   What stays here is `seed.py`'s `seed_scenario3` and `transferunit.ttl`. Eight test modules seed
-  a TransferUnit through them, so they are the regression net ADR 0030 froze, not leftovers.
+  a TransferUnit through them, so they are the regression net the factory froze, not leftovers.
 
 _Avoid_: Example, demo (used loosely elsewhere in this repo docs). Scenario is the precise
 unit — one notebook, one dummy repository, one seed script.

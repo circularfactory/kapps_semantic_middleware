@@ -135,9 +135,7 @@ function render(s) {
     if (label) label.textContent = pos + '  ' + speed.toFixed(2) + ' m/s';
 
     const box = document.getElementById('cmd-' + pos);
-    // `diverged` means STOPPED CONVERGING, not unequal (#81, which amended #31 to say
-    // so; #93 item 3). Under #83's ramp the two are unequal during every set by design,
-    // so the old `abs(cmd - speed) > 1e-9` painted every healthy ramp as a fault.
+    // `diverged` means what controller.py's WriteStatus.DIVERGED defines.
     // The verdict is the server's -- panel.py's ConvergenceTracker judges it on the
     // clock, so opening a second tab cannot make a belt diverge sooner.
     const status = (s.belt_status || {})[pos];

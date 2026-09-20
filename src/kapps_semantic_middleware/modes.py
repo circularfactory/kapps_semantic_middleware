@@ -1,4 +1,4 @@
-"""The three middleware modes as constants. Do not use bare strings (#21).
+"""The three middleware modes as constants. Do not use bare strings.
 
 ``SemanticMiddleware(mode=...)`` took a plain ``str``. It validated the string against a tuple.
 The tuple was written out at the call site. A typo produced a ``ValueError`` at construction. This
@@ -12,8 +12,6 @@ This keeps all of that working unchanged. ``Mode.RESOURCE == "resource"`` is tru
 is the better way to say it. The string does not stop being a way to say it.
 """
 
-# ADR: 0005
-
 from __future__ import annotations
 
 from enum import Enum
@@ -21,8 +19,6 @@ from enum import Enum
 
 class Mode(str, Enum):
     """A middleware instance mode. Each member below says what it means."""
-
-    # ADR: 0005, 0007
 
     RESOURCE = "resource"
     """Wrap one ``resource_iri``. Register a Service. Serve its workflows and parameters.

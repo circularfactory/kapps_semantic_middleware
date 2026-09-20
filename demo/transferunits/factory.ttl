@@ -8,7 +8,7 @@
 fac:ControlStation rdf:type owl:Class ;
     rdfs:subClassOf cfc:Resource ;
     rdfs:label "Control Station" ;
-    rdfs:comment "The controller's own Resource individual. Carries no controllable parameter; it discovers and drives other resources over REST, and appears in its own discovery list (#43)." .
+    rdfs:comment "The controller's own Resource individual. Carries no controllable parameter; it discovers and drives other resources over REST, and appears in its own discovery list." .
 
 fac:ControlStationService rdf:type owl:Class ;
     rdfs:subClassOf svc:Service ;

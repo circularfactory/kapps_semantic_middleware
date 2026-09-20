@@ -17,8 +17,6 @@ stack. The registry must exist for every connector wiring, including one that wi
 An inspecting instance with no ``aiomqtt`` installed must still receive the projection.
 """
 
-# ADR: 0023, 0028
-
 from __future__ import annotations
 
 import json
@@ -64,7 +62,7 @@ try:
     )
 except ImportError:  # pragma: no cover - depends on the optional extra being installed
     # Importing this module must not require a working MQTT stack. The registry must exist
-    # for every flavour, including one that wires nothing (ADR 0028), so an inspector on a
+    # for every flavour, including one that wires nothing, so an inspector on a
     # host without aiomqtt must still receive recognition and the projection. The failure is
     # deferred to the moment something actually tries to build a connector.
     MqttClientConnector = None  # type: ignore[assignment]
@@ -110,8 +108,6 @@ class MQTTParameterFormatter:
     pure function per message, with no read of current state. ``_last_value`` exists solely
     for change-detection in logging, and never affects the returned value.
     """
-
-    # ADR: 0023, 0027
 
     def __init__(
         self,
@@ -180,7 +176,6 @@ class MQTTParameterFormatter:
         error state, and one worth naming rather than encoding as ``null``.
         """
 
-        # ADR: 0024, 0035
         value = self._value_of(data)
         if value is None:
             raise ValueError(
@@ -277,7 +272,6 @@ class MQTTBinding:
         parameter, never its siblings.
         """
 
-        # ADR: 0023, 0034
         connector_cls = _mqtt_client_connector_cls()
 
         broker = binding.get(INF.hasMQTTBrokerIP)
@@ -286,12 +280,12 @@ class MQTTBinding:
         value_path = binding.get(INF.hasMQTTValuePath)
         port = binding.get(INF.hasMQTTBrokerPort)
         if port is None:
-            port = 1883  # ADR 0031: absent means 1883, so every existing ABox keeps its meaning.
+            port = 1883  # Absent means 1883, so every existing ABox keeps its meaning.
 
         if not broker or not topic:
             # A parameter marked MQTT-accessible whose metadata is incomplete would come up
             # silently dead: no listener, no value, and nothing to say why. Name the property,
-            # and name what is absent (ADR 0023).
+            # and name what is absent.
             logger.warning(
                 "Do not bind %s on %s over MQTT. The metadata is missing %s. The parameter will be served "
                 "but no value will flow.",
@@ -352,7 +346,6 @@ def _formatter_for(
     from the spec side.
     """
 
-    # ADR: 0028
     southbound = {str(prop) for prop in MQTTBinding.connection_metadata}
     value_field = INF.hasValue.lined
     facets = {

@@ -1,6 +1,6 @@
 """The TransferUnit factory: a small factory you start with one command.
 
-ADR 0029 gives every participant its own process. An N-unit factory runs as
+Every participant has its own process. An N-unit factory runs as
 2N+2 processes today: one PLC and one middleware instance per unit, plus a
 control station and the Launcher.
 

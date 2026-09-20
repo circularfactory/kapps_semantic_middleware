@@ -23,7 +23,10 @@
                 graphdb:read-only "false" ;
 
                 # Inference and Validation
-                graphdb:ruleset "rdfsplus-optimized" ;
+                # The ontology mapper that seeds these examples relies on an rdfs:Class
+                # entailment that rdfsplus-optimized omits, and the family's test suites run
+                # against owl-max.
+                graphdb:ruleset "owl-max" ;
                 graphdb:disable-sameAs "true" ;
                 graphdb:check-for-inconsistencies "true" ;
 

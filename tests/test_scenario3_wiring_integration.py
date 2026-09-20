@@ -1,4 +1,4 @@
-"""Scenario 3 wiring: graph -> recognition -> connectors -> served payload (#40).
+"""Scenario 3 wiring: graph -> recognition -> connectors -> served payload.
 
 Live GraphDB, plus a live MQTT broker that runs in-process. This is the ticket real acceptance
 surface. The middleware reads the seeded TransferUnit out of the graph. Recognize
@@ -155,7 +155,7 @@ class TestRecognition:
     def test_a_declared_port_round_trips_as_an_integer_not_a_string(
         self, scenario3, unit_scope
     ):
-        """#69's stated acceptance: the first non-string literal any seed here writes.
+        """The broker port is the first non-string literal any seed here writes.
 
         write 18831 -> graph -> ClassSpec -> ``binding.get()`` must hand back the integer
         18831, not the string "18831" -- `_parameter_metadata` used to force every value
@@ -194,7 +194,7 @@ class TestRecognition:
         assert speed.connector.mqtt_broker_port == 1883
 
     def test_the_value_is_parsed_per_the_ontology_datatype(self, scenario3, unit_scope):
-        """"Raw scalar. Parsed per the parameter ontology datatype" (#40).
+        """"Raw scalar. Parsed per the parameter ontology datatype."
 
         The parsing is not done by hand. Not what ``Registration.model_type`` is for.
         That is the persistence type of the bound field. It is a list. It falls out
@@ -229,7 +229,7 @@ class TestRecognition:
 
     def test_binds_to_the_complex_property_not_hasvalue(self, scenario3, unit_scope):
         """ConnectionInfo has three levels. field_id is a plain getattr. The parameter
-        node is the deepest addressable thing (ADR 0017 / ADR 0023)."""
+        node is the deepest addressable thing."""
         _, ogm = scenario3
 
         plan = _plan(ogm, unit_scope)
@@ -243,7 +243,7 @@ class TestRecognition:
 
 @requires_graphdb
 class TestRegistrationCount:
-    """4 parameters -> 4 bindings -> 6 connectors -> 6 topics (ADR 0023)."""
+    """4 parameters -> 4 bindings -> 6 connectors -> 6 topics."""
 
     def test_a_controller_builds_six_connectors(self, scenario3, unit_scope):
         _, ogm = scenario3
@@ -262,7 +262,7 @@ class TestRegistrationCount:
         }
 
     def test_a_monitor_builds_four_and_can_drive_nothing(self, scenario3, unit_scope):
-        """TO_PERSISTENCE: live values. Structurally unable to write (ADR 0022)."""
+        """TO_PERSISTENCE: live values. Structurally unable to write."""
         _, ogm = scenario3
 
         plan = _plan(ogm, unit_scope, flavour=SyncDirection.TO_PERSISTENCE)
@@ -282,8 +282,7 @@ class TestRegistrationCount:
 
     def test_an_inspector_still_recognises_every_parameter(self, scenario3, unit_scope):
         """The flag gates wiring. Never recognition. Skipping recognition makes every
-        parameter node ordinary data. An inspector serves broker addresses northbound
-        (ADR 0020 / ADR 0028)."""
+        parameter node ordinary data. An inspector serves broker addresses northbound."""
         _, ogm = scenario3
 
         plan = _plan(ogm, unit_scope, autoregister=False)
@@ -304,15 +303,14 @@ class TestNorthboundProjection:
     def test_a_protocol_with_no_registered_binding_is_still_hidden(
         self, scenario3, unit_scope
     ):
-        """The regression the ontology-derived projection prevents (ADR 0028).
+        """The regression the ontology-derived projection prevents.
 
         A belt made reachable over MQTT *and* OPC-UA. No OPC-UA binding registered
         anywhere. The earlier registry-derived prune set removed the MQTT metadata.
         Served `inf:hasOPCUAEndpoint` with its address. A set built from registered
         descriptors knows only the protocols this middleware code has.
 
-        Two protocols on one parameter is not hypothetical. ADR 0026 names it as
-        own-built hardware. Protocol is not known when the ontology is authored.
+        Two protocols on one parameter is not hypothetical: own-built hardware. Protocol is not known when the ontology is authored.
         """
         graphdb, ogm = scenario3
         opcua_marker = IRI(f"{seed.INF_NS}isInterfaceAccessibleOPCUAParameter")
@@ -353,8 +351,8 @@ class TestNorthboundProjection:
         assert seed.TU_HAS_UNIT.lined in served
 
     def test_the_unpruned_spec_would_have_leaked(self, scenario3, unit_scope):
-        """Guards the premise. Stop the leak. The OGM gained a merge-depth knob. ADR
-        0028 prune can retire."""
+        """Guards the premise. Stop the leak. The OGM gained a merge-depth knob. The
+        projection's prune can retire."""
         _, ogm = scenario3
         full = ogm.get_class_spec(
             class_iri=seed.TRANSFER_UNIT_CLASS, class_scope=unit_scope
@@ -392,7 +390,7 @@ class TestNorthboundProjection:
         assert "127.0.0.1" not in str(served)
 
     def test_all_three_flavours_serve_identical_payloads(self, scenario3, unit_scope):
-        """#40 stated regression test."""
+        """The three wirings serve byte-identical northbound payloads."""
         _, ogm = scenario3
 
         controller = self._served(ogm, _plan(ogm, unit_scope))
@@ -417,7 +415,7 @@ class TestNorthboundProjection:
     def test_a_declared_broker_port_never_reaches_the_northbound_payload(
         self, scenario3, unit_scope
     ):
-        """ADR 0031: the port is a restriction on the MQTT protocol marker's range, so the
+        """The port is a restriction on the MQTT protocol marker's range, so the
         projection prunes it with the rest of the connection metadata -- no projection code
         change needed, just this proof that the claim holds now that the term exists."""
         graphdb, ogm = scenario3
@@ -438,10 +436,10 @@ class TestNorthboundProjection:
 
 @requires_graphdb
 class TestAConsumerLoadsThePrunedShape:
-    """Prune-on-load (ADR 0033, #78): a consumer fetching a peer's datamodel gets the prune.
+    """Prune-on-load: a consumer fetching a peer's datamodel gets the prune.
 
     These four tests used to drive ``projection.load_northbound``, a second entry point
-    nothing in the product called. #105 deleted it and moved them onto the path the
+    nothing in the product called. It was deleted and the tests moved onto the path the
     controller really takes: ``plan_wiring`` builds the plan, and the fetch runs with
     ``WiringPlan.northbound_fetch_kwargs()`` (``demo/transferunits/controller.py:636``).
 
@@ -475,7 +473,7 @@ class TestAConsumerLoadsThePrunedShape:
 
         This replaces an INFO line per parameter that only the deleted function
         emitted. The breakdown itself outlived it as ``southbound_by_property``, which
-        is what #82's station board renders under each row -- the display #78 deferred.
+        is what the station board renders under each row.
         A union across the whole resource would not do: the point is that a viewer sees
         which properties went from *this* parameter.
         """
@@ -503,7 +501,7 @@ class TestAConsumerLoadsThePrunedShape:
 
 @requires_graphdb
 class TestServiceJoinRecognition:
-    """ADR 0023's 2026-08-03 amendment: evidence may sit on the resource's Service (#77).
+    """The Service-join amendment of 2026-08-03: evidence may sit on the resource's Service.
 
     ``_recognise`` looks the address up once per resource and folds it into every binding's
     metadata, regardless of which protocol ends up matching. These tests exercise that against
@@ -538,7 +536,7 @@ class TestServiceJoinRecognition:
         # Mangled whole (IRI(...).lined), not the bare fragment: this must equal
         # `type(instance).__name__` for the materialized root, which is what
         # `ClassSpec.to_pydantic_model` (kapps_ogm) actually names the class -- the
-        # {Model} segment `rest_router.py` mounts routes under (#80).
+        # {Model} segment `rest_router.py` mounts routes under.
         assert left.root_class_local_name == IRI(str(seed.TRANSFER_UNIT_CLASS)).lined
         assert left.path_steps == (
             (seed.TU_HAS_CONVEYOR_BELT.lined, str(seed.CONVEYOR_BELT_LEFT)),
@@ -547,7 +545,7 @@ class TestServiceJoinRecognition:
 
 @requires_graphdb
 class TestRESTRecognition:
-    """A live resource, generically interface-accessible, binds a REST connector (#77)."""
+    """A live resource, generically interface-accessible, binds a REST connector."""
 
     def test_mqtt_still_wins_when_both_bindings_are_registered(self, scenario3, unit_scope):
         """The acceptance criterion: MQTT recognition is unchanged. A parameter carrying an
@@ -564,7 +562,7 @@ class TestRESTRecognition:
 
     def test_rest_binds_when_the_resource_is_live(self, scenario3, unit_scope):
         """With MQTTBinding out of the registry, the same seeded (MQTT-marked) parameters
-        still recognise -- through the generic interface root, per ADR 0023's amendment --
+        still recognise -- through the generic interface root, per the Service-join amendment --
         and build a REST connector addressed at the live Service."""
         graphdb, ogm = scenario3
         address = _publish_service(graphdb, seed.TRANSFER_UNIT_1)
@@ -584,7 +582,7 @@ class TestRESTRecognition:
         expected_path = build_parameter_path(
             # Mangled whole (IRI(...).lined), not the bare fragment -- must equal
             # `type(instance).__name__` for the materialized root, kapps_ogm's own
-            # `ClassSpec.to_pydantic_model` naming (#80).
+            # `ClassSpec.to_pydantic_model` naming.
             IRI(str(seed.TRANSFER_UNIT_CLASS)).lined,
             seed.TRANSFER_UNIT_1,
             [(seed.TU_HAS_CONVEYOR_BELT.lined, str(seed.CONVEYOR_BELT_LEFT))],
@@ -596,8 +594,8 @@ class TestRESTRecognition:
     def test_a_resource_with_no_live_service_binds_nothing_and_says_so(
         self, scenario3, unit_scope, caplog
     ):
-        """The acceptance criterion this ticket names explicitly: recognition still runs
-        (ADR 0020 / ADR 0028), but no connector is built and the reason is logged."""
+        """The acceptance criterion this ticket names explicitly: recognition still runs,
+        but no connector is built and the reason is logged."""
         _, ogm = scenario3
 
         with caplog.at_level(logging.WARNING):
@@ -608,7 +606,7 @@ class TestRESTRecognition:
         assert "no live" in caplog.text
 
     def test_a_monitor_builds_read_only_rest_connectors(self, scenario3, unit_scope):
-        """readwrite + observing binds read-only, the same rule as MQTT (ADR 0023)."""
+        """readwrite + observing binds read-only, the same rule as MQTT."""
         graphdb, ogm = scenario3
         _publish_service(graphdb, seed.TRANSFER_UNIT_1)
 
@@ -627,10 +625,10 @@ class TestRESTRecognition:
 
 @requires_graphdb
 class TestEnsureTransport:
-    """ADR 0034: the deployment's transport hook, threaded through ``plan_wiring``.
+    """The deployment's transport hook, threaded through ``plan_wiring``.
 
     Scenario 3's four parameters (two belts, two barriers) all declare the same broker
-    address, so this is exactly the shape the ADR's "once per distinct address" rule names:
+    address, so this is exactly the shape the hook's "once per distinct address" rule names:
     the hook must fire once, not once per parameter and not once per connector.
     """
 

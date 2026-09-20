@@ -8,8 +8,6 @@ registration code nor state registration code calls ogm.fetch or ogm.commit dire
 One seam means the graph can be swapped, traced or stubbed in one place.
 """
 
-# ADR: 0006
-
 from __future__ import annotations
 
 from functools import partial

@@ -7,13 +7,12 @@
   execution machinery.
 - [SHACL Interop](./src/kapps_semantic_middleware/shacl_interop/CONTEXT.md) — the temporary SHACL
   seam for workflow precondition shapes and outcome shapes. It generates and parses them. It is
-  explicit scaffolding, will move to `kapps_ogm` (see its ADR 0001).
+  explicit scaffolding, will move to `kapps_ogm`.
 - [Example Scenarios](./examples/CONTEXT.md) — self-contained demonstration notebooks, plus the
   seed-data logic and the ontology-provisioning logic under them. That logic makes each notebook
   reproducible against a dummy repository, and never against the production state.
 - [TransferUnit Factory](./demo/transferunits/CONTEXT.md) — the runnable multi-process demo. A
-  launcher seeds N units and starts one process per participant (ADR 0029). Its decisions live
-  with the Core Middleware ADRs, next to ADR 0029.
+  launcher seeds N units and starts one process per participant.
 - **Module Requirements** — requirements this project places on sibling KAPPS-family
   modules (`kapps_ogm`, the not-yet-created visual-toolbox GUI). Not a code context, and its
   documents are development-repository material that does not ship.
@@ -29,14 +28,14 @@
   has no dependency on Example Scenarios.
 - **TransferUnit Factory → Core Middleware**: the factory runs several instances of the library
   in separate processes. That is one instance per unit, plus a controller. A monitor is
-  milestone 2 (ADR 0032) and is not built. Core Middleware has no dependency on the factory.
+  milestone 2 and is not built. Core Middleware has no dependency on the factory.
 - **Module Requirements** records obligations that Core Middleware and SHACL Interop place on
   `kapps_ogm` and the visual-toolbox repo. It does not depend on the code contexts, and no code
   context depends on it. It is a record for work that belongs elsewhere.
 
 ## Ontology-module layering
 
-The vocabulary of the project is layered across three modules (Core Middleware ADR 0012):
+The vocabulary of the project is layered across three modules:
 
 - **`cfc:` — Core** (`.../Core#`): published, external, superior — `Operation`/`Capability`/
   `Resource`/`Task`. The system imports and specializes it. The system does not modify it.

@@ -209,9 +209,9 @@ def test_a_log_record_reaches_the_feed(fake_middleware):
 
 
 def test_no_mqtt_topic_reaches_the_feed_even_at_debug(fake_middleware):
-    """#76. The feed serves this package's records over HTTP. Not one may carry a topic.
+    """The feed serves this package's records over HTTP. Not one may carry a topic.
 
-    ADR 0028 deletes a parameter's broker address and topics from the served
+    The northbound projection deletes a parameter's broker address and topics from the served
     datamodel, so that a peer learns values from the middleware rather than the
     route around it. The feed is the same web server, one URL along, and it used
     to print the topic on every value that moved.
@@ -423,7 +423,7 @@ def test_disabled_allocates_nothing():
 def test_the_feed_is_mounted_the_same_way_regardless_of_mode():
     """Controller and monitor inherit the feed from the same code path. No flavour-specific branching exists.
 
-    ADR 0022 establishes that controller and monitor are the same library.
+    Controller and monitor are the same library.
     Configure them differently. Build a middleware in Mode.WATCHDOG with
     activity_feed=True. Verify the activity routes exist. The mode-independence
     is structural. enable_activity_feed takes no mode argument.

@@ -1,4 +1,4 @@
-"""Guard tests enforcing separation of concerns per ADR 0029.
+"""Guard tests enforcing separation of concerns between the PLC tier and the middleware.
 
 - panel.py names none of: aiomqtt, asyncio, topic, publish
 - transfer_unit.py names none of: fastapi, uvicorn, Request, HTMLResponse

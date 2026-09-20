@@ -6,7 +6,7 @@ It has no MQTT logic and no asyncio imports — those belong in transfer_unit.py
 The panel polls /api/state every 500ms and displays:
 - Actual belt speeds (from PLC speeds)
 - Commanded speeds (from PLC setpoints) — shown whenever the belt is short of its
-  setpoint, which under #83's ramp is most of every set
+  setpoint, which while a belt ramps is most of every set
 - Whether a belt is still converging on its setpoint, or has stopped short of it
 - Light barrier states (occupied/clear)
 
@@ -29,8 +29,8 @@ DEFAULT_STILL_SECONDS = 6.0
 
 Deliberately the same number as ``controller.py``'s constant of the same name, and
 deliberately *not* imported from it: ``controller.py`` pulls in ``SemanticMiddleware``, and
-ADR 0029 keeps the PLC tier free of middleware knowledge -- the guard test in
-``tests/test_plc_guard.py`` exists to hold exactly that line. Root ADR 0004 prefers
+The process-per-participant design keeps the PLC tier free of middleware knowledge -- the guard test in
+``tests/test_plc_guard.py`` exists to hold exactly that line. The scenario rule prefers
 duplication to sharing in ``demo/`` for this reason.
 """
 
@@ -38,13 +38,10 @@ duplication to sharing in ``demo/`` for this reason.
 class ConvergenceTracker:
     """Whether each belt is still closing on its setpoint, or has stopped short of it.
 
-    #81 defined ``diverged`` as **stopped converging**, not *unequal*, and amended #31 to
-    say so. The panel had the older reading -- ``abs(cmd - speed) > 1e-9`` -- which #83's
-    ramp made permanently true during every set, so a healthy belt rendered as a fault the
-    whole way to its setpoint (#93, item 3).
+    ``diverged`` means what ``controller.WriteStatus.DIVERGED`` defines.
 
-    Judged on the clock, not on polls, for the reason #82 found the hard way: a poll is a
-    browser asking. Counting polls lets two open tabs call a belt stuck in half the time,
+    Judged on the clock, not on polls: a poll is a browser asking. Counting polls lets two
+    open tabs call a belt stuck in half the time,
     and a closed page never call it at all.
 
     Args:
@@ -91,7 +88,7 @@ convergence = ConvergenceTracker()
 
 @app.get("/favicon.ico", include_in_schema=False)
 async def favicon() -> Response:
-    """Answer the browser's automatic favicon request with a bare 204 (#89).
+    """Answer the browser's automatic favicon request with a bare 204.
 
     The panel ships no icon asset. Left unanswered, every page load logs a 404 for
     this request -- the only console error on an otherwise clean load. A 204 says
@@ -118,10 +115,10 @@ def configure_plc(instance: TransferUnit) -> None:
 async def state() -> JSONResponse:
     """Return the current PLC state snapshot, plus each belt's convergence status.
 
-    The status is judged here rather than in the page's script, for the reason #82 gives
-    for the station board: a verdict the browser reaches is a verdict no test can hold.
+    The status is judged here rather than in the page's script, for the same reason as on
+    the station board: a verdict the browser reaches is a verdict no test can hold.
     ``transfer_unit.py`` stays out of it -- it reports what the belt is doing, and the
-    panel decides what that means (ADR 0029's tier split).
+    panel decides what that means (the tier split).
     """
     snapshot = get_plc().snapshot()
     snapshot["belt_status"] = {

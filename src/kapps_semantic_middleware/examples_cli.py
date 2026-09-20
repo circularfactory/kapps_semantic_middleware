@@ -21,8 +21,8 @@ from typing import Final
 #
 # A name may contain a forward slash, and two do. `docker/` is copied out with the scenarios
 # because the scenarios need a GraphDB and this is how a pip-installing user obtains one --
-# before #157 the documented `cd docker && docker compose up -d` named a directory that
-# reached only someone who had cloned the source repository. Forward slashes regardless of
+# before it was copied, the documented `cd docker && docker compose up -d` named a directory
+# that reached only someone who had cloned the source repository. Forward slashes regardless of
 # platform: these are `importlib.resources` traversal keys, not filesystem paths, and the
 # destination side is built with pathlib.
 PAYLOAD_FILES: Final[tuple[str, ...]] = (
@@ -186,7 +186,7 @@ def main(argv: list[str] | None = None) -> int:
     print("\nNext steps:")
     print(f"  cd {dest}")
     print("  # point GRAPHDB_* at a reachable GraphDB -- see the repo README,")
-    print("  # section 'Run a local GraphDB (Docker)', for a one-command local option")
+    print("  # section 'Start a GraphDB', for a one-command local option")
     print("  python scenario1_hello_world.py        # or scenario2_door.py")
     print("  # or open scenario1_hello_world.ipynb in Jupyter (needs the [notebooks] extra)")
     print("  # the factory is a separate command, not a file here:")

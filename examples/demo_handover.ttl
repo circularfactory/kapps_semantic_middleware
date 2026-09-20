@@ -8,7 +8,7 @@
 # Self-contained ground-truth ontology for the handover scenario ONLY.
 #
 # Declares exactly the Core possession terms the OGM must have to validate a
-# change-of-possession through its single validated write path (ADR 0008): the
+# change-of-possession through its single validated write path: the
 # reified cfc:PossessionState with cfc:hasPossessor (Resource -> PossessionState)
 # and cfc:hasPossessedWorkpiece (Workpiece -> PossessionState). These mirror the
 # real Core 0.9.0 exactly (verified). Plus the two handover domain classes. The

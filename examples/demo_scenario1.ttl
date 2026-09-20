@@ -8,7 +8,7 @@
 #################################################################
 # Self-contained ground-truth ontology for Scenario 1 (hello-world) ONLY.
 #
-# Per ADR 0003 (ontology-as-ground-truth), the Service/Workflow/Capability
+# The ontology is ground truth for types, so the Service/Workflow/Capability
 # classes a middleware references must pre-exist. This file declares exactly the
 # classes scenario 1 needs — nothing else — so seeding a clean repository inserts
 # only the hello-world/planner vocabulary (no unrelated door classes).
@@ -26,7 +26,7 @@ cfc:Task rdf:type owl:Class .
 cfc:Operation rdf:type owl:Class ; rdfs:subClassOf cfc:Task .
 
 # The Operation->Capability link is declared so create_operation persists an Operation
-# through the OGM's validated write path (ADR 0008) rather than raw triples.
+# through the OGM's validated write path rather than raw triples.
 cfc:implementsCapability rdf:type owl:ObjectProperty ;
     rdfs:domain cfc:Operation ;
     rdfs:range cfc:Capability ;

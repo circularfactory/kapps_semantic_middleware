@@ -72,7 +72,7 @@ def test_scenario1_hello_world_end_to_end(graphdb):
         host="127.0.0.1",
         port=HELLO_PORT,
     )
-    # Per-instance since ADR 0022: read off the instance, not rebuilt from the resource.
+    # Per-instance: read off the instance, not rebuilt from the resource.
     service_iri = mw1.service_iri
     cap_instance = mint_capability_iri(seed.HELLO_RESOURCE, "hello_world")
     wf_instance = mint_workflow_iri(service_iri, "hello_world")
@@ -84,8 +84,8 @@ def test_scenario1_hello_world_end_to_end(graphdb):
     server, thread = _start_server(mw1, HELLO_PORT)
     try:
         # Registration wrote the full Service/Capability/Workflow structure +
-        # reachability. Links are materialized on the instance-owned (inverse) side
-        # (ADR 0006): a Service knows its resource via isServiceOf, a Workflow knows
+        # reachability. Links are materialized on the instance-owned (inverse) side:
+        # a Service knows its resource via isServiceOf, a Workflow knows
         # its Service via isWorkflowOf, a Capability its Workflow via realizedByWorkflow.
         assert db.triple_exists((service_iri, RDF.type, seed.HELLO_SERVICE_CLASS))
         assert db.triple_exists((service_iri, SVC.isServiceOf, seed.HELLO_RESOURCE))
@@ -98,7 +98,7 @@ def test_scenario1_hello_world_end_to_end(graphdb):
         # A second middleware (a planner) dispatches an operation for the hello capability:
         # it creates the Operation `queued` in the graph and rings the hello resource's
         # event trigger over REST — the peer is resolved purely through the graph, never
-        # hardcoded (ADR 0009/0010).
+        # hardcoded.
         mw2 = SemanticMiddleware(
             mode="resource",
             resource_iri=seed.PLANNER_RESOURCE,
@@ -122,7 +122,7 @@ def test_scenario1_hello_world_end_to_end(graphdb):
             claimed.result = hello_world()
 
         # The terminal transition recorded status `done` + execution provenance in one
-        # atomic write (ADR 0009: the status is itself the provenance record).
+        # atomic write (the status is itself the provenance record).
         status = list(db.triples_get(sub=op_iri, pred=SVC.operationStatus))
         assert status and str(status[0][2]) == OperationStatus.DONE
         assert db.triple_exists((op_iri, SVC.executedByWorkflow, wf_instance))
@@ -142,7 +142,7 @@ def test_scenario1_hello_world_end_to_end(graphdb):
 
 @requires_graphdb
 def test_missing_ground_truth_class_fails_fast(graphdb):
-    """A workflow referencing a non-existent class is rejected at registration (ADR 0003)."""
+    """A workflow referencing a non-existent class is rejected at registration."""
     from kapps_semantic_middleware.registration import (
         OntologyGroundTruthError,
         register_workflow,

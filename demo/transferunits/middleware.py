@@ -3,13 +3,13 @@
 It serves exactly one resource-mode SemanticMiddleware instance. Uvicorn runs on
 the main thread, and owns the process event loop. This is load-bearing:
 It enables signal handling. This enables the library's
-on_shutdown deregistration fire (ADR 0029). The process reads GRAPHDB_* from
+on_shutdown deregistration fire. The process reads GRAPHDB_* from
 its environment and derives its resource IRI from the unit index.
 
-It also fills the library's transport seam (ADR 0034): ``ensure_transport`` below is this
+It also fills the library's transport seam: ``ensure_transport`` below is this
 unit's own in-process MQTT broker, brought up on first MQTT connector registration and torn
-down with nothing at all, because it lives on a daemon thread of this same process (ADR 0029
-as amended -- "a unit's broker dies with its unit").
+down with nothing at all, because it lives on a daemon thread of this same process
+("a unit's broker dies with its unit").
 """
 
 from __future__ import annotations
@@ -34,8 +34,8 @@ def bind_free_socket(host: str) -> socket.socket:
     """Bind and listen on an OS-assigned free port, without releasing it.
 
     Reading back a discovered port, closing the socket, and letting uvicorn bind a new
-    one reopens the allocate-hand-off-bind race ADR 0029 credits self-allocation with
-    removing -- another process could take the port in between. Handing uvicorn this same,
+    one reopens the allocate-hand-off-bind race self-allocation exists to
+    remove -- another process could take the port in between. Handing uvicorn this same,
     still-listening socket instead of a bare port number closes that gap.
     """
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -81,7 +81,7 @@ async def _serve_broker(host: str, port: int, ready: threading.Event) -> None:
 
 
 def ensure_transport(host: str, port: int) -> None:
-    """The demo's transport hook (ADR 0034): bring up this unit's own MQTT broker.
+    """The demo's transport hook: bring up this unit's own MQTT broker.
 
     Called once, synchronously, from inside the ``SemanticMiddleware`` constructor -- before
     this process has an event loop of its own, which is why the broker gets a thread and a
@@ -89,7 +89,7 @@ def ensure_transport(host: str, port: int) -> None:
     outlives this call and dies only when the process does, which is what makes "a unit's
     broker dies with its unit" true with no teardown code anywhere.
 
-    Idempotent (ADR 0034): a probe first, so a broker already listening at this address --
+    Idempotent: a probe first, so a broker already listening at this address --
     this unit's own from an earlier call, or anything else already there -- means this does
     nothing.
     """
@@ -134,7 +134,7 @@ async def main() -> None:
         help=(
             f"The GraphDB repository to join (default: {DEMO_REPOSITORY}). A caller that "
             "spawns this process must pass the repository it is itself using, since the "
-            "environment deliberately cannot name one (issue #146)."
+            "environment deliberately cannot name one (see the Provisioning and Seeding guide)."
         ),
     )
     args = parser.parse_args()
@@ -174,8 +174,8 @@ async def main() -> None:
     )
 
     # No broker flag here: the connector reads the broker address and port off the graph
-    # at wiring time (ADR 0031), and ensure_transport above brings that broker up itself
-    # (ADR 0034) -- this runner names no broker host or port anywhere in its own code.
+    # at wiring time, and ensure_transport above brings that broker up itself --
+    # this runner names no broker host or port anywhere in its own code.
     print(f"Middleware running on http://{args.host}:{port}/", flush=True)
     await run_server(args.host, port, middleware, sock)
 

@@ -1,4 +1,4 @@
-"""The middleware mode constants (#21, ADR 0005).
+"""The middleware mode constants.
 
 Pure unit tests — no GraphDB, no network. The point of the type is that a typo cannot reach
 the constructor's mode check unnoticed, and that every existing caller passing a bare string
@@ -54,6 +54,6 @@ class TestValidation:
         assert "resource mode requires" in str(from_constant.value)
 
     def test_server_mode_is_still_unimplemented(self):
-        """Reserved, and ruled out of scope for the controller in ADR 0005's amendment."""
+        """Reserved, and ruled out of scope for the controller."""
         with pytest.raises(NotImplementedError):
             SemanticMiddleware(mode=Mode.SERVER)

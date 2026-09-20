@@ -1,11 +1,11 @@
-"""Regression tests for the demo's activity-feed wiring (#88).
+"""Regression tests for the demo's activity-feed wiring.
 
-ADR 0029 gives every middleware a library-level /activity feed, and #67 built it. #88
-found it switched off everywhere in the demo anyway, because neither runner script
+Every middleware carries a library-level /activity feed, built as an opt-in. It was
+found switched off everywhere in the demo anyway, because neither runner script
 passed ``activity_feed=True`` to its middleware constructor. These tests pin the
 wiring at that seam -- the keyword arguments each runner's ``main()`` passes to
 ``SemanticMiddleware``/``Controller`` -- so a future refactor cannot silently regress
-it again the way #67 -> #88 did.
+it again the way the first demo wiring did.
 
 No GraphDB, no broker, no network: every collaborator ``main()`` touches
 (``graphdb_for``, ``OGM``, ``ClassScope``/``Controller``, ``run_server``,
@@ -36,8 +36,8 @@ async def _noop_run_server(*args, **kwargs) -> None:
 def test_transferunit_middleware_enables_the_activity_feed(monkeypatch):
     """The per-unit middleware runner must pass activity_feed=True.
 
-    #67 built the feed as an opt-in. #88 found it dark everywhere in the demo because
-    this one keyword argument was never passed at the constructor call.
+    The feed is an opt-in, and it was dark everywhere in the demo because this one
+    keyword argument was never passed at the constructor call.
     """
     import demo.transferunits.middleware as mw_runner
 
@@ -58,7 +58,7 @@ def test_transferunit_middleware_enables_the_activity_feed(monkeypatch):
 
 
 def test_transferunit_middleware_passes_its_own_ensure_transport(monkeypatch):
-    """The per-unit middleware runner must fill the library's transport seam (#79, ADR 0034)
+    """The per-unit middleware runner must fill the library's transport seam
     with its own ``ensure_transport`` -- the in-process broker starter -- not leave it unset."""
     import demo.transferunits.middleware as mw_runner
 

@@ -1,6 +1,6 @@
 """Index — FastAPI web interface for the Launcher's live topology page.
 
-Routes and the template only. No subprocess and no seed here (ADR 0029) — the page only
+Routes and the template only. No subprocess and no seed here — the page only
 reads state the launcher machinery in launcher.py already tracks.
 """
 
@@ -22,7 +22,7 @@ launcher_address: str = ""
 
 @app.get("/favicon.ico", include_in_schema=False)
 async def favicon() -> Response:
-    """Answer the browser's automatic favicon request with a bare 204 (#89).
+    """Answer the browser's automatic favicon request with a bare 204.
 
     The launcher ships no icon asset. Left unanswered, every page load logs a 404 for
     this request -- the only console error on an otherwise clean load. A 204 says
@@ -32,7 +32,7 @@ async def favicon() -> Response:
     return Response(status_code=204)
 
 # One entry for each box and each arrow on the page. `file` names a BACKEND source file,
-# never a frontend one (ADR 0029). A test asserts that every path here exists on disk, so
+# never a frontend one. A test asserts that every path here exists on disk, so
 # the page stays honest when a file moves.
 TEACH = {
     "plc": {
@@ -44,8 +44,8 @@ TEACH = {
     },
     "middleware": {
         "title": "One middleware instance, for one unit",
-        "what": "Every middleware carries a live activity feed of its own wiring and traffic "
-        "(ADR 0029) -- the \"activity\" link beside its address opens it. The same instance "
+        "what": "Every middleware carries a live activity feed of its own wiring and traffic"
+        " -- the \"activity\" link beside its address opens it. The same instance "
         "also reads its unit out of the graph and builds its connectors from what it finds "
         "there; no topic and no address is written in its code.",
         "file": "src/kapps_semantic_middleware/activity.py",
@@ -54,7 +54,7 @@ TEACH = {
         "title": "The control station",
         "what": "It lists every resource it finds in the graph, and it drives any of them. "
         "No endpoint is configured into it. It carries the same live activity feed as a "
-        "middleware (ADR 0022) -- the \"activity\" link beside its address opens it.",
+        "middleware -- the \"activity\" link beside its address opens it.",
         "file": "src/kapps_semantic_middleware/rest_router.py",
     },
     "broker": {
@@ -75,7 +75,7 @@ TEACH = {
         "title": "The Launcher",
         "what": "It seeds the graph and it starts every process on this page. It never "
         "appears in the graph, because nobody dispatches an Operation to bolt a conveyor to "
-        "the floor (ADR 0029).",
+        "the floor.",
         "file": "demo/transferunits/launcher.py",
     },
     "arrow-plc-broker": {

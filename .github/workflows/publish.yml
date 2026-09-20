@@ -1,11 +1,16 @@
-# Publish to PyPI when publish_release.py pushes a version tag.
+# Publish to PyPI when the release mechanism pushes a version tag.
 #
 # id-token: write is what makes trusted publishing work, and is why no API token
-# is stored anywhere. The tag push from publish_release.py is what fires this.
+# is stored anywhere. The tag push from the release mechanism is what fires this.
 #
 # PyPI supports trusted publishing from GitHub and from gitlab.com only, not from
 # a self-hosted GitLab. That is the whole reason this project is published from a
 # repository here while development happens elsewhere.
+#
+# The upload depends on the hygiene job, so a failing check stops it: the same
+# job hygiene.yml runs on every push, called here as a reusable workflow. The
+# tag is protected, so nothing can be re-pushed under the same version; the
+# hygiene job is what stands between a tag and an upload.
 
 name: publish
 
@@ -14,7 +19,11 @@ on:
     tags: ['v*']
 
 jobs:
+  hygiene:
+    uses: ./.github/workflows/hygiene.yml
+
   publish:
+    needs: hygiene
     runs-on: ubuntu-latest
     environment: pypi
     permissions:

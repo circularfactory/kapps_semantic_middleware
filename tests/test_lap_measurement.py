@@ -1,16 +1,16 @@
-"""Measure one control lap, so #82's default tick can be set from data rather than reasoning.
+"""Measure one control lap, so the station board's default tick can be set from data rather than reasoning.
 
 A lap is PUT -> unit middleware -> MQTT -> PLC -> MQTT back -> connector read: the time from
 commanding a value to the middleware having *observed* the device actually at it.
 
-**It cannot be measured on the ADR 0017 route.** Under ADR 0024's locator pattern a parameter
+**It cannot be measured on the REST route.** Under the locator pattern a parameter
 has one value slot, and the PUT writes the commanded value straight into it -- so the route
 reports the target the instant the PUT returns, whatever the belt is doing. Timing that
 measures the HTTP handler (~0.02 s) and nothing else. The lap has to be timed against the
 device's own state and against the inbound publish that carries it back.
 
-This could not be measured at all before #94: the belt froze short of its setpoint, so a lap
-never completed. That is why ``DEFAULT_TICK_SECONDS`` shipped reasoned from
+This could not be measured at all while the belt froze short of its setpoint, so that no lap
+ever completed. That is why ``DEFAULT_TICK_SECONDS`` first shipped reasoned from
 ``rest_binding.DEFAULT_POLL_INTERVAL_SECONDS`` rather than measured.
 
 Run on demand -- marked ``lap`` and deselected by default, because it measures rather than
@@ -47,7 +47,7 @@ from kapps_semantic_middleware.vocabulary import INF
 DISTANCES = (0.05, 0.5, 1.5, 3.0)
 """One ramp step, then a short hop, a typical setpoint change, and a near-full-range move.
 The first isolates transport latency with essentially no ramp in it; the rest show how much
-of a lap is #83's momentum. The tick must exceed the slowest lap the algorithm can provoke,
+of a lap is the belt's momentum. The tick must exceed the slowest lap the algorithm can provoke,
 not the average one."""
 
 ACTUAL_TOPIC = "TransferUnit1/ConveyorBelt/left/speed"
@@ -118,7 +118,7 @@ async def test_measure_one_lap(running_unit):  # noqa: F811
                 started = time.monotonic()
                 await _put(url, [node])
 
-                # Half 1: the device actually gets there (#83's ramp lives here).
+                # Half 1: the device actually gets there (the ramp lives here).
                 await _await_true(
                     lambda t=target: abs(unit.speeds["left"] - t) < 1e-9,
                     40.0,

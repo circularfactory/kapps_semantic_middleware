@@ -3,14 +3,12 @@
 This module is one of five contexts in this repository. See `/CONTEXT-MAP.md` at the root for the others.
 
 This is a runnable multi-process demonstration. It stands up a small factory of TransferUnits and a
-controller, and a person drives it from a browser. Each participant is a separate process
-(ADR 0029).
+controller, and a person drives it from a browser. Each participant is a separate process.
 
-Its decisions are **ADR 0029, ADR 0030 and ADR 0032**. Those records are
-development-repository material and do not ship; what they decided is described, without
-the deliberation, in `docs/mechanics/`.
+Its decisions are development-repository material and do not ship; what they decided is
+described, without the deliberation, in `docs/mechanics/`.
 
-**Root ADR 0004 governs what belongs here.** Every part of a scenario lives in this directory. The
+**Scenario parts live in the demo.** Every part of a scenario lives in this directory. The
 library holds generic functions only. The controller and the TransferUnit resource logic are parts
 of scenario 3. The monitor is also a part of scenario 3, and it is not built yet (milestone 2).
 
@@ -18,17 +16,17 @@ of scenario 3. The monitor is also a part of scenario 3, and it is not built yet
 
 **Factory**:
 The whole demonstration as it runs: N TransferUnits, a controller, and the Launcher that starts
-them. A monitor joins in milestone 2 (ADR 0032). It is not built.
+them. A monitor joins in milestone 2. It is not built.
 _Avoid_: demo, scenario 3, setup
 
 **Unit index**:
 This is the integer from 1 to N that identifies one TransferUnit. Every IRI and every MQTT topic of that
-unit derives from it (ADR 0030).
+unit derives from it.
 _Avoid_: unit number, unit id, n
 
 **Launcher**:
 This process builds the initial situation and starts every other process. It is plain
-infrastructure and it never appears in the knowledge graph (ADR 0029).
+infrastructure and it never appears in the knowledge graph.
 _Avoid_: supervisor, orchestrator, bootstrapper
 
 **Runner**:
@@ -38,7 +36,7 @@ _Avoid_: middleware script, worker
 **Control station**:
 This is the controller's Resource individual in the graph. It carries no controllable parameter, and
 it appears in its own discovery list. It registers a Service, so it stays discoverable, and it
-registers no Workflow, so it holds no Capability and an Operation never resolves to it (ADR 0002).
+registers no Workflow, so it holds no Capability and an Operation never resolves to it.
 The monitoring station will be the same shape for the monitor, in milestone 2.
 _Avoid_: controller resource, planner, operator station
 
@@ -49,7 +47,7 @@ _Avoid_: device vendor, integrator
 
 **Control Expert**:
 A domain expert who consumes units they did not build. They write a view as a SPARQL query, fetch
-each hit's datamodel, and drive it by assigning to their own objects (ADR 0033). They know the
+each hit's datamodel, and drive it by assigning to their own objects. They know the
 TransferUnit ontology and nothing about any particular unit.
 _Avoid_: operator, controller author
 
@@ -73,5 +71,5 @@ _Avoid_: device UI, unit page
 
 **Live factory**:
 A state of the graph, not of the host: a Service carries an address and a heartbeat inside the
-staleness window. The Launcher refuses to clear a live factory (ADR 0030).
+staleness window. The Launcher refuses to clear a live factory.
 _Avoid_: running factory, active factory

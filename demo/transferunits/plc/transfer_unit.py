@@ -1,4 +1,4 @@
-"""TransferUnit — the edge-device PLC stand-in for scenario 3 (#40, ADR 0023).
+"""TransferUnit — the edge-device PLC stand-in for scenario 3, *The TransferUnit Factory*.
 
 Stands in for the decentralized PLC controlling one TransferUnit. It speaks only MQTT and
 knows nothing about the middleware, the ontology or the graph: that asymmetry is the point of
@@ -9,7 +9,7 @@ as dumb as a real one.
 **Subscribes to 2** — the two conveyor speed setpoints. A setpoint moves the speed the unit
 publishes, which is what closes the loop end to end.
 
-Topic scheme (an instance convention, never baked into the classes — ADR 0023)::
+Topic scheme (an instance convention, never baked into the classes)::
 
     TransferUnit<n>/<component>/<position>/<param>          # read
     TransferUnit<n>/ConveyorBelt/<position>/speed_set        # setpoint
@@ -18,7 +18,7 @@ Payloads are raw JSON scalars, matching the default the MQTT binding expects whe
 declares no ``inf:hasMQTTValuePath``.
 
 It publishes **no** ``inf:hasValue`` into the graph, and indeed never touches the graph:
-scenario 3 is a locator (ADR 0024). The graph records where a value lives; the live value
+scenario 3 is a locator. The graph records where a value lives; the live value
 exists only in the datamodel and over REST.
 """
 
@@ -35,10 +35,10 @@ import aiomqtt
 logger = logging.getLogger(__name__)
 
 DEFAULT_BROKER = "127.0.0.1"
-# The plain MQTT default, not seed.broker_port(1) (#79) -- this is only the standalone
+# The plain MQTT default, not seed.broker_port(1) -- this is only the standalone
 # fallback for a PLC started with no --broker-port at all. The launcher always passes one
 # explicitly, and this module stays free of any import from seed.py or the middleware side
-# on purpose: a PLC knows nothing about the graph or the unit-index port scheme (ADR 0029).
+# on purpose: a PLC knows nothing about the graph or the unit-index port scheme.
 DEFAULT_PORT = 1883
 
 CONNECT_RETRY_INITIAL_SECONDS = 0.2
@@ -154,7 +154,7 @@ class TransferUnit:
 
         Retries the connection with a backoff, capped at ``CONNECT_RETRY_MAX_SECONDS``. The
         middleware brings up this unit's broker concurrently with the PLC. It does not start
-        the broker first (ADR 0029 as amended). Refusal on the first attempts is the ordinary
+        the broker first. Refusal on the first attempts is the ordinary
         startup race. It is not a fault. A real machine must survive a broker restart the
         same way. This is a device concern. The device holds no knowledge of the middleware.
         It does not know why the broker was briefly unreachable. A fresh attempt is worth
@@ -259,7 +259,7 @@ class TransferUnit:
 
         This is the REST API entry point for the panel. It used to set the actual speed.
         It published immediately. Now it only sets the target. The belt ramps toward the
-        target (#83). ``_ramp_loop`` is the single place that moves ``self.speeds``. It
+        target. ``_ramp_loop`` is the single place that moves ``self.speeds``. It
         publishes the result. This write path works exactly as an MQTT setpoint.
         """
         self.setpoints[position] = value
@@ -290,7 +290,7 @@ class TransferUnit:
         await asyncio.wait_for(_settled(), timeout=timeout)
 
     async def set_throughput_simulation(self, enabled: bool) -> None:
-        """Start or stop the barrier-cycling throughput simulation (#83).
+        """Start or stop the barrier-cycling throughput simulation.
 
         A crude stand-in for a workpiece traveling front-to-back while a belt runs. Cancelling
         is used rather than flagging. The loop can be mid-sleep inside a half cycle. A flag
@@ -336,7 +336,7 @@ class TransferUnit:
                 continue
 
             # Record the setpoint. _ramp_loop picks it up on its own tick and moves
-            # self.speeds toward it -- this is no longer an instant assignment (#83).
+            # self.speeds toward it -- this is no longer an instant assignment.
             self.setpoints[position] = value
             self._setpoints_seen.set()
             logger.info("%s setpoint -> %s", topic, value)
@@ -344,7 +344,7 @@ class TransferUnit:
     async def _ramp_loop(self) -> None:
         """Move each belt's actual speed toward its setpoint, one tick at a time.
 
-        A belt is a thing with momentum. It is not a number that snaps (#83). The setpoint
+        A belt is a thing with momentum. It is not a number that snaps. The setpoint
         moves the target. This loop is the "slow PID controller". It drives the reported
         speed there. It runs regardless of who last moved the target -- the MQTT
         path (``_listen``) and the panel's REST path (``set_speed``) both only ever set

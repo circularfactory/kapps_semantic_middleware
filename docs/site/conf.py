@@ -1,6 +1,6 @@
 """Sphinx configuration for the kapps-semantic-middleware documentation site.
 
-The decisions this file enacts are recorded on #116:
+The decisions this file enacts:
 
 - **Sphinx, not MkDocs**, because a real share of this site comes from ``src/``
   (117 of 127 public symbols carry a docstring).
@@ -10,10 +10,10 @@ The decisions this file enacts are recorded on #116:
 
 This config is meant to be **vendored** into ``kapps_ogm`` and
 ``kapps_triplestore_interface`` with only the ``project``/``release`` block and
-the reference pages changed -- the same per-repo rule #110 applied to the
-release scripts, and for the same reason: the three release at their own pace.
+the reference pages changed -- the same per-repo rule the release data under
+``release/`` follows, and for the same reason: the three release at their own pace.
 
-One exception to that, for #137: the scenario-notebook block below is specific
+One exception to that: the scenario-notebook block below is specific
 to this repository, which is the only one of the three that has scenario
 notebooks. A vendored copy drops it, rather than carrying a step that would
 raise on a repository with no ``examples/``.
@@ -25,15 +25,15 @@ from pathlib import Path
 
 # -- The scenario notebooks -------------------------------------------------
 
-# The two scenario pages ARE their notebooks. #135 put the explanation into the
+# The two scenario pages ARE their notebooks. The explanation lives in their
 # markdown cells rather than around them, so a separate page would do nothing but
 # restate the first cell, and the two copies would drift. Sphinx cannot read a
 # source file from outside its source directory, so the notebooks are copied in
 # here -- before Sphinx enumerates sources, which is why this runs at import time
 # rather than from ``setup(app)``.
 #
-# The copies are generated, so they are gitignored: #116 requires that nothing
-# generated enters git, which is what keeps #110's one-commit-per-release honest.
+# The copies are generated, so they are gitignored: nothing generated enters
+# git, which is what keeps the one-commit-per-release rule honest.
 # ``examples/`` ships to the release repo (the allowlist admits it), so the copy
 # finds its source there too.
 _NOTEBOOK_PAGES = {
@@ -141,8 +141,8 @@ html_theme_options = {
         "version_match": release,
     },
     # The switcher JSON is served by the site being built. Checking it at build
-    # time fails the very first release and every local build; the publish
-    # workflow regenerates it from the tag list anyway.
+    # time fails the very first release and every local build. Publishing the
+    # docs rebuilds it from the published versions anyway.
     "check_switcher": False,
     "show_version_warning_banner": True,
     "icon_links": [

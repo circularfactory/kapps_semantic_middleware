@@ -1,8 +1,8 @@
 """Guard test for the index page's links following the browsing host, not a hardcoded
-127.0.0.1 (#85). A page reached through an SSH tunnel or IDE port-forward has a different
+127.0.0.1. A page reached through an SSH tunnel or IDE port-forward has a different
 hostname than the one baked into a child's dynamically-allocated address; the anchor's
 href must be rebuilt from `location`, while the box keeps showing the child's real address
-and its source (#68) unchanged.
+and its source unchanged.
 
 No JS runtime here -- this asserts against the template's source text, the same way
 test_launcher_index_guard.py asserts against Python source text.
@@ -37,7 +37,7 @@ def test_box_and_launcher_links_go_through_href_for():
 
 def test_the_displayed_address_text_is_still_the_real_one():
     """Only the href changes -- the visible text and the source chip must still show the
-    child's real address (#68)."""
+    child's real address."""
     html = TEMPLATE.read_text(encoding="utf-8")
 
     assert ">${node.address}<" in html

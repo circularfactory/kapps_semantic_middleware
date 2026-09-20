@@ -144,7 +144,7 @@ def test_scenario2_door_direct_invocation_by_mobile_robot(graphdb):
         state_property_class=seed.DOOR_STATUS_STATE_CLASS,
     )(door_status)
 
-    # Per-instance since ADR 0022. Everything hanging off the Service is derived from the
+    # Per-instance. Everything hanging off the Service is derived from the
     # instance own IRI. Not reconstructed from the resource.
     service_iri = door.service_iri
     open_wf = mint_workflow_iri(service_iri, "door_open")
@@ -154,7 +154,7 @@ def test_scenario2_door_direct_invocation_by_mobile_robot(graphdb):
     server, thread = _start_server(door, DOOR_PORT)
     try:
         # Registration wrote the door structure + reachability (instance-owned inverse
-        # side, ADR 0006): both workflows and the state property, with reachable endpoints.
+        # side): both workflows and the state property, with reachable endpoints.
         assert db.triple_exists((open_wf, SVC.isWorkflowOf, service_iri))
         assert db.triple_exists((close_wf, SVC.isWorkflowOf, service_iri))
         assert db.triple_exists((status_sp, SVC.isStatePropertyOf, service_iri))

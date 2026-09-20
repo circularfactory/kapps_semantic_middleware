@@ -1,7 +1,7 @@
-"""Unit tests for KAPPS Semantic Middleware vocabulary (issue #12).
+"""Unit tests for KAPPS Semantic Middleware vocabulary.
 
-Verifies the vocabulary contract for MES + Operation-status additions per
-ADR 0009 (event-trigger coordination) and ADR 0012 (ontology layering).
+Verifies the vocabulary contract for MES + Operation-status additions
+(event-trigger coordination and ontology layering).
 Pure unit tests — NO GraphDB, NO network dependencies.
 """
 
@@ -50,7 +50,7 @@ class TestSVCOperationStatus:
 
 
 class TestOperationStatusValues:
-    """Test OperationStatus string values (ADR 0009 lifecycle)."""
+    """Test OperationStatus string values (the Operation lifecycle)."""
 
     def test_queued(self):
         assert OperationStatus.QUEUED == "queued"
@@ -69,7 +69,7 @@ class TestOperationStatusValues:
 
 
 class TestSVCExecutionProvenance:
-    """Test execution provenance terms per issue #12."""
+    """The execution provenance terms exist under svc:."""
 
     def test_execution_success_removed(self):
         """svc:executionSuccess boolean is removed (success now in operationStatus)."""

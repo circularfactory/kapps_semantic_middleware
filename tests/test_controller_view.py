@@ -1,5 +1,5 @@
 """The controller as a middleware instance: SPARQL view, fetched datamodels, REST
-connectors (#80, ADR 0033).
+connectors.
 
 The Control Expert's five steps, each its own seam:
 
@@ -10,14 +10,14 @@ The Control Expert's five steps, each its own seam:
 2. ``wire_view()`` -- recognition. No live peer needed either: assert every registered
    connector is REST, never MQTT (``_VIEW_REGISTRY`` excludes it on purpose).
 3-5. ``_load_view_datamodels()`` / ``push()`` -- these need a real peer over REST, and the
-   peer must run as a genuine separate **process** (ADR 0029), not just a separate
+   peer must run as a genuine separate **process**, not just a separate
    thread in this same process: ``transitional_sync_middleware``'s ``connector_sync_manager`` is a
    process-wide singleton keyed only by ``(data_model_name, model_id)``, so a controller
    and its target peer sharing one process would collide on it the moment both persist
    the same unit's IRI under ``data_model_name="resource"`` -- each would fan out to the
    other's own connectors, forever. A real ``demo.transferunits.middleware`` subprocess
    for the peer sidesteps the collision entirely, the same way the real demo's own
-   process-per-participant shape (ADR 0029) does.
+   process-per-participant shape does.
 """
 
 from __future__ import annotations
@@ -74,7 +74,7 @@ def _publish_service(graphdb, resource_iri, address: str) -> None:
 
 
 def _view_query() -> str:
-    """The Control Expert's own query (ADR 0033): every live TransferUnit, narrowed to
+    """The Control Expert's own query: every live TransferUnit, narrowed to
     an even unit index. Neither the class name nor the heuristic lives in
     ``controller.py`` -- both are authored here, in the query text, the same way
     ``control_station.py`` builds it for the running demo.
@@ -107,7 +107,7 @@ def factory4(graphdb, ogm):
 
 @requires_graphdb
 class TestView:
-    """ADR 0033 step 1: the query is the whole view."""
+    """The Control Expert's step 1: the query is the whole view."""
 
     def test_even_unit_index_heuristic_yields_exactly_units_2_and_4_of_4(
         self, graphdb, factory4
@@ -150,7 +150,7 @@ class TestView:
 
 @requires_graphdb
 class TestWireView:
-    """ADR 0033 steps 2-4: recognition registers REST connectors, never MQTT."""
+    """The Control Expert's steps 2-4: recognition registers REST connectors, never MQTT."""
 
     def test_registers_only_rest_connectors(self, graphdb, factory4, unit_scope):
         _publish_service(graphdb, seed._mint_transfer_unit_iri(2), "http://127.0.0.1:19102")
@@ -244,14 +244,14 @@ async def _wait_for_field(url: str, value_field: str, expected, timeout: float =
 
 
 def _spawn_peer_middleware(unit_index: int, repository: str) -> subprocess.Popen:
-    """Spawn a real unit middleware as a genuine OS process (ADR 0029), never a thread
+    """Spawn a real unit middleware as a genuine OS process, never a thread
     in this test process -- see the module docstring for why that distinction is
     load-bearing here, not just a style preference. Wires real MQTT connectors, on its
-    own in-process broker (ADR 0034); nothing here needs a PLC, since these tests only
+    own in-process broker; nothing here needs a PLC, since these tests only
     exercise the REST side.
 
     ``repository`` must be passed explicitly, and must be the one this test seeded. The
-    child names its repository in code and ignores GRAPHDB_REPOSITORY (issue #146), so
+    child names its repository in code and ignores GRAPHDB_REPOSITORY, so
     inheriting the environment is no longer enough to put both ends in the same graph --
     without this the peer would join the demo's repository and publish its svc:address
     where the test is not looking.
@@ -279,7 +279,7 @@ def _spawn_peer_middleware(unit_index: int, repository: str) -> subprocess.Popen
 async def _await_service_address(graphdb, resource_iri, timeout: float = 30.0) -> str:
     """Poll the graph for ``resource_iri``'s ``svc:address`` -- the same signal
     ``_register_service`` publishes once the middleware's own lifespan has actually
-    started (ADR 0007), reachable across a process boundary because it goes through
+    started, reachable across a process boundary because it goes through
     the graph rather than any pipe or shared memory."""
     deadline = time.monotonic() + timeout
     sparql = f"""
@@ -362,7 +362,7 @@ async def running_peer_and_controller(graphdb, unit_scope):
 @requires_graphdb
 @pytest.mark.asyncio
 class TestDrivingAView:
-    """ADR 0033 steps 3-5, over real REST between two real middleware processes."""
+    """The Control Expert's steps 3-5, over real REST between two real middleware processes."""
 
     async def test_assigning_a_speed_moves_the_peers_belt_with_no_http_in_the_algorithm(
         self, running_peer_and_controller
@@ -391,9 +391,9 @@ class TestDrivingAView:
 
     async def test_holds_no_mqtt_properties_anywhere(self, running_peer_and_controller):
         """Acceptance criterion 5: "The controller holds no inf:hasMQTT* property
-        anywhere (pruning ticket)." Pruning (ticket #78, via
+        anywhere (pruning ticket)." Pruning (via
         ``WiringPlan.northbound_fetch_kwargs``) and the REST-only ``_VIEW_REGISTRY`` are
-        belt-and-braces (ADR 0033) -- this asserts the belt-and-braces actually held on a
+        belt-and-braces -- this asserts the belt-and-braces actually held on a
         real loaded datamodel, fetched from a peer whose seed data genuinely carries
         MQTT broker metadata, rather than only that the two mechanisms exist.
         """

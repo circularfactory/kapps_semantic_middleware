@@ -35,7 +35,7 @@ def graphdb_env(monkeypatch):
 def test_a_stray_repository_variable_is_ignored(graphdb_env, monkeypatch):
     """The acceptance criterion: a repository named in the environment does not win.
 
-    This is the failure #146 exists to prevent, and the one form of it the non-live
+    This is the failure the repository pin exists to prevent, and the one form of it the non-live
     tier can catch.
     """
     monkeypatch.setenv("GRAPHDB_REPOSITORY", "Production")

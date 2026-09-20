@@ -11,11 +11,11 @@
 # MES (Manufacturing Execution System): a domain ontology that imports the
 # Core ontology (cfc:) and details it out with manufacturing-execution
 # functionality. Core is superior and is imported and specialized, never
-# modified (see Core Middleware ADR 0012, ontology-module layering). This
+# modified (ontology-module layering). This
 # module is domain-facing — the vocabulary domain experts touch — and is a
 # sibling to the reachability/coordination module svc:, which both import Core.
 #
-# v1 scope (Core Middleware ADR 0011, handover primitive): a handover-ability tag with
+# v1 scope (the handover primitive): a handover-ability tag with
 # six enumerated individuals. Possession is NOT re-minted here — it is Core material-flow
 # state (cfc:PossessionState / cfc:hasPossessor / cfc:hasPossessedWorkpiece; verified
 # against Core 0.9.0). Deliberately NO ability classes beyond the single tag class, NO

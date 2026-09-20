@@ -2,10 +2,10 @@
 
 The TransferUnit ontology is classes only; its instances are created through the OGM by
 `seed.seed_scenario3` rather than authored as Turtle, so this exercises the same validated
-write path a running middleware uses (root ADR 0008). Skipped when GRAPHDB_* env vars are
+write path a running middleware uses. Skipped when GRAPHDB_* env vars are
 absent (see conftest).
 
-Scenario 3 is a **locator** (ADR 0024): the graph records where each value lives, never the
+Scenario 3 is a **locator**: the graph records where each value lives, never the
 value itself, so a parameter node carries a unit and its connection metadata and no
 `inf:hasValue`.
 """
@@ -93,7 +93,7 @@ def test_transfer_unit_is_composed_of_its_belts_and_barriers(seeded):
 @requires_graphdb
 def test_a_settable_parameter_carries_a_set_topic(seeded):
     """A readwrite parameter needs two topics: the connector publishes to the one it
-    subscribes to, so read and write need separate topics (ADR 0023)."""
+    subscribes to, so read and write need separate topics."""
     properties = _parameter_properties(
         seeded, seed.CONVEYOR_BELT_LEFT, seed.TU_HAS_CONVEYOR_SPEED
     )
@@ -118,7 +118,7 @@ def test_a_read_only_parameter_has_no_set_topic(seeded):
 
 @requires_graphdb
 def test_no_value_is_seeded_because_scenario_three_is_a_locator(seeded):
-    """ADR 0024: the graph says where the value lives, never what it is. A parameter that
+    """The locator pattern: the graph says where the value lives, never what it is. A parameter that
     has not been observed yet simply has no value triple."""
     assert not _bindings(
         seeded, f"SELECT ?s {EXPLICIT} WHERE {{ ?s <{seed.INF_HAS_VALUE}> ?o }}"

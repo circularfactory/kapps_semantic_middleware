@@ -14,7 +14,7 @@ into every recognised binding's metadata. This binding reads it out exactly like
 **The route is structural, so nothing else is needed.** Address plus the recursive path
 derived from the datamodel tree is a complete binding — no REST-specific ontology term is
 minted. ``build_parameter_path`` does that derivation. It moved here from
-``demo/transferunits/controller.py`` rather than being rewritten (ticket #77): the two
+``demo/transferunits/controller.py`` rather than being rewritten: the two
 callers — this binding, reaching outward at recognition time, and the ``Controller``,
 reaching outward from a fetched JSON tree — need the identical algorithm, and a domain-level
 module is the wrong place to own something the middleware itself defines.
@@ -27,19 +27,17 @@ serves and accepts that exact list — there is no scalar to rewrap. So
 ``node_model_type`` instances, nothing more (contrast ``mqtt_binding.MQTTParameterFormatter``,
 which reassembles static facets a bare scalar would otherwise blank).
 
-**REST has no push, so northbound sync polls** (raised while grilling #81, decided here,
-ticket #77). Three questions were left open for whoever picked this up:
+**REST has no push, so northbound sync polls.** That leaves three questions:
 
 - *Batched or per-parameter?* One GET per parameter, one ``RESTParameterConnector`` per
   registration — the same granularity MQTT already uses (one connector per topic). A shared
   batch-fetch-and-fan-out would need state shared across bindings that recognition does not
-  otherwise couple, for a cost (extra GETs on a resource with few parameters) this ticket has
-  no evidence yet justifies the complexity.
-- *What interval?* ``DEFAULT_POLL_INTERVAL_SECONDS`` below, currently conservative. Ticket
-  #82 measures one full lap (PUT -> unit middleware -> MQTT -> PLC -> MQTT back -> connector
-  read) to set an algorithm's tick above every freshness floor in the chain, and this
-  connector's read cadence is one term in that lap — that measurement, not this ticket,
-  should tune the default.
+  otherwise couple, for a cost (extra GETs on a resource with few parameters) that no
+  evidence yet justifies.
+- *What interval?* ``DEFAULT_POLL_INTERVAL_SECONDS`` below, conservative and not measured.
+  The demo's measured control lap does not include it: that lap is a unit's own MQTT round
+  trip, and this poll is a controller reading a peer over REST. ``DEFAULT_TICK_SECONDS`` in
+  the demo's ``control_station.py`` records that measurement.
 - *Configurable?* Yes, per connector instance (``poll_interval=``), which
   ``RESTBinding.build`` could source from a future ``inf:`` term if one ever proves
   necessary. None is minted here; the route needs no new term, and a cadence is not
@@ -49,12 +47,13 @@ ticket #77). Three questions were left open for whoever picked this up:
 ``RESTBinding``, must not require a working network stack, so that an inspecting instance
 keeps receiving the projection on a host that cannot reach anything.
 
-**That rule does not currently hold on this module's import path, and the guard below is
-unreachable.** Corrected 2026-08-07 on #77, which had recorded the box as merely untested.
-Importing this module pulls in ``transitional_sync_middleware.connect.connectors.aas_client_connector``,
-which does a bare ``import httpx`` at module level — and does not declare ``httpx`` in its own
-manifest at all. With httpx absent the import therefore dies several frames above the ``try``
-below, and the ``# pragma: no cover`` on it is accurate rather than lazy. The MQTT half is
+**That rule does not hold on this module's import path, and the guard below is
+unreachable.** Importing this module pulls in
+``transitional_sync_middleware.connect.connectors.aas_client_connector``, which does a bare
+``import httpx`` at module level. ``httpx`` is a declared dependency of both this library and
+``transitional_sync_middleware``, so a working install always has it; were it absent, the
+import would die several frames above the ``try`` below. The ``# pragma: no cover`` on it is
+accurate rather than lazy. The MQTT half is
 genuinely different: ``aiomqtt`` really is an optional extra there, and ``mqtt_binding``
 really does degrade to ``MqttClientConnector = None``.
 
@@ -63,8 +62,6 @@ the eager import upstream goes away, and its error message is reachable and asse
 (``tests/test_optional_transport_stacks.py``). What is *not* claimed here any more is that
 absence has ever been survivable on this path.
 """
-
-# ADR: 0017, 0023, 0028, 0033
 
 from __future__ import annotations
 
@@ -102,7 +99,7 @@ DEFAULT_POLL_INTERVAL_SECONDS = 2.0
 
 # Sentinel that tracks whether any value exists yet, same rationale as mqtt_binding's: a
 # genuine first payload still counts as a change worth logging at INFO. Not shared with
-# mqtt_binding on purpose -- each protocol binding stands alone (ADR 0023: a descriptor
+# mqtt_binding on purpose -- each protocol binding stands alone (a descriptor
 # names a connector_cls, it does not inherit from a sibling descriptor).
 _UNSET = object()
 
@@ -110,8 +107,8 @@ _UNSET = object()
 def _is_a_change(value: Any, previous: Any) -> bool:
     """Whether a polled value is news, for change-only INFO logging.
 
-    Kept as a named function rather than inlined to its two call sites (#93 item 5 offered
-    the inlining), for one reason: ``mqtt_binding`` has a function of the same name that is
+    Kept as a named function rather than inlined to its two call sites, for one
+    reason: ``mqtt_binding`` has a function of the same name that is
     **not** a bare ``!=`` -- it treats NaN as equal to itself, because IEEE-754 says
     ``nan != nan`` and a sensor stuck at NaN would otherwise report every republish as a
     change and flood the feed the comparison exists to keep readable.
@@ -137,13 +134,12 @@ def _httpx_module():
     that the failure is deferred to the moment something actually tries to talk to a peer.
 
     **The deferral is real; the absence it defers is not reachable here.** See the module
-    docstring: an eager, undeclared ``import httpx`` upstream in ``transitional_sync_middleware`` means this
+    docstring: an eager ``import httpx`` upstream in ``transitional_sync_middleware`` means this
     module cannot be imported without httpx in the first place. The message below is
     nonetheless asserted, by swapping the module global -- the strongest check available while
-    that stays true, and weaker than #77's box asked for.
+    that stays true, and weaker than a run with httpx actually uninstalled.
     """
 
-    # ADR: 0023, 0028
     if httpx is None:  # pragma: no cover - depends on the optional install
         raise ImportError(
             "The REST semantic connector needs httpx. Install it with `uv add httpx`, or "
@@ -167,7 +163,7 @@ def build_parameter_path(
     them in the mangled form the served route uses. Only individual IDs are mangled here, via
     ``IRI.lined``.
 
-    Moved from ``demo/transferunits/controller.py`` (ticket #77): the algorithm has no
+    Moved from ``demo/transferunits/controller.py``: the algorithm has no
     domain term and two callers now need it, one of them in ``src/``.
 
     Args:
@@ -182,7 +178,6 @@ def build_parameter_path(
     Returns:
         The structural URL path.
     """
-    # ADR: 0017, 0021
     path_parts = ["", root_class_local_name, IRI(root_iri).lined]
     for field_name, child_id in steps:
         path_parts.append(field_name)
@@ -199,8 +194,6 @@ class RESTParameterFormatter:
     routes serve and accept exactly that shape. There is no scalar to rewrap, so this is a
     type adapter between a JSON list of dicts and ``model_type`` instances, nothing more.
     """
-
-    # ADR: 0017
 
     def __init__(
         self,
@@ -238,7 +231,6 @@ class RESTParameterFormatter:
         round trips through this pair with no reshaping in between.
         """
 
-        # ADR: 0017
         items = data if isinstance(data, (list, tuple)) else [data]
         body = [
             item.model_dump(mode="json") if hasattr(item, "model_dump") else item
@@ -300,7 +292,6 @@ class RESTParameterConnector:
 
     async def consume(self, body: Any) -> None:
         """PUT ``body`` to the parameter route. ``body`` already has the list shape it wants."""
-        # ADR: 0017
         httpx_module = _httpx_module()
         async with httpx_module.AsyncClient(timeout=self.timeout) as client:
             response = await client.put(self.url, json=body)
@@ -343,8 +334,6 @@ class RESTBinding:
     whose resource happens to be live.
     """
 
-    # ADR: 0023, 0028
-
     connector_cls: ClassVar[Any] = RESTParameterConnector
     interface_property: ClassVar[IRI] = INF.isInterfaceAccessibleParameter
     connection_metadata: ClassVar[Tuple[IRI, ...]] = ()
@@ -353,8 +342,6 @@ class RESTBinding:
     projection's cross-check compares this against what the ontology declares *between the
     parameter property and the interface root*, which is likewise nothing for a parameter with
     no protocol-specific marker, so the two agree."""
-
-    # ADR: 0028
 
     @staticmethod
     def build(
@@ -373,7 +360,6 @@ class RESTBinding:
         deployment needs to bring up -- there is nothing here to ensure.
         """
 
-        # ADR: 0023, 0034
         address = binding.get(SVC.address)
         if not address:
             # A generically interface-accessible parameter whose resource has no live

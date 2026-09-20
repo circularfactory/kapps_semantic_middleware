@@ -1,15 +1,15 @@
-"""Northbound sync through the full middleware, not just the bare connector (#86).
+"""Northbound sync through the full middleware, not just the bare connector.
 
 ``test_scenario3_roundtrip_integration.py`` proves a value reaches a bare
 ``MqttClientConnector``'s queue. It never drives ``Middleware``'s background sync
 machinery -- ``SyncedConnector.receive()``, the ``run_receive`` task, and the
-persistence-write fan-out to sibling connectors -- which is the layer #86's bug actually
+persistence-write fan-out to sibling connectors -- which is the layer the bug actually
 lived in: a persistence write's best-effort notification to a sibling connector raised,
 and that exception propagated out of ``consume()`` into the *receiving* connector's own
 background task, killing it. A topic answered exactly once, then went silent forever.
 
 These tests start a real ``SemanticMiddleware`` server and read values back over its
-ADR 0017 REST route, the way an operator's panel or a controller actually would, so they
+recursive REST route, the way an operator's panel or a controller actually would, so they
 exercise the path the bare-connector tests cannot reach. Where the issue's own acceptance
 criteria name "the panel," these drive ``TransferUnit.set_speed`` / ``set_occupied`` directly
 -- exactly the calls ``demo/transferunits/plc/panel.py``'s REST handlers make, without the
@@ -93,12 +93,12 @@ async def _route_ending(mw, suffix, timeout=10.0):
 async def running_unit(graphdb, mqtt_broker, unit_scope):
     """A real ``SemanticMiddleware`` server for TransferUnit1, wired over the test broker.
 
-    Reads come back through the middleware's own REST route -- the actual path #86 broke,
+    Reads come back through the middleware's own REST route -- the actual path that broke,
     not the bare connector queue ``test_scenario3_roundtrip_integration.py`` reads.
     """
     host, port = mqtt_broker.split(":")
     seed.seed_scenario3(graphdb, OGM(db=graphdb))
-    # Declare both host and port in the graph, the way provisioning will (#69). No manual
+    # Declare both host and port in the graph, the way provisioning will. No manual
     # patch of the built connectors is needed once `inf:hasMQTTBrokerPort` reaches the
     # connector through the binding itself.
     graphdb.query(
@@ -157,7 +157,7 @@ async def _wait_for_value(url, expected, timeout=5.0):
 @requires_graphdb
 @pytest.mark.asyncio
 class TestConsecutiveChangesReachPersistence:
-    """#86: a topic answered exactly once, then went silent -- the background task
+    """A topic answered exactly once, then went silent -- the background task
     reading it died on its first successful update, and stayed dead."""
 
     async def test_three_consecutive_speed_changes_all_land(self, running_unit, caplog):
@@ -182,27 +182,27 @@ class TestConsecutiveChangesReachPersistence:
                 logging.INFO, logger="kapps_semantic_middleware.connectors.mqtt_binding"
             )
 
-            # One value is what the pre-#86 suite already proved. A second and third are
+            # One value is what the earlier suite already proved. A second and third are
             # what shipped broken: the first successful update killed the receive task for
             # good. `set_speed` is the same call `demo/transferunits/plc/panel.py`'s `set`
             # REST handler makes -- "the panel's set" from the issue's acceptance criteria.
             for value in (0.0, 1.11, 2.22):
                 await unit.set_speed("left", value)
                 assert await _wait_for_value(url, value), (
-                    f"{value} never reached persistence over the ADR 0017 route"
+                    f"{value} never reached persistence over the REST route"
                 )
 
-        # Every value the belt settled on was reported as news (#67's log-on-change, seen
+        # Every value the belt settled on was reported as news (the log-on-change rule, seen
         # through the whole pipeline rather than at the formatter).
         #
-        # This asserted `len(info_lines) == 3` when it was written, one commit before #83
-        # landed. A setpoint no longer snaps: `_ramp_loop` walks the belt toward its target
+        # This asserted `len(info_lines) == 3` when it was written, one commit before the
+        # belt ramp landed. A setpoint no longer snaps: `_ramp_loop` walks the belt toward its target
         # and publishes every step, so three setpoints legitimately produce dozens of
         # *distinct* values, every one of them genuine news. The count measured the ramp
         # rate, not the logging -- three setpoints only ever meant three lines while a
         # setpoint was an instant assignment.
         #
-        # The suppression half of #67 -- that an unchanged republish drops to DEBUG -- is
+        # The suppression half of log-on-change -- that an unchanged republish drops to DEBUG -- is
         # not asserted here, and deliberately not. `_ramp_loop` publishes only when it
         # actually moves the belt, so a converged belt is silent and there is no unchanged
         # value to suppress unless this test either runs long enough for the 5s periodic
@@ -211,7 +211,7 @@ class TestConsecutiveChangesReachPersistence:
         # `test_semantic_connectors.py::test_a_repeated_inbound_value_drops_to_debug` owns
         # that property directly and deterministically.
         # `args[-1]` rather than a fixed index: the value is the last argument on both the
-        # inbound and the outbound line, and #76 dropped the topic out of the INFO record, so
+        # inbound and the outbound line, and the topic was dropped out of the INFO record, so
         # what used to sit at index 2 now sits at index 1. Read from the end and this survives
         # the next such change too.
         logged_values = [
@@ -248,9 +248,9 @@ class TestConsecutiveChangesReachPersistence:
 @requires_graphdb
 @pytest.mark.asyncio
 class TestReceiveFailureIsVisible:
-    """#86 acceptance: "A receive task that dies logs a traceback instead of vanishing."
+    """A receive task that dies logs a traceback instead of vanishing.
 
-    The fix in ``persisted_connector.py`` isolates the *specific* failure #86 diagnosed (a
+    The fix in ``persisted_connector.py`` isolates the *specific* failure diagnosed above (a
     persistence-write notification broadcasting the whole model to a sibling connector's
     formatter), so that path no longer kills a receive task at all. This test proves the
     other half of the fix -- ``middleware.py``'s ``run_receive`` -- independently, by

@@ -1,4 +1,4 @@
-"""Unit tests for the semantic-connector seam (#40, ADR 0023 / ADR 0028).
+"""Unit tests for the semantic-connector seam.
 
 Pure logic. No GraphDB, no broker, no network. The seam exists so a binding
 can be described and reasoned about without a running middleware. These tests
@@ -98,7 +98,7 @@ class TestRegistry:
         assert registry.for_interface_property(IRI(f"{OTHER_NS}isSomethingElse")) is None
 
     def test_a_second_interface_class_registers_without_touching_core(self):
-        """#40 acceptance: a stub protocol registers alongside MQTT. No core change."""
+        """A stub protocol registers alongside MQTT. No core change."""
 
         class StubBinding:
             connector_cls = object
@@ -142,7 +142,7 @@ class TestDefaultRegistry:
     blind to this. This is how it went unnoticed.
 
     Note the *projection* no longer depends on this being populated. It asks the
-    ontology (ADR 0028). An empty registry is now a wiring failure. It is not a leak.
+    ontology. An empty registry is now a wiring failure. It is not a leak.
     """
 
     def test_importing_the_package_registers_the_builtin_bindings(self):
@@ -193,7 +193,7 @@ class TestDirection:
         assert resolve_direction(access_mode, flavour) is expected
 
     def test_absent_access_mode_is_read_only(self):
-        """A parameter is never writable by accident of omission (ADR 0023)."""
+        """A parameter is never writable by accident of omission."""
         binding = ParameterBinding(
             resource_iri=BELT,
             parameter_property=SPEED,
@@ -227,7 +227,7 @@ class TestMQTTBindingBuild:
             "belt/speed",
             "belt/speed_set",
         ]
-        # Both legs share one broker. One ConnectionInfo binds them (ADR 0023).
+        # Both legs share one broker. One ConnectionInfo binds them.
         assert {r.connector.mqtt_broker_ip for r in registrations} == {"127.0.0.1"}
 
     def test_read_only_direction_yields_only_the_read_leg(self):
@@ -257,7 +257,7 @@ class TestMQTTBindingBuild:
 
 
 class TestMQTTBindingPort:
-    """inf:hasMQTTBrokerPort reaches the connector. Absent means 1883 (ADR 0031)."""
+    """inf:hasMQTTBrokerPort reaches the connector. Absent means 1883."""
 
     def test_absent_port_defaults_to_1883(self):
         registrations = list(MQTTBinding.build(_binding(), SyncDirection.TO_PERSISTENCE))
@@ -280,7 +280,7 @@ class TestMQTTBindingPort:
 
     def test_the_round_trip_preserves_an_integer_not_a_string(self):
         """The seed writes xsd:integer. binding.get() must hand back 18831, not "18831"
-        (#69's stated acceptance -- the first non-string literal any seed here writes)."""
+        (the first non-string literal any seed here writes)."""
         registrations = list(
             MQTTBinding.build(_binding(port=18831), SyncDirection.TO_PERSISTENCE)
         )
@@ -291,7 +291,7 @@ class TestMQTTBindingPort:
 
 
 class TestEnsureTransport:
-    """The deployment's transport hook (ADR 0034). The library only ever calls it -- it
+    """The deployment's transport hook. The library only ever calls it -- it
     never probes, never starts anything, and never reads a return value."""
 
     def test_absent_hook_calls_nothing(self):
@@ -375,7 +375,7 @@ class TestMQTTFormatter:
 
     def test_deserialize_preserves_the_static_facets(self):
         """setattr replaces the whole list. A bare value blanks the unit in the
-        model served over REST (ADR 0023, the graph half is ADR 0027)."""
+        model served over REST (the graph half is skolemization)."""
         [node] = self._formatter().deserialize(12.1)
 
         assert getattr(node, IRI("https://example.org/tu#hasUnit").lined) == ["m/s"]
@@ -394,7 +394,7 @@ class TestMQTTFormatter:
         assert json.loads(formatter.serialize(formatter.deserialize(7.25))) == 7.25
 
     def test_round_trips_a_json_envelope(self):
-        """inf:hasMQTTValuePath is one property. Honour it symmetrically (ADR 0023)."""
+        """inf:hasMQTTValuePath is one property. Honour it symmetrically."""
         formatter = self._formatter(value_path="payload.speed")
 
         [node] = formatter.deserialize({"payload": {"speed": 4.5}, "ts": 123})
@@ -413,7 +413,7 @@ class TestMQTTFormatter:
         """Scenario 3 is a locator. A parameter has no value until the device publishes.
 
         Serializing it used to encode as the JSON scalar ``null`` -- not a valid device
-        value, and a receiver expecting a number or boolean chokes on it (#80's
+        value, and a receiver expecting a number or boolean chokes on it (the
         cross-field notify fan-out makes exactly this reachable: any change on a
         resource asks every write leg on it to re-derive its own slice, including a
         sibling parameter nothing has ever set). Refusing loudly here, rather than
@@ -688,9 +688,9 @@ class TestActivityLogging:
         assert "Belt1 hasConveyorSpeed" in records[0].message
 
     def test_no_topic_reaches_an_info_record(self, caplog):
-        """#76. The activity feed serves this package's INFO records over HTTP.
+        """The activity feed serves this package's INFO records over HTTP.
 
-        A topic is southbound metadata that ADR 0028 deletes from the served
+        A topic is southbound metadata that the projection deletes from the served
         datamodel. An INFO line carrying it hands a peer the bypass route the
         projection withholds, over the same web server, one URL away. The topic
         belongs at DEBUG, which the feed's handler never buffers.

@@ -148,7 +148,7 @@ def _make_put_handler(
     diff-based commit writes nothing for the siblings. See that file lines around the field-level
     branch.
 
-    The precision has to survive the ``consume`` call as well, and it did not (#94). A
+    The precision has to survive the ``consume`` call as well, and at first it did not. A
     persistence connector is keyed by *(data_model_name, model_id)*, so every connector on
     this resource hangs off the one this handler fetches. Handing it the whole model with no
     further word meant the fan-out asked *every* write leg on the resource to re-derive its
@@ -186,7 +186,7 @@ def _make_put_handler(
                 ),
             )
             # A PUT is always news. Something northbound chose to act. Log after the
-            # consume. The line means "applied" rather than "attempted" (#67).
+            # consume. The line means "applied" rather than "attempted".
             logger.info("PUT applied: %s on %s = %r", field_id, owner_id, body)
             return {"message": f"Updated {field_id}"}
         except HTTPException:
@@ -198,7 +198,7 @@ def _make_put_handler(
     # As above: the body type has to arrive as a real object on the signature. Do not use a string
     # annotation. FastAPI would fail to resolve it.
     #
-    # `body_annotation` is the owning model's field annotation (#87). For a COMPLEX property that
+    # `body_annotation` is the owning model's field annotation. For a COMPLEX property that
     # is not required, that annotation is `Optional[Annotated[conlist(Model, ...), BeforeValidator]]`
     # -- not the plain `List[Model]` it is for a required one. FastAPI infers body-vs-query from
     # whether the annotation looks "scalar", and an `Optional` wrapper defeats that inference: it

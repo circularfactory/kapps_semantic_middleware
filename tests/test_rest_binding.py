@@ -1,4 +1,4 @@
-"""Unit tests for the REST semantic connector (#77, ADR 0033 / ADR 0023's Service-join amendment).
+"""Unit tests for the REST semantic connector, including the Service-join amendment.
 
 Pure logic plus a mocked HTTP layer. No GraphDB, no network. The seam exists so a binding can
 be described and reasoned about without a running middleware or a running peer -- this is the
@@ -66,7 +66,7 @@ def _binding(
 
 
 class TestBuildParameterPath:
-    """Mirrors rest_router.py's _accumulate_routes shape exactly (ADR 0017)."""
+    """Mirrors rest_router.py's _accumulate_routes shape exactly."""
 
     def test_matches_the_recursive_router_shape(self):
         path = build_parameter_path(
@@ -155,7 +155,7 @@ class TestRESTBindingRegistration:
         assert RESTBinding.interface_property == INF.isInterfaceAccessibleParameter
 
     def test_declares_no_parameter_local_connection_metadata(self):
-        """Its evidence is the Service, not the parameter (ADR 0023's amendment) -- so there
+        """Its evidence is the Service, not the parameter -- so there
         is nothing here for the projection's cross-check to disagree about."""
         assert RESTBinding.connection_metadata == ()
 
@@ -196,7 +196,7 @@ class TestRESTParameterFormatter:
         ]
 
     def test_round_trips_a_put_echo(self):
-        """ADR 0017: PUT sends exactly what GET returned. deserialize then serialize must
+        """PUT sends exactly what GET returned. deserialize then serialize must
         be the identity on the wire shape."""
         formatter = self._formatter()
         wire = [{INF.hasValue.lined: [3.5], INF.accessMode.lined: ["readwrite"]}]
@@ -206,7 +206,7 @@ class TestRESTParameterFormatter:
         ]
 
     def test_an_absent_body_deserializes_as_empty(self):
-        """The locator pattern: no value until the peer has one either (ADR 0024)."""
+        """The locator pattern: no value until the peer has one either."""
         assert self._formatter().deserialize(None) == []
 
     def test_passing_model_instances_through_is_a_no_op(self):

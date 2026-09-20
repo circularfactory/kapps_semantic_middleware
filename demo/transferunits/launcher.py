@@ -3,11 +3,11 @@
 Builds the initial situation (seeds the graph) and spawns every participant
 process: one PLC and panel, and one middleware, per unit, plus one control
 station. Credentials go only to graph-side children. A PLC process never
-receives GRAPHDB_* (ADR 0029). Teardown is ordered: middleware and the
+receives GRAPHDB_*. Teardown is ordered: middleware and the
 control station first, so each deregisters while its PLC still answers,
 then the PLCs.
 
-No HTTP route lives here (ADR 0029 / #72) -- the ``Factory`` class only
+No HTTP route lives here -- the ``Factory`` class only
 seeds, spawns, tracks and stops. ``index.py`` reads its state to serve the
 Launcher's index page.
 """
@@ -34,8 +34,8 @@ from . import seed
 # Every child is spawned as `python -m <this package>.<module>`, derived rather than written
 # out. In this checkout that resolves to `demo.transferunits`; in an installed wheel the same
 # code resolves to `kapps_semantic_middleware.demonstrations.transferunits`, because the demo
-# ships under the library's namespace rather than claiming a top-level `demo` on PyPI. Root
-# ADR 0004 fixes where these files live on disk, not what they are called once installed.
+# ships under the library's namespace rather than claiming a top-level `demo` on PyPI. The
+# scenario rule fixes where these files live on disk, not what they are called once installed.
 _PACKAGE = __package__ or "demo.transferunits"
 
 SLOW_AFTER_SECONDS = 30.0
@@ -82,7 +82,7 @@ def _child_identity(child: ChildHandle) -> str:
 
 def _echo_address_line(child: ChildHandle, line: str) -> None:
     """Echo one address line to the launcher's own stdout, prefixed with the child's
-    identity (#85). An IDE forwards ports by scanning terminal output for `http://host:port`
+    identity. An IDE forwards ports by scanning terminal output for `http://host:port`
     -- only lines that carry one are echoed here, unmodified and flushed; everything else
     stays only in the child's ring buffer.
     """
@@ -95,13 +95,22 @@ def _spawn_plc(unit_index: int) -> ChildHandle:
     """Spawn a PLC and panel process for one unit.
 
     Its environment carries no GRAPHDB_* variable — enforced by construction,
-    not by discipline (ADR 0029). Its panel address arrives as one line on
+    not by discipline. Its panel address arrives as one line on
     stdout, since a PLC holds no graph credentials to register one itself.
     Blocks until that line arrives or the process exits, so the returned
     handle already carries its outcome — starting a PLC panel is fast, and a
     live index page has nothing useful to show before it either way.
 
-    Its own broker (ADR 0029 as amended) is this unit's alone: the port is
+    The pipe itself is drained on a background thread from the moment the
+    process spawns, and for the rest of its life -- not read line-by-line on
+    this (the caller's) thread. A middleware process once blocked writing
+    to a full, unread stdout pipe while a PLC waited on it to come up; nothing
+    here reads this PLC's own pipe on this thread, so it cannot fill and
+    block this PLC the same way while this function waits for its panel line.
+    This is also why the child is not handed to ``_drain_output`` again later:
+    this thread already keeps draining it for the whole process lifetime.
+
+    Its own broker is this unit's alone: the port is
     ``seed.broker_port(unit_index)``, the same pure function of the index the seed writes
     into the graph, so both readers agree before either process starts.
     """
@@ -135,22 +144,26 @@ def _spawn_plc(unit_index: int) -> ChildHandle:
     handle = ChildHandle(proc=proc, pid=proc.pid, kind="plc", unit_index=unit_index, cmdline=cmdline_str)
 
     assert proc.stdout is not None
-    panel_port = None
-    for line in proc.stdout:
-        stripped = line.rstrip("\n")
-        handle.output.append(stripped)
-        _echo_address_line(handle, stripped)
-        if "Panel running on http://" in line:
-            match = _PANEL_PORT_RE.search(line.strip())
-            if match:
-                panel_port = int(match.group(1))
-            break
+    panel_seen = threading.Event()
 
-    if panel_port:
-        handle.address = f"http://127.0.0.1:{panel_port}/"
-        handle.source = "pipe"
-        handle.state = "live"
-    elif proc.poll() is not None:
+    def _drain_until_panel() -> None:
+        for line in proc.stdout:  # type: ignore[union-attr]
+            stripped = line.rstrip("\n")
+            handle.output.append(stripped)
+            _echo_address_line(handle, stripped)
+            if not panel_seen.is_set() and "Panel running on http://" in line:
+                match = _PANEL_PORT_RE.search(line.strip())
+                if match:
+                    handle.address = f"http://127.0.0.1:{match.group(1)}/"
+                    handle.source = "pipe"
+                    handle.state = "live"
+                panel_seen.set()
+        panel_seen.set()  # the process exited without ever printing the panel line
+
+    threading.Thread(target=_drain_until_panel, daemon=True).start()
+    panel_seen.wait()
+
+    if handle.state != "live" and proc.poll() is not None:
         handle.state = "failed"
 
     return handle
@@ -166,7 +179,7 @@ def _spawn_middleware(unit_index: int) -> ChildHandle:
         str(unit_index),
         "--port",
         "0",
-        # Named, not inherited: the child ignores GRAPHDB_REPOSITORY (issue #146), so a
+        # Named, not inherited: the child ignores GRAPHDB_REPOSITORY, so a
         # shared default is the only other thing that could keep parent and child in one
         # graph -- and a default is exactly what drifts when one side changes.
         "--repository",
@@ -254,7 +267,7 @@ def _request_stop(proc: subprocess.Popen) -> None:
     because on Windows ``terminate()`` calls ``TerminateProcess``, which is
     forced and gives the child no chance to run shutdown handlers. By contrast,
     ``CTRL_BREAK_EVENT`` is delivered as SIGBREAK, which uvicorn handles
-    gracefully, allowing deregistration before exit (ADR 0029). Each child is
+    gracefully, allowing deregistration before exit. Each child is
     spawned in its own process group (``_NEW_PROCESS_GROUP``) so the event
     reaches that child alone and never the launcher. This mirrors the "graceful
     then forced" shape that SIGTERM provides on POSIX.
@@ -330,7 +343,7 @@ class Factory:
     def start(self, units: int, force: bool = False) -> None:
         """Seed the graph and spawn every participant. Blocking; call once at startup.
 
-        No broker is started here (ADR 0029 as amended): each unit's own middleware brings
+        No broker is started here: each unit's own middleware brings
         its own up, the moment its wiring registers its first MQTT connector.
 
         The middleware is spawned before its unit's PLC, and that order is load-bearing.
@@ -344,21 +357,26 @@ class Factory:
         probe_and_seed(units, force=force)
 
         for n in range(1, units + 1):
-            self.children.append(_spawn_middleware(n))
+            middleware = _spawn_middleware(n)
+            self.children.append(middleware)
+            threading.Thread(target=self._drain_output, args=(middleware,), daemon=True).start()
             self.children.append(_spawn_plc(n))
         self.children.append(_spawn_controller())
 
         for child in self.children:
-            threading.Thread(target=self._drain_output, args=(child,), daemon=True).start()
+            if child.kind not in ("middleware", "plc"):
+                threading.Thread(target=self._drain_output, args=(child,), daemon=True).start()
 
         threading.Thread(target=self._watch, daemon=True).start()
 
     def _drain_output(self, child: ChildHandle) -> None:
         """Keep reading a child's stdout after spawn, so /api/output stays current.
 
-        Also echoes any address line to the launcher's own stdout (#85) -- this is where
+        Also echoes any address line to the launcher's own stdout -- this is where
         the middleware and control station's address arrives, since neither blocks spawn
-        the way a PLC's panel line does in _spawn_plc.
+        the way a PLC's panel line does in _spawn_plc. Never called for a PLC: it drains
+        its own pipe on its own thread, for the same reason middleware and controller
+        need it here -- so nothing is reading the same stream from two places at once.
         """
         assert child.proc.stdout is not None
         for line in child.proc.stdout:
@@ -400,7 +418,7 @@ class Factory:
         return [c for c in self.children if c.unit_index == index]
 
     def stop_unit(self, index: int) -> None:
-        """Stop one unit: SIGTERM its middleware first, then its PLC (ADR 0029)."""
+        """Stop one unit: SIGTERM its middleware first, then its PLC."""
         children = self._unit_children(index)
         for c in children:
             c.stopping = True
@@ -419,7 +437,7 @@ class Factory:
         """Stop the whole factory: every middleware and the control station, then every PLC.
 
         Nothing to stop here beyond the children themselves: each unit's broker is a daemon
-        thread inside that unit's own middleware process (ADR 0029 as amended), so it dies
+        thread inside that unit's own middleware process, so it dies
         the moment ``stop_factory`` kills that process.
         """
         children = list(self.children)
@@ -445,7 +463,7 @@ class Factory:
     def state_snapshot(self, launcher_address: str) -> dict:
         """Serialize every participant's live state for the index page.
 
-        No broker is tracked here as its own participant (ADR 0029 as amended): each unit's
+        No broker is tracked here as its own participant: each unit's
         broker is a thread inside that unit's own middleware process, so its display state
         simply mirrors that middleware's -- it is exactly as live, and it dies at exactly the
         same moment.

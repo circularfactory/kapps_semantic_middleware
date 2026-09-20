@@ -301,14 +301,14 @@ def cross_check(
 
 
 # `load_northbound` stood here: a second entry point that built a spec, pruned it and fetched
-# with it, for the consumer that loads a peer's datamodel. Deleted on #105. Nothing in the
+# with it, for the consumer that loads a peer's datamodel. Deleted. Nothing in the
 # product ever called it -- a consumer reaches the same pruned fetch through
 # `WiringPlan.northbound_fetch_kwargs()` (`connectors/wiring.py`), which `plan_wiring` has
 # already built by the time anything has a datamodel to load, and which carries the class scope
 # a bare prune-and-fetch would have had to be told about separately. Two ways to obtain the one
-# shape ADR 0028 governs is one more than the invariant can afford, and the tests it had were
+# shape the projection governs is one more than the invariant can afford, and the tests it had were
 # the only thing keeping the unused one honest.
 #
 # Its INFO line per pruned parameter went with it. The same breakdown survives as
-# `WiringPlan.southbound_by_property`, which #82's station board renders per parameter -- a
+# `WiringPlan.southbound_by_property`, which the demo's station board renders per parameter -- a
 # surface a viewer can actually read, rather than a log line in a library with no UI.

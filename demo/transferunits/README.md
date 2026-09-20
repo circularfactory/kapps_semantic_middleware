@@ -67,7 +67,7 @@ export GRAPHDB_PASSWORD=your-password
 
 There is no fourth value. The demo always uses the repository named **`kapps-demo`**, which is the
 one `docker compose` creates for you, and it names that in code rather than reading it from your
-environment. A `GRAPHDB_REPOSITORY` you happen to have set is ignored (issue #146).
+environment. A `GRAPHDB_REPOSITORY` you happen to have set is ignored.
 
 > **Warning.** The demo **writes into** `kapps-demo`, and `--force` **deletes and rewrites** the
 > demo's data in it. Point `GRAPHDB_URL` at a GraphDB you are allowed to overwrite — the repository

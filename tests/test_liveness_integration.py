@@ -1,4 +1,4 @@
-"""Phase 4 liveness integration tests against a live GraphDB (ADR 0007).
+"""Phase 4 liveness integration tests against a live GraphDB.
 
 Deterministic (no waiting on real intervals): a heartbeat is written and refreshed
 idempotently, and a watchdog sweep deregisters a stale service while leaving a
@@ -46,7 +46,7 @@ def test_heartbeat_write_and_refresh(graphdb):
         host="127.0.0.1",
         port=8987,
     )
-    # Per-instance since ADR 0022, so it is read off the instance rather than reconstructed.
+    # Per-instance, so it is read off the instance rather than reconstructed.
     service_iri = mw.service_iri
     asyncio.run(mw._register_service())
 

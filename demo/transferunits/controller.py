@@ -1,10 +1,10 @@
 """The controller is a middleware instance: SPARQL view, fetched datamodels, REST
-connectors (#80, ADR 0033).
+connectors.
 
 The controller is a resource-mode middleware instance that holds its own datamodels. It
 never speaks raw HTTP itself. Its own driving connectors do that, exactly the way a
-device-facing instance's MQTT connectors do (ADR 0022/0023). The Control Expert's five
-steps (ADR 0033, ``CONTEXT.md``):
+device-facing instance's MQTT connectors do. The Control Expert's five
+steps (``CONTEXT.md``):
 
 1. ``view()`` runs the caller's own SPARQL query -- the view -- and returns every IRI it
    binds to ``?resource``. The query is the whole view: which class, which liveness join
@@ -12,23 +12,23 @@ steps (ADR 0033, ``CONTEXT.md``):
    further are authored by the caller. Nothing here assumes a domain class.
 2. ``wire_view()`` runs ``ogm.fetch`` per hit and recognizes its interface-accessible
    parameters, exactly like ``SemanticMiddleware.__init__`` does for its own resource --
-   except every one of these roots is *someone else's* resource, reached over REST
-   (ADR 0033), never MQTT: the registry it recognizes against excludes MQTT on purpose,
+   except every one of these roots is *someone else's* resource, reached over REST,
+   never MQTT: the registry it recognizes against excludes MQTT on purpose,
    so a unit's own broker stays that unit's own middleware's business.
 3. Loading happens in an ``on_start_up`` callback (``_load_view_datamodels``): each hit's
    northbound (pruned) datamodel materializes into ``self.units``, keyed by resource IRI.
-   No ``inf:hasMQTT*`` property survives the load (ticket #78's projection).
+   No ``inf:hasMQTT*`` property survives the load (see ``kapps_semantic_middleware.projection``).
 4. Registration happens in step 2, via ``wire_view()`` -- a plain call the caller makes
    after construction and before the app's lifespan starts (before ``run_server``).
-   Connectors must exist before the lifespan connects them (ADR 0023), so wiring cannot
+   Connectors must exist before the lifespan connects them, so wiring cannot
    wait for an async hook.
 5. ``push()`` drives an in-place assignment on a loaded datamodel out to its owner. An
    algorithm reads and writes ``self.units[...]`` directly; nothing here or in the
    algorithm's body issues an HTTP call.
 
-The controller still discovers resources by class IRI via ``discover_resources`` (ticket
-#43), independent of the view mechanism above, and still derives REST parameter paths
-via ``rest_binding.build_parameter_path`` (moved there by ticket #77). It registers
+The controller still discovers resources by class IRI via ``discover_resources``,
+independent of the view mechanism above, and still derives REST parameter paths
+via ``rest_binding.build_parameter_path``. It registers
 itself as a ControlStationService so it appears in its own discovery list.
 """
 
@@ -59,7 +59,7 @@ from kapps_semantic_middleware.vocabulary import RDFS, SVC
 logger = logging.getLogger(__name__)
 
 _VIEW_REGISTRY = SemanticConnectorRegistry([RESTBinding])
-"""REST only, deliberately excluding MQTT (ADR 0033).
+"""REST only, deliberately excluding MQTT.
 
 The ontology declares a TransferUnit's parameters MQTT-specific
 (``tu:hasConveyorSpeed rdfs:subPropertyOf inf:isInterfaceAccessibleMQTTParameter``), and
@@ -67,7 +67,7 @@ recognition always resolves to the *most specific* registered descriptor
 (``wiring._descriptor_for``) -- that is a TBox fact, and pruning the fetched instance
 data cannot change it. A controller that recognized against ``default_registry`` (which
 carries both bindings) would therefore try to dial a unit's own broker directly, exactly
-the ad-hoc reach ADR 0033 exists to replace with REST. Excluding MQTT from the registry
+the ad-hoc reach the REST binding exists to replace. Excluding MQTT from the registry
 used for view wiring is what makes REST the only match; the northbound projection then
 independently guarantees no broker metadata survives the fetch either (belt and braces,
 not two names for the same mechanism)."""
@@ -102,13 +102,13 @@ class ResourceInfo:
 
     @property
     def is_live(self) -> bool:
-        """Live iff svc:address is present (MVP liveness, ticket #43)."""
+        """Live iff svc:address is present (MVP liveness)."""
         return self.address is not None
 
 
 @dataclass
 class ViewDiff:
-    """What one ``rebuild_view()`` call changed, or why it changed nothing (#82).
+    """What one ``rebuild_view()`` call changed, or why it changed nothing.
 
     A malformed heuristic and a zero-hit heuristic are both reported here rather than
     raised: ``error`` set is the malformed case (the caller shows it in place, never a
@@ -124,7 +124,7 @@ class ViewDiff:
     """Hits the previous rebuild had that this one does not -- torn down before return."""
 
     unchanged: List[IRI] = field(default_factory=list)
-    """Hits present both times -- left alone, per #82's "leave the unchanged alone"."""
+    """Hits present both times -- left alone."""
 
     error: Optional[str] = None
     """Set when the heuristic itself failed (malformed SPARQL). None otherwise."""
@@ -132,9 +132,9 @@ class ViewDiff:
 
 @dataclass
 class CommandedValue:
-    """What was last written to one parameter, and who wrote it (#82).
+    """What was last written to one parameter, and who wrote it.
 
-    The served datamodel carries only the observed value (ADR 0024's locator pattern
+    The served datamodel carries only the observed value (the locator pattern
     means the graph, and so the fetched tree, holds no separate setpoint field), so this
     is the *only* place "what did we ask for" is knowable at all -- not a convenience
     cache of something visible elsewhere. Both write paths must fill it: a human via
@@ -153,29 +153,31 @@ class CommandedValue:
 
 
 class WriteStatus(str, enum.Enum):
-    """What became of the last write to one parameter (#82).
+    """What became of the last write to one parameter.
 
     A plain ``str`` subclass for the same reason ``AlgorithmMode`` is one: a status
     round-trips through JSON with no translation layer between the tracker, the page's
     badge and a test's assertion.
 
-    #82 words the progression ``sending`` -> ``settled`` | ``rejected`` | ``diverged``.
+    The progression is ``sending`` -> ``settled`` | ``rejected`` | ``diverged``.
     ``sending`` is not a member here because it is not a *judgement* -- it is simply the
     moment between the click and the first observation, and the page shows it locally.
     :attr:`CONVERGING` is what that moment becomes as soon as there is something to
-    observe, and under #83's ramp it is where a healthy write spends most of its life.
+    observe, and while a belt ramps (``TransferUnit._ramp_loop``) it is where a healthy write
+    spends most of its life.
     """
 
     SETTLED = "settled"
     """The actual value came back matching what was commanded."""
 
     CONVERGING = "converging"
-    """Accepted, still moving toward the command -- the normal state during #83's ramp."""
+    """Accepted, still moving toward the command -- the normal state while a belt ramps."""
 
     DIVERGED = "diverged"
-    """Accepted, but the actual value has *stopped converging*. Not "unequal": #83's ramp
-    makes commanded and actual unequal during every set by design (#81, amending #31), so
-    an equality test would fire on every write."""
+    """Accepted, but the actual value has *stopped converging*. Not "unequal": a belt ramps
+    toward its command (``TransferUnit._ramp_loop``), so commanded and actual are unequal
+    during every set by design, and an equality test would fire on every write. How long a
+    value may sit unmoved before it counts as stopped is ``DEFAULT_STILL_SECONDS``."""
 
     REJECTED = "rejected"
     """The PUT failed outright -- unit down, 4xx, bad payload. Carries a reason."""
@@ -193,10 +195,10 @@ diverged.
 
 Measured in *seconds*, not in polls: a poll is a browser asking, so counting polls would
 make two open tabs declare divergence in half the time and a closed page never declare it
-at all. One quiet moment is a slow lap -- #82's "the tick must exceed one lap" constraint
-says a lap can straddle a poll -- so this must exceed a lap while staying under the
-default tick (8.0 s), or the algorithm would overwrite a stuck value before the board
-ever reported it.
+at all. One quiet moment may be a slow lap -- a lap can straddle a poll, see
+``control_station.DEFAULT_TICK_SECONDS`` -- so this must exceed a lap while staying under the
+default tick, or the algorithm would overwrite a stuck value before the board ever reported
+it.
 """
 
 
@@ -220,15 +222,15 @@ class _Observation:
 
 class WriteTracker:
     """Per parameter: what was last commanded, and whether the device is converging on it
-    (#82's write states -- see :class:`WriteStatus`).
+    (see :class:`WriteStatus`).
 
     This is its own object, not a handful of dicts on :class:`Controller`, because the
-    judgement it makes is the one #82 requires to be provable *in a test*: the
+    judgement it makes has to be provable *in a test*: the
     classification began in ``station_board.html``'s script, where pytest cannot reach
     it. Nothing here touches the graph, a connector or the network -- it is a state
     machine over observations, which is what lets its tests run with no fixtures at all.
 
-    The served datamodel carries only the observed value (ADR 0024's locator pattern
+    The served datamodel carries only the observed value (the locator pattern
     means the graph holds no separate setpoint field), so this is the *only* place "what
     did we ask for" is knowable at all. Both write paths must record: a human via
     ``station_board.py``'s set route, and the algorithm via ``run_algorithm_once``.
@@ -352,7 +354,7 @@ class WriteTracker:
 
 
 class Controller(SemanticMiddleware):
-    """A resource-mode middleware that holds its own datamodels (ADR 0033, ticket #80).
+    """A resource-mode middleware that holds its own datamodels.
 
     ``view()`` runs the caller's SPARQL query and returns the resource IRIs it binds.
     ``wire_view()`` recognizes each hit's interface-accessible parameters and registers
@@ -363,7 +365,7 @@ class Controller(SemanticMiddleware):
     drive an assignment out -- no HTTP call anywhere in its body; the registered
     connector's own ``consume()`` performs that.
 
-    It also discovers resources by class IRI (``discover_resources``, ticket #43) and
+    It also discovers resources by class IRI (``discover_resources``) and
     registers itself as a ControlStationService, so it appears in its own discovery
     list, independent of whatever view it wires.
 
@@ -413,9 +415,9 @@ class Controller(SemanticMiddleware):
         Args:
             resource_iri: The IRI of this control station resource.
             service_class: The Service class IRI. It must be svc:Service or
-                a subclass. It defaults to svc:Service itself. Ticket #66's
-                fac:ControlStationService is not yet an ontology class in
-                this repo, so pass it explicitly once that class exists.
+                a subclass. It defaults to svc:Service itself. The demo's
+                control station passes fac:ControlStationService, which
+                ``factory.ttl`` declares.
             ogm: The OGM instance for graph interactions.
             host: Host to bind the REST API on.
             port: Port to bind the REST API on.
@@ -454,7 +456,7 @@ class Controller(SemanticMiddleware):
             activity_capacity=activity_capacity,
         )
 
-        # The view mechanism (#80, ADR 0033). `units` holds each view hit's loaded
+        # The view mechanism. `units` holds each view hit's loaded
         # northbound datamodel, keyed by `str(resource_iri)` -- what an algorithm reads
         # and mutates directly. `_view_wirings` is the recognition this instance ran for
         # each hit, kept so the on_start_up callback below knows what to fetch.
@@ -466,14 +468,14 @@ class Controller(SemanticMiddleware):
 
         # Filled by the first wire_view() call and reused by every later rebuild_view()
         # call, so a caller re-running the heuristic never has to repeat the class scope
-        # or the registry it wired with the first time (#82).
+        # or the registry it wired with the first time.
         self._view_class_scope: Any = None
         self._view_resource_class: Optional[IRI] = None
         self._view_registry: Optional[SemanticConnectorRegistry] = None
 
         # Held for the duration of one rebuild_view() call. algorithm.run_algorithm_once
         # checks `.locked()` and skips its tick rather than racing a rebuild in progress
-        # -- the lock itself *is* #82's "the algorithm auto-pauses across a rebuild and
+        # -- the lock itself *is* "the algorithm auto-pauses across a rebuild and
         # resumes", not a separate flag that could drift out of step with it.
         self.rebuild_lock = asyncio.Lock()
 
@@ -482,7 +484,7 @@ class Controller(SemanticMiddleware):
         self.writes = WriteTracker()
 
     def view(self, sparql_query: str) -> List[IRI]:
-        """Run the caller's SPARQL query -- the view (ADR 0033 step 1) -- and return
+        """Run the caller's SPARQL query -- the view, the Control Expert's step 1 -- and return
         every IRI it binds to ``?resource``, in result order, deduplicated.
 
         The query is the whole view. Which class, the liveness join (a live resource's
@@ -523,18 +525,18 @@ class Controller(SemanticMiddleware):
         resource_class: Optional[Union[str, IRI]] = None,
         registry: Optional[SemanticConnectorRegistry] = None,
     ) -> None:
-        """Recognize every view hit and register its driving REST connectors (ADR 0033
-        steps 2-4).
+        """Recognize every view hit and register its driving REST connectors (the Control
+        Expert's steps 2-4).
 
         Call this once, after ``view()`` and before the app's lifespan starts (before
         ``run_server`` / uvicorn's own ``serve()``). ``SemanticMiddleware.__init__``
         documents why this cannot wait for an ``on_start_up`` hook: ``lifespan`` calls
         ``connect()`` on every registered connector *before* running ``on_start_up``,
         so a connector registered afterwards never connects and its listener never
-        starts (ADR 0023). ``_wire_semantic_connectors`` runs from ``__init__`` for
+        starts. ``_wire_semantic_connectors`` runs from ``__init__`` for
         exactly this reason; this mirrors it for N foreign roots instead of one.
 
-        ``class_scope`` is the Control Expert's own view of one hit's shape (ADR 0018) --
+        ``class_scope`` is the Control Expert's own view of one hit's shape --
         domain-specific, and deliberately not this method's business to construct.
         ``resource_class`` defaults to ``None``, which lets ``plan_wiring`` read each
         hit's own ``rdf:type`` from the graph rather than take one class for every hit
@@ -549,7 +551,7 @@ class Controller(SemanticMiddleware):
         registry = registry or _VIEW_REGISTRY
 
         # Recorded so a later rebuild_view() call -- which only ever receives new query
-        # text, per #82's editable-heuristic box -- can re-wire a joiner exactly the way
+        # text, the board's editable heuristic -- can re-wire a joiner exactly the way
         # this call wired its own hits, with no second copy of these arguments anywhere.
         self._view_class_scope = class_scope
         self._view_resource_class = (
@@ -606,14 +608,15 @@ class Controller(SemanticMiddleware):
 
     async def _load_one_hit(self, resource_iri: IRI, wiring: WiringPlan) -> bool:
         """Fetch, prune and persist one view hit's northbound datamodel into ``self.units``
-        (ADR 0033 step 3).
+        (the Control Expert's step 3).
 
-        Extracted from what used to be ``_load_view_datamodels``'s only loop body (#82):
+        Extracted from what used to be ``_load_view_datamodels``'s only loop body:
         the startup bulk loader below and ``rebuild_view``'s joiner path both need this
         exact fetch-and-persist step, and a second copy could drift from the first.
         ``WiringPlan.northbound_fetch_kwargs`` is the same pruned fetch
-        ``SemanticMiddleware._load_resource_datamodel`` runs for its own resource (ticket
-        #78): the materialized instance carries no ``inf:hasMQTT*`` property, regardless
+        ``SemanticMiddleware._load_resource_datamodel`` runs for its own resource (see
+        ``kapps_semantic_middleware.projection``): the materialized instance carries no
+        ``inf:hasMQTT*`` property, regardless
         of what the graph holds for the unit's own middleware.
 
         ``persist`` registers the "resource" persistence connector each connector
@@ -625,7 +628,7 @@ class Controller(SemanticMiddleware):
         a transient graph error) is caught and logged rather than left to propagate: an
         uncaught exception here would abort the caller's whole loop, and take down every
         *other* hit's loading with it -- one dead unit must not sink the whole factory's
-        view (the same "fails visibly rather than silently" standard ADR 0033's
+        view (the same "fails visibly rather than silently" standard the view mechanism's
         acceptance criteria hold an already-wired unit to).
 
         Returns:
@@ -651,7 +654,7 @@ class Controller(SemanticMiddleware):
         return True
 
     async def _load_view_datamodels(self) -> None:
-        """Fetch and persist every view hit's northbound datamodel (ADR 0033 step 3).
+        """Fetch and persist every view hit's northbound datamodel (the Control Expert's step 3).
 
         Runs once, from ``on_start_up``, after ``wire_view`` has already registered
         each hit's connectors. See ``_load_one_hit`` for the per-hit mechanics this
@@ -659,8 +662,8 @@ class Controller(SemanticMiddleware):
         """
         # Pre-register the fallback persist() would build anyway, once, before the loop
         # below calls persist() per hit -- silences the base class's "No persistence
-        # factory found" warning without changing which connector gets constructed (#89
-        # item 6; see SemanticMiddleware._suppress_default_persistence_warning).
+        # factory found" warning without changing which connector gets constructed (see
+        # SemanticMiddleware._suppress_default_persistence_warning).
         self._suppress_default_persistence_warning("resource")
 
         loaded = 0
@@ -674,7 +677,7 @@ class Controller(SemanticMiddleware):
     async def rebuild_view(self, sparql_query: str) -> ViewDiff:
         """Re-run the view and reconcile ``self.units`` against the new hit set: fetch +
         prune + load the joiners, close connectors and drop the leavers, leave the
-        unchanged alone (#82's "live differential rebuild").
+        unchanged alone (a "live differential rebuild").
 
         Call this on every poll and on an explicit "run" -- both are the same operation
         here, so the card set tracks the graph whether or not anyone presses anything.
@@ -744,14 +747,14 @@ class Controller(SemanticMiddleware):
     async def _unwire_hit(self, resource_iri: IRI) -> None:
         """Tear down one departed view hit: cancel its connectors' receive loops,
         disconnect them, and drop every trace of it so a later rebuild's diff sees it as
-        gone rather than unchanged (#82: "close connectors and drop the leavers").
+        gone rather than unchanged.
 
         ``transitional_sync_middleware``'s own ``ConnectionRegistry.remove_connection`` is explicitly a
         partial cleanup -- its own source comment says "also delete connector and
         connection type" as a TODO -- so this pops all three of its dicts itself, for
         both ``connection_registry`` (the REST read/write connectors ``wire_view``
         registered for this hit) and ``persistence_registry`` (the "resource" connector
-        ``persist()`` built for it). Root ADR 0001 keeps this fix here rather than
+        ``persist()`` built for it). The dependency policy keeps this fix here rather than
         patched into the sibling: it is a missing feature the base class's own TODO
         already names, not a correctness bug blocking anything else this project builds
         on that library. What it does not reach: the FastAPI routes
@@ -831,15 +834,15 @@ class Controller(SemanticMiddleware):
 
     def liveness_of(self, resource_iri: Union[str, IRI]) -> Tuple[bool, Optional[float]]:
         """Whether a still-selected view hit is reachable, and the age of its last
-        heartbeat in seconds (#82's two deaths).
+        heartbeat in seconds.
 
         A cleanly stopped unit deregisters and drops its ``svc:address`` entirely, so
         ``view()`` stops selecting it -- ``rebuild_view`` sees it as a leaver, and its
         card leaves within one poll. A ``kill -9``'d unit keeps its address: ``view()``
         keeps selecting it, so it stays in ``self.units`` ("leave the unchanged alone"),
         but nothing refreshes its heartbeat. This reuses ``self.staleness_threshold`` --
-        the same window ``SemanticMiddleware`` already tracks for its own watchdog (ADR
-        0007) -- rather than a second threshold invented for the board.
+        the same window ``SemanticMiddleware`` already tracks for its own watchdog --
+        rather than a second threshold invented for the board.
 
         Returns:
             ``(unreachable, age_seconds)``. ``age_seconds`` is ``None`` when no heartbeat
@@ -860,10 +863,10 @@ class Controller(SemanticMiddleware):
 
     async def push(self, resource_iri: Union[str, IRI]) -> None:
         """Drive an in-place assignment on a loaded view datamodel out to its owner
-        (ADR 0033 step 5).
+        (the Control Expert's step 5).
 
         The algorithm mutates ``self.units[str(resource_iri)]`` directly -- ``setattr``
-        on the loaded pydantic tree, the ADR 0033 shape
+        on the loaded pydantic tree, the view-datamodel shape
         (``unit.conveyor_belt_left.speed[0]["inf:hasValue"][0] = 12.4``, mangled field
         names notwithstanding: see the class docstring for the real attribute names). A
         plain Python mutation calls out to nothing on its own, so this re-consumes the
@@ -892,17 +895,17 @@ class Controller(SemanticMiddleware):
         node: Any,
     ) -> None:
         """Drive one specific parameter's write leg directly, bypassing ``push()``'s
-        persistence-level fan-out (#82).
+        persistence-level fan-out.
 
         ``push()`` re-consumes the whole resource through its persistence connector,
         which fans the new value out to every synced connector sharing it
         (``PersistedConnector._notify_synced_connectors``). That fan-out catches and
         only logs a sibling connector's failure, by the base framework's own design --
         its docstring's own reasoning is that one connector's failure must not silently
-        end every other connector's sync (kapps_semantic_middleware#86). Correct for the
+        end every other connector's sync. Correct for the
         fan-out's own purpose, but it means ``push()`` can never actually tell its
         caller a PUT failed: the exception never reaches this far. That is exactly what
-        #82's "rejected" state needs to know, so a human-initiated write goes through
+        the ``rejected`` write state needs to know, so a human-initiated write goes through
         this method instead, straight to the one connector responsible for this exact
         parameter -- a genuine failure (the peer down, a 4xx) then propagates to the
         caller rather than being swallowed and merely logged.

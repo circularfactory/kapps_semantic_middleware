@@ -1,5 +1,4 @@
-"""Offline tests for silencing transitional_sync_middleware's benign persistence-factory warning
-(#89 item 6).
+"""Offline tests for silencing transitional_sync_middleware's benign persistence-factory warning.
 
 Every middleware start used to log:
 
@@ -10,8 +9,8 @@ Every middleware start used to log:
 ``persist()`` (the base class) never had a factory pre-registered for it, so the
 registry's own fallback branch fired on every call: harmless (it constructs the exact
 ``PersistenceFactory(ModelConnector)`` the fallback always would), but a warning nobody
-had explained trains people to ignore warnings, and #86 is exactly the kind of bug that
-hides behind one. ``SemanticMiddleware._suppress_default_persistence_warning``
+had explained trains people to ignore warnings, and a receive task dying silently is exactly
+the kind of bug that hides behind one. ``SemanticMiddleware._suppress_default_persistence_warning``
 pre-registers that identical fallback so the "not found" branch is never reached.
 
 No GraphDB, no network: these tests exercise the persistence registry directly, and the
@@ -111,7 +110,7 @@ class TestSuppressDefaultPersistenceWarning:
 
 
 class TestBothCallSitesSuppressBeforePersisting:
-    """"Asserted, not assumed" (ADR philosophy this repo already follows elsewhere):
+    """"Asserted, not assumed" (a rule this repo already follows elsewhere):
     reads the actual source rather than trusting that the wiring stays in place.
     """
 
@@ -127,7 +126,7 @@ class TestBothCallSitesSuppressBeforePersisting:
         )
 
     def test_controller_load_view_datamodels_suppresses_before_the_persist_loop(self):
-        """_load_view_datamodels's own persist() call moved into _load_one_hit (#82: the
+        """_load_view_datamodels's own persist() call moved into _load_one_hit (the
         per-hit fetch-and-persist step is shared with rebuild_view's joiner path), so the
         property this test pins now spans two functions: the suppression call must
         precede the loop that calls _load_one_hit, and that method must still be where

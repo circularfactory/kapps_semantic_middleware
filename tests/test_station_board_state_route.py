@@ -1,20 +1,20 @@
-"""station_board.py's poll and view routes: the acceptance #82 states in terms of the
-page, held at the seam a test can actually reach (#82).
+"""station_board.py's poll and view routes: what the page promises, held at the seam a
+test can actually reach.
 
 Five rules live here, none of which the controller-level tests can hold on their own:
 
 1. **The backend never collapses.** A shut card is a browser-side display state; every
    connector stays live and every value stays current behind it. This is emphatically
-   *not* ADR 0032's collapsed monitor row, which genuinely holds no data because it has
+   *not* the monitor's collapsed row, which genuinely holds no data because it has
    not fetched -- so the payload must never shrink and the server must not track which
    cards are open.
 2. **The expert toggle's three jobs** -- full IRI, the real assignment expression, and
    what ``prune_southbound`` stripped -- are three fields on every parameter row. The
    toggle itself is client-side; what is testable is that the data is there, per
-   parameter, which is exactly what #78's "discoverable at runtime, per parameter"
-   asked for.
+   parameter, which is exactly what "discoverable at runtime, per parameter"
+   asks for.
 3. **The view re-runs on every poll**, so the card set tracks the graph unattended. A
-   ``GET /api/state`` *is* one poll, and that is the whole mechanism #35 needs.
+   ``GET /api/state`` *is* one poll, and that is the whole mechanism unattended discovery needs.
 4. **A bad heuristic is reported in place**, never as a 500. The controller-level half is
    covered in ``test_controller_rebuild_view.py``; this is the route-level half, where a
    500 would take the page down rather than show a message.
@@ -65,7 +65,7 @@ def _publish_service(graphdb, resource_iri, address: str) -> None:
 
 def _unpublish_service(graphdb, resource_iri) -> None:
     """Take ``resource_iri`` offline: delete its Service triples entirely, the graph state
-    a clean deregistration (ADR 0029) leaves behind -- the live clause then binds nothing
+    a clean deregistration leaves behind -- the live clause then binds nothing
     for it."""
     service_iri = f"{resource_iri}Service"
     graphdb.query(f"DELETE WHERE {{ <{service_iri}> ?p ?o }}", update=True)
@@ -110,8 +110,8 @@ async def _board(graphdb, ogm, unit_scope, *, name: str, live: tuple, query: str
     ``query`` and graft the board onto a bare app.
 
     Returns ``(client, controller)``. Every test here needs this same eight-line dance,
-    and the algorithm is always paused: this file tests the board's own routes, and #82
-    disables every set control while the algorithm runs.
+    and the algorithm is always paused: this file tests the board's own routes, and the
+    board disables every set control while the algorithm runs.
     """
     seed.seed_factory(graphdb, ogm, units=2)
     for index in live:
@@ -182,7 +182,7 @@ class TestTheBackendNeverCollapses:
 
         Asserted against the dataclass's fields rather than by grepping the source for
         "collapsed" -- the word legitimately appears in this file's own teaching text,
-        where #82 explicitly requires it to warn a reader who knows ADR 0032.
+        where it is required to warn a reader who knows the monitor design.
         """
         client, _ = await _board(
             graphdb, ogm, unit_scope, name="CS-collapse3", live=(1,), query=_query_selecting(1)
@@ -198,11 +198,11 @@ class TestTheBackendNeverCollapses:
 @requires_graphdb
 @pytest.mark.asyncio
 class TestTheExpertToggle:
-    """#82's "one toggle, three jobs". The toggle is client-side; that all three payloads
+    """"One toggle, three jobs". The toggle is client-side; that all three payloads
     are present per parameter is what a test can hold."""
 
     async def test_every_row_carries_its_full_iri(self, graphdb, ogm, unit_scope):
-        """Job one: ADR 0021 made visible. The operator sees a label, the expert sees the
+        """Job one: the mangled IRI made visible. The operator sees a label, the expert sees the
         IRI it stands for, so the row must carry both."""
         client, _ = await _board(
             graphdb, ogm, unit_scope, name="CS-toggle1", live=(1,), query=_query_selecting(1)
@@ -219,7 +219,7 @@ class TestTheExpertToggle:
     async def test_every_row_carries_its_real_assignment_expression(
         self, graphdb, ogm, unit_scope
     ):
-        """Job two: ADR 0033 accepted ADR 0027's awkward shape as-is, and this makes that
+        """Job two: the REST binding accepted the skolemized parameter's awkward shape as-is, and this makes that
         shape inspectable without making the default page a code demo."""
         client, _ = await _board(
             graphdb, ogm, unit_scope, name="CS-toggle2", live=(1,), query=_query_selecting(1)
@@ -236,7 +236,7 @@ class TestTheExpertToggle:
             assert row["field_id"] in expression
 
     async def test_a_speed_row_reports_what_pruning_stripped(self, graphdb, ogm, unit_scope):
-        """Job three, and #78's answer: the northbound boundary is the thing this demo
+        """Job three, and the pruning answer: the northbound boundary is the thing this demo
         exists to teach, so what ``prune_southbound`` removed is shown at the parameter it
         applies to -- per parameter, which a per-unit aggregate could not satisfy."""
         client, _ = await _board(
@@ -258,12 +258,12 @@ class TestTheExpertToggle:
     ):
         """A row that lists a marker under ``pruned`` must not ship its value.
 
-        This was false until #78's scope-down: ``facets`` excluded two keys by name and
+        This was false until the facets were scoped down: ``facets`` excluded two keys by name and
         carried everything else, so the same response announced
         ``"pruned": ["hasMQTTBrokerIP", ...]`` beside
         ``"facets": {"hasMQTTBrokerIP": "127.0.0.1", ...}``. The controller drives peers
-        over REST and holds no MQTT connector, so a broker address on this page is ADR
-        0028's boundary leaking from the consumer side.
+        over REST and holds no MQTT connector, so a broker address on this page is the
+        projection boundary leaking from the consumer side.
 
         Two assertions, because the marker *names* must still appear: ``pruned`` exists to
         name them. What must not appear is their **values**. So the key check is
@@ -301,7 +301,7 @@ class TestTheExpertToggle:
 @pytest.mark.asyncio
 class TestTheViewTracksTheGraphUnattended:
     """The view re-runs on every poll, so ``GET /api/state`` alone moves the card set.
-    This is the mechanism #35 needs: a unit added to a running factory appears with no
+    This is the mechanism unattended discovery needs: a unit added to a running factory appears with no
     restart and no configuration."""
 
     async def test_a_unit_registered_while_the_page_is_open_appears_within_one_poll(
@@ -325,9 +325,9 @@ class TestTheViewTracksTheGraphUnattended:
         assert after == {unit1, unit2}, f"unit 2 did not join within one poll: {after}"
 
     async def test_a_cleanly_stopped_unit_leaves_within_one_poll(self, graphdb, ogm, unit_scope):
-        """ADR 0029 has the launcher SIGTERM the middleware first, so a clean stop takes
+        """The launcher SIGTERMs the middleware first, so a clean stop takes
         the unit's ``svc:address`` out of the graph. It then stops matching the live
-        clause and its card leaves -- the "cleanly stopped" half of #82's two deaths."""
+        clause and its card leaves -- the "cleanly stopped" half of the two deaths."""
         client, _ = await _board(
             graphdb, ogm, unit_scope, name="CS-leave1", live=(1, 2), query=_query_selecting(1, 2)
         )
@@ -514,7 +514,7 @@ def _find_unit(body, resource_iri: str):
 @requires_graphdb
 @pytest.mark.asyncio
 class TestAKilledUnitStaysAndReadsUnreachable:
-    """#82's second death. A ``kill -9``'d unit never gets to deregister, so its
+    """The second death. A ``kill -9``'d unit never gets to deregister, so its
     ``svc:address`` stays in the graph and the view's live clause goes on matching it --
     it is not a leaver, and dropping its card would be a lie about what the graph says.
     What stops is its heartbeat, and that is what the board reports.
@@ -580,7 +580,7 @@ class TestAKilledUnitStaysAndReadsUnreachable:
     async def test_a_killed_unit_keeps_its_card_and_its_last_known_values(
         self, graphdb, ogm, unit_scope
     ):
-        """#82 asks for last-known values *greyed*, not gone -- so the payload has to
+        """The board shows last-known values *greyed*, not gone -- so the payload has to
         still carry them. Greying is the page's job; the backend's job is not to drop the
         last thing the unit managed to say."""
         client, _ = await _board(
@@ -598,8 +598,8 @@ class TestAKilledUnitStaysAndReadsUnreachable:
             assert "value" in row
 
     async def test_the_two_deaths_look_different(self, graphdb, ogm, unit_scope):
-        """The heart of #82's liveness section, and the reason the two are not unified: a
-        unit that deregistered (ADR 0029's clean stop) said goodbye and its card leaves; a
+        """The heart of the liveness design, and the reason the two are not unified: a
+        unit that deregistered (the clean stop) said goodbye and its card leaves; a
         unit that was killed never got the chance, so its card stays and says so.
 
         Both deaths happen between the same two polls, so this cannot pass by one of them

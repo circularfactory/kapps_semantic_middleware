@@ -1,5 +1,5 @@
 """station_board.py's POST /api/set route: rejected is distinguishable from a settled
-write, and the algorithm's pause gates it server-side (#82).
+write, and the algorithm's pause gates it server-side.
 
 No real peer process here. A ``svc:address`` that nothing listens on is enough to make
 ``controller.push()`` fail for a genuine reason (connection refused) -- exactly the
@@ -54,7 +54,7 @@ class TestSetRoute:
         seed.seed_factory(graphdb, ogm, units=1)
         unit1 = seed._mint_transfer_unit_iri(1)
         # Nothing listens on this port -- the PUT genuinely fails, the same "unit down"
-        # case #82's own text names for `rejected`, with no subprocess required.
+        # case `rejected` exists for, with no subprocess required.
         _publish_service(graphdb, unit1, "http://127.0.0.1:1")
 
         controller = Controller(resource_iri="http://example.org/CS-set1", ogm=ogm, port=0)
@@ -93,7 +93,7 @@ class TestSetRoute:
         assert response.status_code == 200
         body = response.json()
         assert body["ok"] is False
-        assert body.get("error"), "a rejected write must carry a reason, per #82"
+        assert body.get("error"), "a rejected write must carry a reason"
 
     async def test_set_is_refused_while_the_algorithm_is_not_paused(
         self, graphdb, ogm, unit_scope

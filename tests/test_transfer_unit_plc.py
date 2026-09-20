@@ -1,4 +1,4 @@
-"""The demo's mock PLC against a real broker (#40).
+"""The demo's mock PLC against a real broker.
 
 Drives ``demo.transferunits.plc.transfer_unit.TransferUnit`` -- the factory's PLC, not the
 retired ``examples/mock_transferunit.py`` this file was named after.
@@ -45,7 +45,7 @@ async def _collect(broker: str, topics, count, timeout=5.0):
 
 
 class TestTopicScheme:
-    """The scheme is TransferUnit<n>/<component>/<position>/<param>, +_set (ADR 0023)."""
+    """The scheme is TransferUnit<n>/<component>/<position>/<param>, +_set."""
 
     def test_publishes_four_topics(self):
         unit = TransferUnit()
@@ -66,14 +66,14 @@ class TestTopicScheme:
         ]
 
     def test_the_unit_name_parameterises_every_topic(self):
-        """Multiple simultaneous TransferUnits are in scope for map #24."""
+        """Multiple simultaneous TransferUnits are in scope: the unit name is in every topic."""
         unit = TransferUnit(unit_index=7)
 
         assert all(t.startswith("TransferUnit7/") for t in unit.published_topics)
         assert all(t.startswith("TransferUnit7/") for t in unit.subscribed_topics)
 
     def test_ramp_rate_is_configurable(self):
-        """#83: ramp_rate is a constructor argument with a sensible default."""
+        """ramp_rate is a constructor argument with a sensible default."""
         unit_default = TransferUnit()
         assert unit_default.ramp_rate == DEFAULT_RAMP_RATE
 
@@ -91,7 +91,7 @@ class TestLiveBehaviour:
         assert {topic for topic, _ in received} == set(unit.published_topics)
 
     async def test_a_setpoint_moves_the_published_speed(self, mqtt_broker):
-        """#40's acceptance: a setpoint on speed_set moves the published speed."""
+        """A setpoint on speed_set moves the published speed."""
         host, port = mqtt_broker.split(":")
         async with TransferUnit(
             broker=host, port=int(port), publish_interval=0.1
@@ -104,7 +104,7 @@ class TestLiveBehaviour:
                 )
                 await unit.wait_for_setpoint()
 
-            # The setpoint ramps the belt rather than snapping it (#83) -- wait for the
+            # The setpoint ramps the belt rather than snapping it -- wait for the
             # ramp to converge before asserting the exact value.
             await unit.wait_for_convergence("left", timeout=5.0)
             assert unit.speeds["left"] == 1.75
@@ -165,7 +165,7 @@ class TestLiveBehaviour:
 
 @pytest.mark.asyncio
 class TestRamping:
-    """#83: setpoints ramp over time, not instantly; reverse works through zero."""
+    """Setpoints ramp over time, not instantly; reverse works through zero."""
 
     async def test_a_setpoint_does_not_move_the_speed_instantly(self, mqtt_broker):
         host, port = mqtt_broker.split(":")
@@ -185,7 +185,7 @@ class TestRamping:
             assert unit.speeds["left"] == 2.0
 
     async def test_a_negative_setpoint_ramps_the_belt_backwards(self, mqtt_broker):
-        """#83: ramp passes through zero into reverse with no special-casing."""
+        """The ramp passes through zero into reverse with no special-casing."""
         host, port = mqtt_broker.split(":")
         async with TransferUnit(
             broker=host, port=int(port), publish_interval=0.1
@@ -216,7 +216,7 @@ class TestRamping:
 
 @pytest.mark.asyncio
 class TestThroughputSimulation:
-    """#83: throughput simulation drives plc.set_occupied only (read-only northbound)."""
+    """The throughput simulation drives plc.set_occupied only (read-only northbound)."""
 
     async def test_no_cycling_while_stopped(self, mqtt_broker):
         host, port = mqtt_broker.split(":")
@@ -298,10 +298,9 @@ class TestThroughputSimulation:
 
 
 class TestSurvivesAStartupRace:
-    """#79's acceptance: the PLC survives being started before its broker exists.
+    """The PLC survives being started before its broker exists.
 
-    The middleware brings up a unit's broker concurrently with the PLC now (ADR 0029 as
-    amended), rather than the launcher starting it first, so refusal on the first
+    The middleware brings up a unit's broker concurrently with the PLC now, rather than the launcher starting it first, so refusal on the first
     connection attempts is the ordinary startup race and ``start()`` must retry through it.
     """
 
@@ -317,7 +316,7 @@ class TestSurvivesAStartupRace:
             await asyncio.sleep(0.5)
             assert not start_task.done(), "start() must not die on the first refusal"
 
-            # The real production path (#79, ADR 0034): the unit's own middleware brings its
+            # The real production path: the unit's own middleware brings its
             # broker up through this same hook. Reusing it here, rather than hand-rolling
             # another amqtt Broker(...), is both less duplication and a more faithful stand-in
             # for what actually races the PLC's retry loop in the running demo.
@@ -325,7 +324,7 @@ class TestSurvivesAStartupRace:
 
             await asyncio.wait_for(start_task, timeout=10.0)
         finally:
-            # No broker teardown here, on purpose (ADR 0034: a caller owns no lifetime it
+            # No broker teardown here, on purpose (a caller owns no lifetime it
             # didn't start) -- ensure_transport's daemon thread dies with the test process.
             if start_task.done() and not start_task.cancelled() and start_task.exception() is None:
                 await unit.stop()

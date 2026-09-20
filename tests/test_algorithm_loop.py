@@ -1,5 +1,5 @@
 """Unit tests for the demonstration algorithm's background loop: pause, mode switch, and
-event-driven quiescence (#82).
+event-driven quiescence.
 
 No GraphDB and no live peer process here -- ``run_algorithm_loop``/``run_algorithm_once`` only
 ever touch ``controller.units`` (plain attribute access), ``controller.push()`` and
@@ -171,7 +171,7 @@ class TestEventDrivenMode:
             assert len(controller.pushed) == 1, controller.pushed
             # The loop re-arms `waiting_since` on the very next watch tick after it
             # fires -- correct, since it goes straight back to watching for the *next*
-            # change (#82: idle must never look broken, including right after a
+            # change (idle must never look broken, including right after a
             # reaction). So this cannot assert it stays None; it asserts the fresher
             # property: whatever `waiting_since` reads now was set no earlier than the
             # change itself, proving it was actually cleared and restarted rather than
@@ -191,8 +191,8 @@ class TestEventDrivenMode:
 
     async def test_mode_switch_takes_effect_on_the_same_running_loop(self, monkeypatch):
         """Flipping state.mode at runtime -- what a station-board route does -- must be
-        honoured by the loop already running, with no restart (#82: "the toggle switches
-        between them at runtime")."""
+        honoured by the loop already running, with no restart: the toggle switches
+        between them at runtime."""
         monkeypatch.setattr(algorithm_module, "WATCH_INTERVAL_SECONDS", 0.02)
         unit_a = _fake_unit(1.0, False, "http://example.org/belt-a")
         unit_b = _fake_unit(2.0, False, "http://example.org/belt-b")

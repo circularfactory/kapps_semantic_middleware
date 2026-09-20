@@ -1,6 +1,6 @@
-"""#94: nothing reaches a set topic unless something actually commanded it.
+"""Nothing reaches a set topic unless something actually commanded it.
 
-A set topic carries **commands**. Under ADR 0024's locator pattern a parameter has one
+A set topic carries **commands**. Under the locator pattern a parameter has one
 value slot, so the commanded value and the observed value share it, and a write leg asked
 to re-derive its slice at the wrong moment publishes an *observation* onto a **command**
 channel. The device reads its own actual speed back as a new setpoint, the ramp finds
@@ -11,12 +11,12 @@ Two triggers reach that same wrong moment, and the fan-out
 
 1. **A sibling's device read.** The PLC republishes a barrier. That reaches persistence,
    the fan-out asks *every* write leg on the unit to re-derive, and the left belt's write
-   leg publishes its current actual speed to ``speed_set``. #92's origin skip cannot help:
+   leg publishes its current actual speed to ``speed_set``. The origin skip cannot help:
    the origin is the *barrier's* ``ConnectionInfo``, not the speed's.
 
 2. **An external write to a sibling field.** A PUT to the left belt arrives with no origin
    at all, so the fan-out reaches the *right* belt's write leg, which republishes the right
-   belt's last observed speed. This is #82's algorithm's ordinary behaviour -- write one
+   belt's last observed speed. This is the demo algorithm's ordinary behaviour -- write one
    belt while another is mid-ramp.
 
 These tests spy on the real set topics with a real broker, a real GraphDB and a real
@@ -218,7 +218,7 @@ class TestADeviceReadNeverTravelsBackDown:
     """Trigger 1: a sibling's inbound publish must not command anything."""
 
     async def test_a_full_ramp_publishes_nothing_on_its_own_set_topic(self, running_unit):
-        """The reproduction from #94, asserted rather than observed.
+        """The reproduction of the echo, asserted rather than observed.
 
         3.0 is 60 ramp ticks away at the default rate, so the window in which actual and
         commanded disagree is ~3s wide -- several times the PLC's own republish interval.
@@ -255,7 +255,7 @@ class TestADeviceReadNeverTravelsBackDown:
             )
 
     async def test_churning_barriers_do_not_move_a_belt(self, running_unit):
-        """#83's throughput simulation cycles the barriers -- the exact sibling traffic
+        """The throughput simulation cycles the barriers -- the exact sibling traffic
         that fans out onto the belts' write legs."""
         mw, host, port = running_unit
         route = await _route_ending(mw, _speed_route_suffix(seed.CONVEYOR_BELT_LEFT))
@@ -292,7 +292,7 @@ class TestAWriteToOneParameterLeavesItsSiblingsAlone:
     """Trigger 2: a PUT carries no origin, so the fan-out reaches every write leg.
 
     Derived from `rest_router._make_put_handler` by reading, then asserted here. This is
-    the trigger #82's algorithm hits in ordinary operation, and no test covered it.
+    the trigger the demo algorithm hits in ordinary operation, and no test covered it.
     """
 
     async def test_a_put_to_one_belt_publishes_nothing_on_the_other(self, running_unit):
@@ -333,7 +333,7 @@ class TestAWriteToOneParameterLeavesItsSiblingsAlone:
 @requires_graphdb
 @pytest.mark.asyncio
 class TestACommandStillReachesTheDevice:
-    """The southbound path must not be simply switched off -- #94's fourth criterion."""
+    """The southbound path must not be simply switched off."""
 
     async def test_a_commanded_setpoint_reaches_the_device_and_the_belt_converges(
         self, running_unit

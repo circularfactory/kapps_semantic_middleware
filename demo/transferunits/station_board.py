@@ -1,4 +1,4 @@
-"""The Control Expert's station board — FastAPI routes + API for the live view (#82, ADR 0029).
+"""The Control Expert's station board — FastAPI routes + API for the live view.
 
 This module holds all the board's HTTP surface: the HTML template route and the JSON API
 routes the page polls and posts to. It gets grafted onto an already-running Controller
@@ -8,10 +8,10 @@ controller.rebuild_view() in-process — no second server, no second event loop.
 
 The split between this file (routes + template) and control_station.py (runner: argparse,
 uvicorn, Controller construction) is enforced by a guard test (tests/test_station_board_guard.py),
-mirroring the index.py/launcher.py split (ADR 0029). This file names no subprocess, no signal,
+mirroring the index.py/launcher.py split. This file names no subprocess, no signal,
 no SIGTERM — it is pure HTTP, not process management.
 
-The view mechanism (ADR 0033, ticket #80) means the board never constructs its own SPARQL
+The view mechanism means the board never constructs its own SPARQL
 or walks its own tree. Every row comes from WiringPlan/ParameterBinding generically — no
 domain term (tu:, TransferUnit, ConveyorBelt, hasConveyorSpeed, etc.) appears anywhere in
 this file, in code or in the teaching copy. algorithm.py remains the only file in this demo
@@ -60,8 +60,8 @@ from .controller import Controller
 
 logger = logging.getLogger(__name__)
 
-# One entry per taught element on the page, mirroring index.py's own TEACH dict (#68's
-# pattern) -- deliberately this file's own dict, not a re-import of index.py's: that one
+# One entry per taught element on the page, mirroring index.py's own TEACH dict and its
+# pattern -- deliberately this file's own dict, not a re-import of index.py's: that one
 # describes the factory-overview page's boxes (plc/middleware/broker/graph/launcher),
 # none of which appear on this page's DOM. `file` always names a BACKEND source file, and
 # a guard test asserts every path here exists on disk, the same way
@@ -87,7 +87,7 @@ TEACH: Dict[str, Dict[str, str]] = {
         "title": "A station card",
         "what": "One card per unit the view selected. Collapsed is display-only: every "
         "connector stays live and every value stays current behind a shut card -- "
-        "unlike the monitor's collapsed row (ADR 0032), which holds no data until "
+        "unlike the monitor's collapsed row, which holds no data until "
         "expanded. Click the header to expand or collapse.",
         "file": "demo/transferunits/controller.py",
     },
@@ -102,8 +102,8 @@ TEACH: Dict[str, Dict[str, str]] = {
     "show-iris": {
         "title": "Show IRIs",
         "what": "One toggle, three jobs: the full IRI, the real assignment expression "
-        "(ADR 0027's skolemized shape made visible), and what prune_southbound "
-        "stripped for this exact parameter -- the surface #78 asked someone to pick.",
+        "(the skolemized shape made visible), and what prune_southbound "
+        "stripped for this exact parameter.",
         "file": "src/kapps_semantic_middleware/projection.py",
     },
 }
@@ -343,7 +343,7 @@ def mount_onto(
                 raw_value = getattr(param_node, INF.hasValue.lined, None)
                 value = raw_value[0] if raw_value else None
                 
-                # What pruning stripped for this exact parameter (#78's picked surface).
+                # What pruning stripped for this exact parameter, the surface this page teaches.
                 # Computed before the facets below, because the facets are defined in
                 # terms of it.
                 pruned_set = wiring.southbound_by_property.get(str(binding.parameter_property), frozenset())
@@ -356,21 +356,20 @@ def mount_onto(
                 # repeating them as facets would duplicate them. The southbound markers
                 # are excluded because they are **not this consumer's to show**: the
                 # controller reaches its peers over REST and has no MQTT connector, so a
-                # broker address on this page is the ADR 0028 boundary leaking from the
-                # consumer side (ticket #78).
+                # broker address on this page is the projection boundary leaking from the
+                # consumer side.
                 #
                 # Derived from the ontology's own prune set rather than from a literal
                 # list, so a protocol marker declared southbound later is excluded here
-                # with no code change -- the same fail-closed property ADR 0028 gives the
-                # serving path, and the reason this is not a hardcoded allow-list: #82
-                # requires a parameter added to the seed to render with no code change,
-                # which an allow-list would break.
+                # with no code change -- the same fail-closed property the projection gives the
+                # serving path, and the reason this is not a hardcoded allow-list: a
+                # parameter added to the seed must render with no code change, which an
+                # allow-list would break.
                 #
                 # Note this does not make the binding stop *holding* them. The controller
                 # still has the peer's broker address in `ParameterBinding.metadata` for
                 # the life of the process. Fixing that needs kapps_ogm to fetch a
-                # parameter node partially -- specified as SAWeindel/kapps_ogm#23, and
-                # recorded as accepted debt on #78.
+                # parameter node partially, which it cannot do yet; accepted until it can.
                 rendered_elsewhere = {str(INF.accessMode), str(SVC.address)}
                 facets: Dict[str, Any] = {}
                 for key, val in binding.metadata.items():
@@ -398,8 +397,8 @@ def mount_onto(
                 # The write's status, judged server-side: this poll *is* the observation
                 # that advances "has it stopped converging?". The page renders this
                 # verdict rather than reaching its own, so the rule that `diverged` means
-                # stopped converging (not merely unequal) is testable -- #82 requires
-                # rejected and diverged to be distinguishable in a test.
+                # stopped converging (not merely unequal) is testable: rejected and
+                # diverged must be distinguishable in a test.
                 status = controller.writes.observe(binding.resource_iri, binding.field_id, value)
 
                 parameters_data.append({
@@ -520,7 +519,7 @@ def mount_onto(
 
         Steps:
         0. 409 while the algorithm is running -- the *server-side* half of "set controls
-           are inert while the algorithm runs, and live while it is paused" (#82). The
+           are inert while the algorithm runs, and live while it is paused". The
            frontend's disabled buttons are the other half; neither is trusted alone.
         1. Look up instance = controller.units.get(resource_iri); 404 if absent.
         2. Find the WiringPlan for that resource_iri; 404 if not found.
@@ -620,7 +619,7 @@ def mount_onto(
             )
         except Exception as exc:
             # Recorded on the controller, not just returned: `rejected` has to survive a
-            # page reload and be visible to the next poll, and #82 requires it to be
+            # page reload and be visible to the next poll, and it must be
             # distinguishable from `diverged` in a test as well as on screen.
             controller.writes.record_rejected(
                 matching_binding.resource_iri, matching_binding.field_id, str(exc)

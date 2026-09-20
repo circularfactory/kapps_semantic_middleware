@@ -1,4 +1,4 @@
-"""Offline tests for the examples CLI (#115): copy-out, collision safety, README content."""
+"""Offline tests for the examples CLI: copy-out, collision safety, README content."""
 
 from __future__ import annotations
 
@@ -10,9 +10,9 @@ TOTAL_EXPECTED_FILES = len(examples_cli.PAYLOAD_FILES) + 1  # the payload plus R
 """Derived, where it used to be the literal 11.
 
 The count is not what these tests are about -- the payload's *contents* are, and the loop below
-asserts every declared name arrives. A hardcoded total only ever fails as arithmetic: #167 added
-two compose files to `PAYLOAD_FILES` and this line said 13 != 11, naming neither the feature nor
-the fault.
+asserts every declared name arrives. A hardcoded total only ever fails as arithmetic: when two
+compose files were added to `PAYLOAD_FILES`, this line said 13 != 11, naming neither the feature
+nor the fault.
 """
 
 
@@ -31,7 +31,7 @@ class TestCopyExamples:
     def test_the_compose_files_arrive_together_in_a_docker_subdirectory(
         self, tmp_path: Path
     ) -> None:
-        """#157: a pip-installing user must be able to run the documented `cd docker` line.
+        """A pip-installing user must be able to run the documented `cd docker` line.
 
         Both files, in one directory, and that directory created by the copy rather than
         assumed. `docker-compose.yml` mounts `./graphdb-repo-config.ttl` as a **sibling path**,

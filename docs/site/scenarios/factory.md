@@ -94,7 +94,7 @@ and the next run may complain — that is what `--force` clears.
 A picture of all 6 programs and how they connect. Hover over any box to read what it is and which
 source file it comes from.
 
-% SCREENSHOT SLOT 1 of 4 (#142): the launcher page, showing the six boxes and their connections.
+% SCREENSHOT SLOT 1 of 4: the launcher page, showing the six boxes and their connections.
 
 ### 2. Open a machine's own page
 
@@ -104,7 +104,7 @@ machine itself. Set a belt speed and watch it move.
 **Belts have momentum.** A belt does not jump to a new speed. It ramps up at 1 m/s per second, so
 asking for 3 m/s takes about 3 seconds. This is on purpose — a real belt has mass.
 
-% SCREENSHOT SLOT 2 of 4 (#142): a PLC panel with a belt mid-ramp.
+% SCREENSHOT SLOT 2 of 4: a PLC panel with a belt mid-ramp.
 
 ### 3. Open the control station — the station board
 
@@ -120,7 +120,18 @@ Try this:
 4. Turn on **show IRIs**. Every row now also shows its full name in the knowledge graph, the exact
    Python line that sets it, and which private details were hidden from the network.
 
-% SCREENSHOT SLOT 3 of 4 (#142): the station board with show IRIs turned on.
+A value that stops short of your number says `diverged`. How long the automatic program waits
+between its own writes matters as much. Both rules, as the demo's code states them:
+
+```{eval-rst}
+.. autoattribute:: kapps_semantic_middleware.demonstrations.transferunits.controller.WriteStatus.DIVERGED
+   :no-index:
+
+.. autodata:: kapps_semantic_middleware.demonstrations.transferunits.control_station.DEFAULT_TICK_SECONDS
+   :no-index:
+```
+
+% SCREENSHOT SLOT 3 of 4: the station board with show IRIs turned on.
 
 ### 4. Prove the discovery is real
 
@@ -128,7 +139,7 @@ With the demo still running, press **stop** on one unit in the launcher page. Go
 board. Within a few seconds that machine is gone from the screen. Nobody edited any configuration —
 the machine removed itself from the graph, and the station board simply stopped finding it.
 
-% SCREENSHOT SLOT 4 of 4 (#142): the station board before and after one unit is stopped.
+% SCREENSHOT SLOT 4 of 4: the station board before and after one unit is stopped.
 
 ## When something goes wrong
 

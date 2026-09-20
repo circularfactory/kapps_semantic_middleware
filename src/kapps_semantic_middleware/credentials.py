@@ -15,10 +15,11 @@ The helper deliberately does **not** delegate to ``GraphDBCredentials.from_env``
 classmethod raises when ``GRAPHDB_REPOSITORY`` is unset, which would make a variable
 nothing reads into a variable everything requires.
 
-This is a deliberate stopgap for v0.1.0 (issue #146). It buys "never touch a repository
+This is a deliberate stopgap for v0.1.0. It buys "never touch a repository
 the caller did not name" and nothing more — the suite still clears at the start of a run
 rather than the end, so it neither starts from a guaranteed clean slate nor leaves no
-trace. A disposable-repository lifecycle owned by the triplestore interface is issue #149.
+trace. A disposable-repository lifecycle, owned by the triplestore interface, does not exist
+yet.
 """
 
 from __future__ import annotations

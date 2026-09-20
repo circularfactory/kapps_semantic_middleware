@@ -1,7 +1,7 @@
 """Entry point for the Launcher: seeds, spawns, serves the index page, tears down.
 
 Builds launcher.py's Factory and wires it into index.py's routes, then runs uvicorn on the
-Launcher's fixed port. Every other port in the factory is dynamic (ADR 0029), so this one is
+Launcher's fixed port. Every other port in the factory is dynamic, so this one is
 the only bookmarkable address -- the index page is the only way a person finds anything else.
 """
 
@@ -34,6 +34,15 @@ def main() -> None:
         index.configure_factory(factory, launcher_address)
         print(f"\nFactory running. Index page at {launcher_address}", flush=True)
         uvicorn.run(index.app, host=LAUNCHER_HOST, port=LAUNCHER_PORT, log_level="warning")
+    except KeyboardInterrupt:
+        # uvicorn's own Server.capture_signals() handles Ctrl+C gracefully -- it sets
+        # should_exit and lets serve() return normally -- but its `finally` then replays the
+        # captured signal via signal.raise_signal() once its handler is restored, so
+        # uvicorn.run() can still raise KeyboardInterrupt here after a perfectly clean
+        # shutdown. Swallowed rather than let propagate past main(): a graceful stop is not
+        # an error, and it should not read like a crash on the terminal the README told the
+        # user to press Ctrl+C in.
+        pass
     finally:
         print("\nStopping factory...", flush=True)
         factory.stop_all()

@@ -6,12 +6,16 @@
 # actions/checkout configured and says nothing about the release. Check 2 is the
 # reason this file exists, and fetch-depth: 0 below is what lets it read the
 # whole history rather than the one commit a shallow checkout would give it.
+#
+# workflow_call is what lets publish.yml run this same job before the upload,
+# so a failing check stops the upload: one definition of hygiene, two callers.
 
 name: hygiene
 
 on:
   push:
   pull_request:
+  workflow_call:
 
 jobs:
   hygiene:

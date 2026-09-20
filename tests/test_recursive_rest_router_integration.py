@@ -55,8 +55,8 @@ def _unit_view() -> ClassScope:
     """The consumer view of a TransferUnit: the unit, its components, their parameters.
 
     Two levels. A TransferUnit parameters hang off its belts and barriers. A view
-    belongs to its consumer. Configure here in embedding code. Not in the ontology
-    (ADR 0018). The ontology cannot know how deep a consumer cares to look.
+    belongs to its consumer. Configure here in embedding code. Not in the ontology.
+    The ontology cannot know how deep a consumer cares to look.
     """
     return ClassScope.from_property_chains(
         [
@@ -298,9 +298,9 @@ class TestCoverage:
 
         model_name = _model_name(mw, ogm)
         # The framework parameterises the item: `/{Model}/{item_id}`. Match at request time.
-        # The parameter routes below it are literal. The verb gate is per individual
-        # (ADR 0017). The two levels legitimately encode ids differently. A consumer
-        # derives the deep paths structurally from a GET. Not build them by hand (#43).
+        # The parameter routes below it are literal. The verb gate is per individual.
+        # The two levels legitimately encode ids differently. A consumer
+        # derives the deep paths structurally from a GET. Not build them by hand.
         top_level_path = f"/{model_name}/{{item_id}}"
 
         assert any(r.path == top_level_path for r in mw.app.routes)

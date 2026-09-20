@@ -38,20 +38,12 @@ without forward references.
 | [`docs/mechanics/07-writing-to-the-graph-and-to-devices.md`](docs/mechanics/07-writing-to-the-graph-and-to-devices.md) | Every path that causes a write, naming the field that moved, northbound vs. southbound, IRI handling |
 | [`docs/mechanics/08-provisioning-and-seeding.md`](docs/mechanics/08-provisioning-and-seeding.md) | **Read first if `ogm=` is a mystery.** The bootstrap order, loading the shared ontologies, authoring the domain TBox, and seeding the instance data a Parameter needs |
 
-### A note on the citations you will find in the glossaries
+### Where the reasoning lives
 
-The `CONTEXT.md` files cite architecture decision records as **ADR 00nn** and **root ADR
-000n**. Those records are development-repository material and are **not part of this
-distribution** — no copy of them ships, and the release rewrites every path that pointed
-at one, so a citation here is never a link you can follow.
-
-**Do not go looking for them.** The citations are provenance markers, not links. Every mechanism a
-glossary cites a record for is explained in full by the mechanics page covering it — ADR 0004's
-subject is the "Address and endpoint" section of
-[`02-workflow-registration.md`](docs/mechanics/02-workflow-registration.md), ADR 0006's is "The
-graph-facing connector" in [`04-connector-binding.md`](docs/mechanics/04-connector-binding.md), and
-so on. If a citation seems to point at something the mechanics pages do not cover, that is a
-documentation bug worth reporting, not a missing file worth hunting.
+The architecture decision records behind this library are development-repository material and are
+**not part of this distribution**. The glossaries state what was decided; the mechanics pages above
+carry the reasoning, with the deliberation removed. If a glossary claim seems to have no mechanics
+page behind it, that is a documentation bug worth reporting, not a missing file worth hunting.
 
 ## Where the names come from
 

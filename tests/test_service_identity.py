@@ -1,4 +1,4 @@
-"""Service identity is per middleware instance. Not per resource (ADR 0022, #47).
+"""Service identity is per middleware instance. Not per resource.
 
 `mint_service_iri` used to be a pure function of the resource. Two middlewares bound
 to one resource shared a single `svc:Service` node. The second registration overwrote
@@ -76,7 +76,7 @@ class TestMintServiceIri:
         )
 
     def test_the_discriminator_reverses_to_the_address(self):
-        # ADR 0021: production IRIs stay back-resolvable. The discriminator is `IRI.lined`
+        # Production IRIs stay back-resolvable. The discriminator is `IRI.lined`
         # not a hash. The instance address is readable off its own node IRI.
         minted = mint_service_iri(RESOURCE, ADDR_A)
         discriminator = str(minted)[len(f"{RESOURCE}_service_") :]
@@ -100,7 +100,7 @@ def _hello_instance(graphdb, port: int) -> SemanticMiddleware:
 
 
 def _two_registered_instances(graphdb) -> tuple[SemanticMiddleware, SemanticMiddleware]:
-    """Two instances on one resource. Both registered. The scenario ADR 0022 exists for."""
+    """Two instances on one resource. Both registered. The scenario one-Service-per-instance exists for."""
     seed.seed_scenario1(graphdb)
     mw_a = _hello_instance(graphdb, PORT_A)
     mw_b = _hello_instance(graphdb, PORT_B)
@@ -111,7 +111,7 @@ def _two_registered_instances(graphdb) -> tuple[SemanticMiddleware, SemanticMidd
 
 @requires_graphdb
 class TestTwoInstancesOnOneResource:
-    """Two middlewares on one `resource_iri`. A controller and a monitor in ADR 0022 terms."""
+    """Two middlewares on one `resource_iri`. A controller and a monitor, in the glossary's terms."""
 
     def test_each_instance_registers_its_own_service(self, graphdb):
         mw_a, mw_b = _two_registered_instances(graphdb)
@@ -127,7 +127,7 @@ class TestTwoInstancesOnOneResource:
         asyncio.run(mw_a.emit_heartbeat())
 
         # A shared node reports the resource alive while *either* process lives. This
-        # stops liveness (ADR 0007) meaning what discovery assumes it means.
+        # stops liveness meaning what discovery assumes it means.
         assert len(graphdb.triples_get(sub=mw_a.service_iri, pred=SVC.lastHeartbeat)) == 1
         assert len(graphdb.triples_get(sub=mw_b.service_iri, pred=SVC.lastHeartbeat)) == 0
 
@@ -141,7 +141,7 @@ class TestTwoInstancesOnOneResource:
         reachable = services_of_resource(OGM(db=graphdb), seed.HELLO_RESOURCE, reachable_only=True)
         assert reachable == [mw_b.service_iri]
         # Discoverable is not the same as alive. The survivor must hold its own heartbeat.
-        # A shared node could not have expressed this (ADR 0007).
+        # A shared node could not have expressed this.
         assert len(graphdb.triples_get(sub=mw_b.service_iri, pred=SVC.lastHeartbeat)) == 1
 
     def test_a_restart_reuses_its_node_rather_than_orphaning_one(self, graphdb):
@@ -159,7 +159,7 @@ class TestTwoInstancesOnOneResource:
         """A crashed instance goes stale on its own. Its sibling keeps reachability.
 
         What the watchdog does with the *resource* stranded Operations once a resource
-        carries several Services is a separate question. A harder one. See #63.
+        carries several Services is a separate question. A harder one, and open.
         """
         mw_live, mw_dead = _two_registered_instances(graphdb)
         ogm = OGM(db=graphdb)

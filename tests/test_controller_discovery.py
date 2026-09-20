@@ -1,4 +1,4 @@
-"""Tests for the controller discovery library (ticket #43).
+"""Tests for the controller discovery library.
 
 Tests the Controller class. It checks discovery of resources by class IRI,
 with live/offline status. It checks the derivation of a structural REST
@@ -42,10 +42,10 @@ def ogm(graphdb):
 def seeded_graph(ogm):
     """Seed the graph with scenario 3 data and a live Service for the unit.
 
-    seed_scenario3 (map #24) creates the ABox of one TransferUnit only. It writes
-    no Service, since no real middleware instance runs against it here. A
-    real N-unit factory needs the launcher, ticket #66, not yet built. To
-    test liveness now, this fixture registers a Service by hand for
+    seed_scenario3 creates the ABox of one TransferUnit only. It writes
+    no Service, since no real middleware instance runs against it here (the
+    demo's seed_factory and launcher are what stand up an N-unit factory). To
+    test liveness here, this fixture registers a Service by hand for
     seed.TRANSFER_UNIT_1, the same way a real middleware instance would at
     its own startup (see registration.register_service, and the same
     pattern in test_liveness_integration.py).
@@ -115,8 +115,8 @@ class TestControllerDiscovery:
     def test_discovers_transfer_units(self, seeded_graph):
         """Discovering TransferUnits returns the seeded unit.
 
-        seed_scenario3 seeds one TransferUnit (map #24). A real N-unit
-        factory needs the launcher, ticket #66, not yet built.
+        seed_scenario3 seeds one TransferUnit; the demo's seed_factory is
+        what seeds an N-unit factory.
         """
         controller = Controller(
             resource_iri="http://example.org/ControlStation1",
@@ -161,8 +161,8 @@ class TestControllerDiscovery:
         register_service only writes the Service side (svc:isServiceOf plus
         svc:address). It expects the resource individual to already exist,
         the same way a domain seed writes a TransferUnit before its
-        middleware starts. A real factory seed does this for the control
-        station too (ticket #66); here, the test does it by hand, with the
+        middleware starts. The demo's seed_factory does this for the control
+        station too; here, the test does it by hand, with the
         same create_resource helper seed_scenario1 uses.
         """
         controller = Controller(
@@ -268,7 +268,7 @@ class TestParameterPathDerivation:
         """The built path matches /{Model}/{lined_root}/{field}/{lined_child}/{field_id}.
 
         This is the same shape test_recursive_rest_router.py's _path() helper
-        asserts on the server side (ADR 0017).
+        asserts on the server side.
         """
         path = build_parameter_path(
             "TransferUnit",

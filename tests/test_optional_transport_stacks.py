@@ -1,12 +1,12 @@
-"""The connector modules import and recognise with their transport stacks absent (#93 item 4).
+"""The connector modules import and recognise with their transport stacks absent.
 
-Three acceptance claims from #69 and #77 were true by inspection and held by nothing:
+Three claims about the MQTT and REST bindings were true by inspection and held by nothing:
 
 - an instance with ``autoregister_connectors=False`` starts with no ``aiomqtt`` installed
 - an instance with no REST stack installed still constructs
 - ``ensure_transport`` runs *before* the first connector for that address is built
 
-The first two are the ADR 0028 rule that recognition and the northbound projection must not
+The first two are the projection rule that recognition and the northbound projection must not
 depend on a transport: the least-privileged wiring would otherwise be the one that could not
 run. Both mechanisms are marked ``# pragma: no cover`` because they depend on an optional
 install, and the existing REST test patches ``httpx`` *in* and never out -- so the absent-stack
@@ -81,7 +81,7 @@ def _in_a_fresh_interpreter(hidden: tuple[str, ...], body: str) -> None:
 
 class TestTheModulesImportWithoutTheirStack:
     def test_mqtt_binding_imports_with_no_aiomqtt(self):
-        """#69's box. The descriptor must still exist, so recognition and the ADR 0028
+        """The descriptor must still exist, so recognition and the northbound
         projection run on a host that cannot talk MQTT at all."""
         _in_a_fresh_interpreter(
             ("aiomqtt",),
@@ -98,10 +98,10 @@ class TestTheModulesImportWithoutTheirStack:
             """,
         )
 
-    def test_httpx_is_not_actually_optional_so_77s_box_cannot_be_met(self):
-        """**#77's acceptance box is false, not merely unasserted** -- #93 item 4 recorded it
-        as "believed true, nothing pins it", and writing the pin is what showed it is not
-        true.
+    def test_httpx_is_not_actually_optional(self):
+        """**The claim that the REST binding is optional is false, not merely unasserted** --
+        it was believed true with nothing pinning it, and writing the pin is what showed it
+        is not true.
 
         *"An instance with no REST stack installed still constructs."* It does not.
         ``rest_binding``'s own guard is correct in isolation, but importing the module pulls
@@ -111,19 +111,15 @@ class TestTheModulesImportWithoutTheirStack:
         on that guard is honest: the branch is unreachable while ``transitional_sync_middleware`` is a
         dependency.
 
-        **And that upstream import is undeclared** (found 2026-08-07, while correcting #77's
-        record). ``httpx`` appears nowhere in ``transitional_sync_middleware``'s own manifest -- not as a
-        dependency, not as an extra -- while ``import transitional_sync_middleware`` reaches that module
-        eagerly. It is the same class of sibling defect this project's ``pyproject.toml``
-        already names for ``aiomqtt``: importing a module the manifest never mentions. Filed
-        rather than fixed here: declaring it would make the manifest honest without making
-        #77's box any more meetable, and making the import lazy upstream is a feature change
-        rather than the bugfix root ADR 0001 permits.
+        **That upstream import is eager and declared.** ``httpx`` is a dependency of
+        ``transitional_sync_middleware`` (0.1.0 declares it, see ``uv.lock``) and of this
+        library, and ``import transitional_sync_middleware`` reaches that module at import
+        time. Making the import lazy upstream would be a feature change there, not a fix here.
 
         This test pins the *actual* state, so that making httpx genuinely optional upstream
-        turns this red and sends the reader back to #77's box rather than leaving a claim
+        turns this red and sends the reader back to the claim rather than leaving one
         nobody rechecks. Contrast the MQTT case above, which really is optional and really
-        does degrade the way its ticket says.
+        does degrade.
         """
         result = _run_with_hidden(
             ("httpx",),
@@ -132,7 +128,7 @@ class TestTheModulesImportWithoutTheirStack:
 
         assert result.returncode != 0, (
             "importing rest_binding with httpx hidden now succeeds -- httpx has become "
-            "genuinely optional, so #77's acceptance box is newly meetable and this test "
+            "genuinely optional, so the optional-REST claim is newly meetable and this test "
             "should be replaced by the real absence check"
         )
         assert "import httpx" in result.stderr, (
@@ -149,7 +145,7 @@ class TestTheModulesImportWithoutTheirStack:
 
         Exercised by swapping the module global rather than by hiding the package, since
         the test above establishes that hiding it never reaches this code. That is a weaker
-        test than #77 wanted and it is the strongest one available: it proves the message,
+        test than the claim wants and it is the strongest one available: it proves the message,
         not the import.
         """
         from kapps_semantic_middleware.connectors import rest_binding
@@ -169,9 +165,9 @@ class TestTransportComesUpBeforeItsConnectors:
     safe, unlike reloading the module."""
 
     def test_ensure_transport_runs_before_the_connector_is_built(self):
-        """#69's ordering box. The tests in `test_scenario3_wiring_integration.py` prove the
+        """The ordering claim. The tests in `test_scenario3_wiring_integration.py` prove the
         call *count* and the address; nothing proved the order, which is the entire reason
-        ADR 0034 made the hook synchronous -- `plan_wiring` runs in the constructor, before
+        the hook was made synchronous -- `plan_wiring` runs in the constructor, before
         any event loop exists, so a connector built first would find no broker listening.
 
         Asserted on one shared log, so "before" is a fact about sequence rather than two

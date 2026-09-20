@@ -1,4 +1,4 @@
-"""Offline tests for Factory's state machine (#72): starting -> live/slow/failed/stopped.
+"""Offline tests for Factory's state machine: starting -> live/slow/failed/stopped.
 
 No live GraphDB and no real subprocess here -- every ChildHandle wraps a MagicMock standing
 in for a subprocess.Popen, and the graph lookup is monkeypatched.
@@ -139,12 +139,11 @@ class TestStopUnit:
 
 
 class TestStartSpawnOrder:
-    """Regression pin (#79): each unit's middleware must be spawned before its own PLC.
+    """Regression pin: each unit's middleware must be spawned before its own PLC.
 
     ``_spawn_plc`` blocks reading its process's stdout until the panel announces itself, and
     the panel announces itself only once the PLC's own (retrying) broker connection succeeds.
-    That broker does not exist until this unit's middleware brings it up (ADR 0029 as
-    amended, ADR 0034). Spawning the PLC first would have the launcher block forever on a
+    That broker does not exist until this unit's middleware brings it up. Spawning the PLC first would have the launcher block forever on a
     broker nothing was ever asked to start.
     """
 
@@ -183,7 +182,7 @@ class TestStartSpawnOrder:
 
 class TestStateSnapshot:
     """This class tests Factory.state_snapshot's shape: graph/launcher/controller/unit,
-    where each unit now carries its own broker (#79, ADR 0029 as amended) -- there is no
+    where each unit now carries its own broker -- there is no
     top-level, factory-wide broker entry any more."""
 
     def test_snapshot_groups_children_by_unit(self):
@@ -208,8 +207,7 @@ class TestStateSnapshot:
         ]
 
     def test_snapshot_broker_state_mirrors_its_unit_s_middleware(self):
-        """The broker is a thread inside its unit's middleware process (ADR 0029 as
-        amended), so its display state is exactly that middleware's -- no separate probe."""
+        """The broker is a thread inside its unit's middleware process, so its display state is exactly that middleware's -- no separate probe."""
         factory = make_factory()
         mw2 = make_child("middleware", 2, state="failed")
         factory.children = [mw2]
@@ -315,7 +313,7 @@ class TestRequestStop:
 
 
 class TestEchoAddressLines:
-    """This class tests that _drain_output echoes a child's address lines to stdout (#85)."""
+    """This class tests that _drain_output echoes a child's address lines to stdout."""
 
     def test_address_line_reaches_stdout_prefixed_with_identity(self, capsys):
         factory = make_factory()

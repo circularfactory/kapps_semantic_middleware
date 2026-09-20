@@ -68,7 +68,7 @@ def _start_server(middleware: SemanticMiddleware, port: int) -> tuple[uvicorn.Se
     this server explicitly.** Uvicorn installs signal handlers only on the main thread
     (``uvicorn/server.py``: *"Signals can only be listened to from the main thread"*), so off
     it, SIGTERM and SIGINT never reach the ASGI lifespan, and the library's three
-    ``on_shutdown`` callbacks -- deregistration among them (ADR 0007) -- never run. A daemon
+    ``on_shutdown`` callbacks -- deregistration among them -- never run. A daemon
     thread then dies with the process without unwinding, leaving an ``svc:address`` published
     for a process that is gone.
 
@@ -76,10 +76,10 @@ def _start_server(middleware: SemanticMiddleware, port: int) -> tuple[uvicorn.Se
     thread is here at all. The mitigation is ``_stop`` below: ``server.should_exit = True`` and
     join. Uvicorn runs its own lifespan shutdown off that flag with no signal involved, so the
     callbacks fire. **Copy this helper and you inherit both halves** -- if the copy never calls
-    ``_stop``, it leaks a Service on every run (#65).
+    ``_stop``, it leaks a Service on every run.
 
     ``demo/transferunits/`` takes the other route: one process per middleware with uvicorn on
-    the main thread, which turns the callbacks on for free (ADR 0029).
+    the main thread, which turns the callbacks on for free.
     """
     config = uvicorn.Config(middleware.app, host="127.0.0.1", port=port, log_level="warning")
     server = uvicorn.Server(config)
@@ -121,8 +121,8 @@ def step_3_inspect_registration(db: GraphDB, ogm: OGM) -> Registration:
     """Verify the Service/Capability/Workflow and reachability triples.
 
     The Service IRI is *discovered* through ``svc:isServiceOf``, not rebuilt from the resource
-    IRI. It carries an instance discriminator now, and one resource may carry several Services
-    (ADR 0022). This scenario runs a single instance, so exactly one is reachable.
+    IRI. It carries an instance discriminator now, and one resource may carry several Services.
+    This scenario runs a single instance, so exactly one is reachable.
     """
     print("\nStep 3 — Inspect What Registration Wrote")
     reachable = services_of_resource(ogm, seed.HELLO_RESOURCE, reachable_only=True)
@@ -140,7 +140,7 @@ def step_3_inspect_registration(db: GraphDB, ogm: OGM) -> Registration:
     assert db.triple_exists((capability_iri, SVC.realizedByWorkflow, workflow_iri))
     assert db.triple_exists((workflow_iri, SVC.isWorkflowOf, service_iri))
     print("Structural triples present (isServiceOf, realizedByWorkflow, isWorkflowOf).")
-    print("Note: only the instance-owned direction of each inverse is materialized (ADR 0008).")
+    print("Note: only the instance-owned direction of each inverse is materialized.")
 
     address_triples = list(db.triples_get(sub=service_iri, pred=SVC.address))
     endpoint_triples = list(db.triples_get(sub=workflow_iri, pred=SVC.endpoint))
@@ -157,7 +157,7 @@ def step_4_dispatch_and_run(
     A second middleware (a planner) dispatches an operation for the hello capability. It
     creates the Operation ``queued`` in the graph. It then rings the event trigger of the
     hello resource, over REST. This resolves the peer purely through the graph. The hello resource
-    then pulls the queued operation and runs the work (ADR 0009/0010).
+    then pulls the queued operation and runs the work.
     """
     print("\nStep 4 — Dispatch through the Event Trigger, then Pull-and-Run")
     planner = SemanticMiddleware(
@@ -168,7 +168,7 @@ def step_4_dispatch_and_run(
         host="127.0.0.1",
         port=PLANNER_PORT,
     )
-    # The planner is *served*, not merely constructed (#44). Constructing a resource-mode
+    # The planner is *served*, not merely constructed. Constructing a resource-mode
     # instance and never running it means `on_start_up` never fires: no Service individual,
     # no `svc:address`, no heartbeat, no event-trigger route — so `mode="resource"` would be
     # a label with no runtime consequence, and a reader would reasonably copy that. A client
@@ -205,10 +205,14 @@ def step_5_inspect_decision_provenance(db: GraphDB, operation_iri: IRI) -> None:
     timestamp = list(db.triples_get(sub=operation_iri, pred=SVC.executionTimestamp))
     result = list(db.triples_get(sub=operation_iri, pred=SVC.executionResult))
 
+    # The graph stores instants in UTC, so the printed value is UTC and is labelled as such --
+    # unlabelled, a reader in another zone reads their own wall clock and sees it as wrong.
+    executed_at = f"{timestamp[0][2]}  (UTC)" if timestamp else "NONE"
+
     print(f"Terminal state + provenance recorded on {operation_iri}:")
     print(f"  operationStatus:    {status[0][2] if status else 'NONE'}")
     print(f"  executedByWorkflow: {executed_by[0][2] if executed_by else 'NONE'}")
-    print(f"  executionTimestamp: {timestamp[0][2] if timestamp else 'NONE'}")
+    print(f"  executionTimestamp: {executed_at}")
     print(f"  executionResult:    {result[0][2] if result else 'NONE'}")
     assert status and str(status[0][2]) == OperationStatus.DONE
 
@@ -226,7 +230,7 @@ def step_6_shutdown_and_verify(
 ) -> None:
     """Stop both servers and verify reachability is removed while individuals remain.
 
-    Both, because both are served (#44). A client that registers on startup must deregister
+    Both, because both are served. A client that registers on startup must deregister
     on shutdown like any other peer, or the graph accumulates addresses nobody answers on.
     """
     print("\nStep 6 — Shutdown and Deregistration")

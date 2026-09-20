@@ -20,8 +20,6 @@ Two shapes come out of here. Both are required.
 - The **pruned** spec. The system serves this northbound.
 """
 
-# ADR: 0023, 0028
-
 from __future__ import annotations
 
 import logging
@@ -53,14 +51,11 @@ includes materialized inference, and a parameter node's only types are anonymous
 nodes that exist by inference alone. Count or read without this. This returns
 inferred triples and inflates every result.
 """
-# ADR: 0020
 
 
 @dataclass
 class WiringPlan:
     """This describes what recognition found, and what the caller should do about it."""
-
-    # ADR: 0020, 0028
 
     northbound_spec: Any
     """The pruned ClassSpec, safe to materialize and serve."""
@@ -90,8 +85,7 @@ class WiringPlan:
     (``southbound_by_property``, one ontology round trip per distinct property rather
     than one per binding) and used to discard it once ``southbound_properties`` was
     built. Kept here instead: a consumer that shows what pruning stripped *per
-    parameter* -- ticket #82's station board, answering ticket #78's deferred display
-    question -- needs exactly this breakdown, and recomputing it a second time would cost
+    parameter* -- the demo's station board -- needs exactly this breakdown, and recomputing it a second time would cost
     the same ontology queries this cache exists to avoid paying twice."""
 
     def northbound_fetch_kwargs(self) -> Dict[str, Any]:
@@ -133,7 +127,7 @@ def plan_wiring(
     # The projection asks the *ontology* what is protocol metadata, not the registry. A
     # registry-derived set only knows the protocols this middleware has code for, and a
     # parameter reachable over an unregistered protocol would have its endpoint served
-    # (measured, ADR 0028). Recompute here on every construction, because the ontology may
+    # (measured). Recompute here on every construction, because the ontology may
     # have grown a protocol since this instance last started.
     # `cache` is shared with the loop below so the ontology is asked once per distinct property
     # rather than once per use. Every one of these is a live SPARQL round trip, and the store
@@ -235,7 +229,7 @@ def _recognise(
     never appear in an explicit-graph fetch. The property hierarchy is what survives a
     round trip.
 
-    **The evidence may sit on the parameter or on the resource's Service** (ticket #33). An MQTT connector recognises ``inf:hasMQTTTopic`` on
+    **The evidence may sit on the parameter or on the resource's Service**. An MQTT connector recognises ``inf:hasMQTTTopic`` on
     the parameter itself. A REST connector has no such marker; its evidence is the resource's
     own ``svc:address``, one hop out through ``svc:isServiceOf``. Look that address up **once**
     per resource here, and fold it into every recognised binding's metadata alongside whatever
@@ -253,7 +247,7 @@ def _recognise(
     # binding derives this route independently, with no served route list to read it
     # from, so it has to reconstruct the same mangling `to_pydantic_model` used, not the
     # shorter fragment a human would write by hand -- using the fragment here 404s every
-    # request this binding ever builds (kapps_semantic_middleware#80).
+    # request this binding ever builds.
     root_class_local_name = IRI(str(resource_class)).lined
 
     for holder_iri, prop_iri, prop_spec, steps in _parameter_properties(
@@ -261,8 +255,8 @@ def _recognise(
     ):
         descriptor = _descriptor_for(ogm=ogm, prop_iri=prop_iri, registry=registry)
         if descriptor is None:
-            # Unrecognised complex content is plain data: shown, readable, nothing wired
-            # (ADR 0020). Not an error. The graph may well hold structure this middleware
+            # Unrecognised complex content is plain data: shown, readable, nothing wired.
+            # Not an error. The graph may well hold structure this middleware
             # has no connector for.
             continue
 
@@ -441,8 +435,8 @@ def _parameter_metadata(
         # `row["p"]` is the property IRI -- always stringified for a plain dict key. `row["v"]`
         # is left as `convert_bindings=True` produced it: every metadata property here has been
         # `xsd:string` until now, so this was a no-op, but forcing `str()` on it would turn
-        # `inf:hasMQTTBrokerPort`'s `xsd:integer` back into a string (#69's stated acceptance:
-        # the round trip must hand back 18831, not "18831").
+        # `inf:hasMQTTBrokerPort`'s `xsd:integer` back into a string (the round trip must hand
+        # back 18831, not "18831").
         prop, value = str(row["p"]), row["v"]
         if prop not in declared:
             undeclared.add(prop)
@@ -452,7 +446,7 @@ def _parameter_metadata(
     if undeclared:
         # Naming the property and the restriction that failed to declare it is the whole
         # point: the value would otherwise never flow and the resource would come up
-        # silently dead (#40).
+        # silently dead.
         logger.warning(
             "Parameter node of %s on %s carries %s, which the range restriction of %s does "
             "not declare. %s will not be readable or writable through the middleware.",

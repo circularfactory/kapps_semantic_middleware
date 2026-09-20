@@ -5,7 +5,7 @@ One of five contexts in this repo — see `/CONTEXT-MAP.md` at the repo root for
 
 > This file defines the **vocabulary**. For how to *use* the mechanisms it names — and for the
 > constraints that do not surface in a type signature — read `AGENTS.md` and the `docs/mechanics/`
-> set beside it. The `ADR 00nn` citations below are provenance markers for the development
+> set beside it. The decisions behind these definitions are recorded in the development
 > repository; those records are not distributed, and `docs/mechanics/` is their shipped
 > replacement.
 
@@ -29,33 +29,33 @@ controller, a screwing-resource controller, a planning service). Typed via a
 domain-specific subclass of `svc:Service` that must pre-exist in the ontology.
 There is **one Service per middleware instance, not per Resource**: several instances may be bound to
 one Resource, each owning its own Service node, address and heartbeat, all linked by
-`svc:isServiceOf` (ADR 0022). Discovery may therefore return several Services for one Resource.
+`svc:isServiceOf`. Discovery may therefore return several Services for one Resource.
 _Avoid_: Middleware instance (that is the Python object; Service is its graph representation), Resource (Service *wraps* a Resource, it is not one); "the service of a resource" (there may be several).
 
 **Connector wiring** (of a resource-mode instance):
 A configuration of the one library, not a distinct class. Resource mode is a **library woven into a
 domain expert's Python package**, never a monolithic server. A wiring is two facts: a **protocol**
-and a **direction**. This is the only axis that describes an instance (ADR 0033).
+and a **direction**. This is the only axis that describes an instance.
 
 *Direction.* **Driving**: connectors wired bidirectionally, writes as well as reads. **Observing**:
 connectors wired `TO_PERSISTENCE`, reads live values, structurally unable to write. **Inspecting**:
 `autoregister_connectors=False`, nothing connected, structure and graph content only.
 
 *Protocol.* **MQTT** reaches a device, recognised on the parameter (`inf:hasMQTTTopic`). **REST**
-reaches another middleware instance over its ADR 0017 routes, recognised through the resource's
+reaches another middleware instance over its recursive REST routes, recognised through the resource's
 Service (`svc:address`). A peer middleware is a device as far as the seam is concerned.
 
 Recognition and the **Projection** run identically in every combination, so connection metadata
-never reaches a **served datamodel** (ADR 0020, ADR 0032, ADR 0033).
+never reaches a **served datamodel**.
 
-**The log path is held to the same claim** (issue #76, closed 2026-08-09). `activity.py` serves
+**The log path is held to the same claim.** `activity.py` serves
 this package's INFO records over HTTP, which for a while made `/activity` a way around the
 projection: `connectors/mqtt_binding.py` logged each value with its topic at INFO. The topic now
 sits at DEBUG on both legs, and the feed's handler filters at its own level rather than the
 logger's — so widening the package logger to DEBUG for a debugging session still cannot put a
 topic on the page. The INFO line names the parameter and the value, which is what the feed is
 for.
-_Avoid_: Flavour, retired by ADR 0032. **Role**, retired by ADR 0033 — an instance has no property
+_Avoid_: Flavour, retired. **Role**, retired — an instance has no property
 beyond its wiring. Consumer and Resource middleware as *defined* terms; they survive only as informal
 shorthand. Read-only mode, because a **Mode** is `resource`/`server`/`watchdog`, and a connector
 wiring is a configuration *within* resource mode. Monitor mode.
@@ -65,12 +65,12 @@ The thing a connector dials, as opposed to the connector that dials it — an MQ
 nothing else so far. A Parameter's connection metadata *names* a transport by address; it never
 provides one. A middleware may be asked to **ensure** a transport exists at a declared address
 before it registers the first connector aimed there, but it never holds a transport
-implementation: it states the need and the deployment meets it (ADR 0034). So a transport is the
+implementation: it states the need and the deployment meets it. So a transport is the
 one part of the southbound path that is neither in the graph nor in this library.
 _Avoid_: Connector (the client this middleware constructs, one per topic — it *uses* a transport);
-Binding / Binding descriptor (the recognition rule that builds connectors, ADR 0023); Broker as a
+Binding / Binding descriptor (the recognition rule that builds connectors); Broker as a
 general term, since it is one transport and the seam is not MQTT-shaped; Endpoint and Address,
-which are northbound (`svc:address`, the ADR 0017 routes).
+which are northbound (`svc:address`, the recursive REST routes).
 
 **Workflow**:
 An invokable function exposed by a Service, registered with `@mw.workflow(...)`. Realizes
@@ -82,33 +82,33 @@ _Avoid_: Skill, Action (AAS-tradition terms for the same invocation-interface id
 reserves "Service" for the deployable middleware-wrapped entity and "Workflow" for what it
 exposes — see the paper's explicit divergence from the AAS capability-skill-service model).
 
-**Parameter** (interface-accessible parameter) — _supersedes StateProperty (ADR 0015)_:
+**Parameter** (interface-accessible parameter) — _supersedes StateProperty_:
 A readable and/or settable state of a Resource, modelled as **one graph node** carrying its
 value/unit **and** the metadata a protocol connector needs to reach the device (e.g. an MQTT
 topic + broker). It carries **no named `rdf:type`** — its only types are anonymous restriction nodes,
 which exist by inference and never survive an explicit-graph fetch — so it is recognised by the
-**Interface property** its domain property specializes, never by its class (ADR 0020).
+**Interface property** its domain property specializes, never by its class.
 The middleware's former "readable state" and the shop-floor "parameter" are one thing seen from
 two directions — southbound (how the middleware reaches the device) and northbound (how peers
 reach the middleware). Whether it is externally settable is a **facet** (an access mode), not a
 subclass. Northbound it is **atomic**: value, unit
 and access mode are read and written together as one dict, because they share one blanknode — the
 locked circular-factory pattern for metadata about a property, RDF having no properties-about-
-properties (ADR 0017). Its **shape is the TBox restriction** on its property's `rdfs:range`, not the
+properties. Its **shape is the TBox restriction** on its property's `rdfs:range`, not the
 instance data: anything the restriction does not declare is dropped at materialization with only a
-warning, so metadata a connector needs must be declared there or it never arrives (ADR 0028).
+warning, so metadata a connector needs must be declared there or it never arrives.
 A complex property that matches no registered connector is **not** a Parameter — it is ordinary
-data the consumer asked for, displayed and readable, with nothing wired (ADR 0020).
+data the consumer asked for, displayed and readable, with nothing wired.
 Whether its value lives in the graph is the domain's choice — see **Committed value** / **Locator**. It is
 also the deepest thing a binding can address: `ConnectionInfo` bottoms out at the Parameter, never at the
-value inside it (ADR 0023).
-_Avoid_: StateProperty (retired term, ADR 0015); Sensor value / Observation (those describe the
+value inside it.
+_Avoid_: StateProperty (retired term); Sensor value / Observation (those describe the
 data, not the graph node); Capability (states have none — there is no "light-barrier capability").
 
 **Interface class** — _retired term, do not use_:
 A protocol-specific parameter *class* (`inf:MQTTParameter`, `inf:OPCUAParameter`) that a connector was
 paired with one-to-one, resolved by the parameter's `rdf:type`. **The parameter node has no named
-type**, so nothing could ever match on it (ADR 0020, measured). The concept it reached for — the
+type**, so nothing could ever match on it (measured). The concept it reached for — the
 protocol-extensibility seam — survives intact as the **Interface property**, and the ontology terms it
 named are gone from the scenario-3 TBox. Use **Interface property**.
 _Avoid_: the term itself. Also Adapter, Driver.
@@ -117,10 +117,10 @@ _Avoid_: the term itself. Also Adapter, Driver.
 A **projection — a view** — over the graph, expressed (in the OGM) as a tree of property-chains
 rooted at a class. A view **belongs to its consumer** and is rooted at the node that consumer cares
 about. There is no single "the datamodel" for a resource. This is how one central ontology serves
-both the IT-OT boundary and the control/factory layer without duplicating concepts (ADR 0018).
+both the IT-OT boundary and the control/factory layer without duplicating concepts.
 A view **terminates at a Parameter and cannot select within one**: below a complex property the
 chain is silently discarded, and the blanknode's contents are fixed by the TBox restriction, the
-same for every consumer (ADR 0028). A scope chooses *which* parameters, never *which parts* of one.
+same for every consumer. A scope chooses *which* parameters, never *which parts* of one.
 An **empty** projection is legitimate — the graph holds the information, and a resource whose view
 is a bare individual serves a one-field datamodel and starts normally.
 _Avoid_: Filter, Query (a ClassScope is a reusable named view of which metadata to materialise).
@@ -139,14 +139,14 @@ datamodel it REST-exposes: the **northbound** projection. Stated by the domain c
 library, since only that code knows what the instance is for. Omitting it falls back to an unscoped
 fetch, which materializes the `id` alone — a legitimate, if minimal, projection.
 Connection metadata is absent from it not because the view declines to fetch it (it cannot — see
-**ClassScope**) but because the **Projection** removes it (ADR 0028), so a peer cannot learn the
+**ClassScope**) but because the **Projection** removes it, so a peer cannot learn the
 broker address and bypass the middleware.
 _Avoid_: The datamodel, Schema (it is one view among many; a connector's view of the same resource is
 a different one).
 
 **Projection** (northbound):
 What keeps connection metadata out of the served datamodel: the middleware **removes the protocol
-properties from the ClassSpec before fetching**, and materializes the pruned spec (ADR 0028). What
+properties from the ClassSpec before fetching**, and materializes the pruned spec. What
 counts as protocol metadata is **read from the ontology**, per Parameter, at every startup: everything
 contributed by an **Interface property** strictly between the Parameter's own property and
 `inf:isInterfaceAccessibleParameter`. The Parameter's own range (value, unit) and the root's own range
@@ -157,19 +157,19 @@ Deriving the set from the **registry** instead was tried and **fails open**: it 
 protocols this middleware has code for, so a Parameter reachable over an unregistered protocol had its
 endpoint served (measured). A **Binding descriptor**'s connection metadata is now a *cross-check*
 against the ontology, not the source. A keep-list — naming what is safe — was rejected: it is a second
-closed-world moment (ADR 0025 allows exactly one) and it hides new domain content by default.
+closed-world moment (the design allows exactly one) and it hides new domain content by default.
 _Avoid_: Deny-list *of field names* (the point is that the list is derived from the authoritative
 ontology, not enumerated); Access control (the Projection stops a peer *learning* the broker address
 from this REST surface, not someone who already knows it — that is future work).
 
 Earlier this was recorded as *not* a middleware step at all: a Parameter materializes to exactly what its
 property's restriction declares, so on the merge-depth reading a broker address physically could not
-reach a peer. That premise died when the `inf:` interface properties gained their own ranges (#53) —
+reach a peer. That premise died when the `inf:` interface properties gained their own ranges —
 necessary so provisioning can write connection metadata through the OGM — because `PropertySpec` merges
 the entire `rdfs:subPropertyOf*` chain with no depth parameter. Measured: the unpruned belt materializes
 carrying topic, set topic and broker. Merge depth remains the right *description* of the two views; the
-middleware has to realize the shallow one itself (ADR 0019 stays retired as written; ADR 0026's
-projection claim is superseded).
+middleware has to realize the shallow one itself (the earlier claim that merge depth alone
+projected the broker away is superseded).
 _Avoid_: Filter, Stripping *of data* (the prune is on the shape, before any data is read — the northbound
 model has no field to carry a broker address in); View (the view is the ClassScope, which selects *which*
 Parameters, not which parts of one).
@@ -179,7 +179,7 @@ The property a **Semantic connector** binds to — `inf:isInterfaceAccessibleMQT
 siblings, under `inf:isInterfaceAccessibleParameter`. A resource's parameter declares its protocol by
 being a **subproperty** of one, which is how the authoritative upstream ontology already models it.
 Recognition is `rdfs:subPropertyOf*` against the registry. The parameter blanknode itself carries no
-named class to match on (ADR 0020).
+named class to match on.
 _Avoid_: Interface class (retained for the ontology concept, but the *match* is on the property).
 
 **Known primitives**:
@@ -195,7 +195,7 @@ has never been taught).
 Any connector able to **register itself from the knowledge graph**. Every connector transitional_sync_middleware ships
 (MQTT, OPC-UA, HTTP, websocket, webhook, AAS client, model) is a candidate. Only the bare `Connector`
 protocol is not, being the interface specification itself. Realized as a **Binding descriptor**, not as a
-connector subclass (ADR 0023).
+connector subclass.
 _Avoid_: Connector (the bare transitional_sync_middleware protocol, without the metadata ontology); Adapter, Driver;
 MQTT connector as the archetype (MQTT is the first instance, not the shape of the concept).
 
@@ -207,7 +207,7 @@ framework registrations. It references its connector class rather than subclassi
 nobody here owns can still be made semantic. One binding may yield **two** connectors (a read topic and a
 write topic) against **one** binding target, differing only in direction. Built and registered **at
 construction**, from the ClassSpec and the graph — registering later means the framework never connects
-them and inbound traffic dies silently (ADR 0023).
+them and inbound traffic dies silently.
 _Avoid_: Connector factory, Plugin (the descriptor is declarative — it states what a protocol needs, and
 building is one method on it).
 
@@ -215,10 +215,9 @@ building is one method on it).
 A part of a Parameter that does not change with a reading — unit, access mode. Captured by the **Binding
 descriptor** at wiring time and reassembled into the payload on every inbound message, because
 `setattr` replaces the whole Parameter node and `Formatter.deserialize` sees only the payload, with no
-access to the current value. Free to carry, since `OGM.commit` filters unchanged triples (ADR 0018,
-ADR 0023).
+access to the current value. Free to carry, since `OGM.commit` filters unchanged triples.
 
-ADR 0027 retired the *graph* reason for this — a skolemised Parameter node is addressable, so a commit
+Skolemization retired the *graph* reason for this — a skolemised Parameter node is addressable, so a commit
 diffs per triple and an unchanged facet cannot be wiped. The **in-memory** reason stands and is why the
 reassembly remains: without it, a bare inbound scalar blanks the unit in the very model that is served
 over REST.
@@ -232,7 +231,7 @@ injecting a domain-built one. Resolution is
 `parameter property rdfs:subPropertyOf* → interface property → binding descriptor`. Supporting a new
 protocol is registering a new entry, never a core change. Recognition runs over the **ClassSpec and the
 graph**, not over materialized instance data, which is what allows registration to happen early enough
-for the framework to connect them (ADR 0020, ADR 0023).
+for the framework to connect them.
 _Avoid_: Connector factory, Plugin loader (the registry keys specifically on the interface property);
 keying on `rdf:type` (superseded — the parameter blanknode has no named type).
 
@@ -243,7 +242,7 @@ commits it and the graph holds the value. `@state` is not involved. **Locator**:
 fast, so the graph holds only *where the value lives* — unit, access mode, topic, broker — and never the
 value itself, which exists only in the datamodel and over REST. Scenario 3 is a locator, which is why its
 instance data carries no `inf:hasValue` literals. The restriction still declares the field, so an
-unobserved Parameter reads as `[]` (ADR 0024).
+unobserved Parameter reads as `[]`.
 _Avoid_: Cached value, Stale value (a committed value is authoritative for its update rate, not a stale
 copy); "the live value is never persisted" as a middleware rule (it is the locator pattern's property).
 
@@ -309,13 +308,13 @@ transformer cell, a screwing tool). Required at construction time in resource mo
 A `SemanticMiddleware` construction-time choice governing what the instance is *for*:
 - `"resource"` — wraps one Resource; the REST surface is the user-registered Workflows/
   StateProperties, the built-in `execute()` event trigger, and a CRUD REST API generated from
-  the resource's own datamodel (`generate_rest_api_for_data_model`; ADR 0005 #13 amendment). The
+  the resource's own datamodel (`generate_rest_api_for_data_model`). The
   transactional context-manager surface (dispatch/`request`, pull-and-run, handover) and the
   graph-write helpers stay Python-only, not REST-exposed.
 - `"server"` — wraps no Resource. CRUD/`execute` themselves are the REST surface (e.g. a
   future data-serving "product server"). Not yet implemented, and deliberately still reserved: a
   graph-*consuming* participant (a planner, a mobile robot, a controller) is a resource-mode
-  planner with its own Resource, not a server (ADR 0005, #32 amendment).
+  planner with its own Resource, not a server.
 - `"watchdog"` — wraps no Resource, exposes little to no REST surface; runs a sweep loop
   that removes stale `svc:address`/`svc:endpoint` triples left by resource-mode instances
   that stopped heartbeating.

@@ -1,4 +1,4 @@
-"""Every resource-mode middleware an example constructs must also be served (#44).
+"""Every resource-mode middleware an example constructs must also be served.
 
 Both existing scenarios used to construct a middleware for their *client* — scenario 1's
 planner, scenario 2's mobile robot — and never run it. Because `uvicorn` never started them,
@@ -9,7 +9,7 @@ conclude that is how clients are meant to work.
 
 This is a **static** check rather than a runtime one, and deliberately so. A runtime assertion
 inside one scenario proves that scenario; parsing every example proves the pattern cannot come
-back in a *new* one, which is what #44 was actually protecting — it was filed because the
+back in a *new* one, which is what this test protects — it exists because the
 habit was about to be copied into scenario 3.
 
 No GraphDB, no network: this reads the source.
@@ -26,9 +26,9 @@ EXAMPLES = Path(__file__).resolve().parents[1] / "examples"
 
 KNOWN_UNSERVED: dict[str, int] = {
     # Empty on purpose. The one entry that lived here, `scenario3_transferunit.py`, was retired
-    # with its notebook and `mock_transferunit.py` when the factory demo landed — ADR 0029
-    # promised that retirement, and `demo/transferunits/` is now the only scenario 3. Its
-    # exemption went with the file; see #62 for the cross-loop deadlock that earned it.
+    # with its notebook and `mock_transferunit.py` when the factory demo landed — the
+    # factory design promised that retirement, and `demo/transferunits/` is now the only scenario 3. Its
+    # exemption went with the file, along with the cross-loop deadlock that earned it.
     #
     # Keep this dict and the test below even while it is empty. A future example that cannot
     # serve its middleware gets an entry here with its issue number, not a silent skip.
@@ -91,7 +91,7 @@ def test_every_constructed_middleware_is_served(script):
         f"{script.name} constructs {sorted(unserved)} in resource mode and never serves "
         f"it. `on_start_up` will not fire, so it registers no Service, advertises no "
         f"svc:address, and holds no heartbeat — `mode=Mode.RESOURCE` becomes a label with "
-        f"no runtime consequence (#44). Pass it to `_start_server` and stop it on the way "
+        f"no runtime consequence. Pass it to `_start_server` and stop it on the way "
         f"out, or drop the middleware and use a bare OGM if it genuinely is not a peer."
     )
 

@@ -9,7 +9,7 @@
 
 inf:isInterfaceAccessibleParameter rdf:type owl:ObjectProperty ;
     rdfs:label "is interface-accessible parameter" ;
-    rdfs:comment "Marks a property whose value is reachable over some protocol interface. Its range carries the interface content that is safe to serve northbound: the access mode and nothing else." ;
+    rdfs:comment "Marks a property whose value is reachable over some protocol interface. Its range carries the interface content that is safe to serve northbound: the access mode and nothing else. The metadata terms named inside these restrictions (the inf: datatype properties below) carry no rdfs:domain on purpose: each is typed by the restriction it appears in. A domain would make them separately specifiable, and their missing global range would then raise." ;
     rdfs:range [ rdf:type owl:Class ;
         owl:intersectionOf (
             [ rdf:type owl:Restriction ; owl:onProperty inf:accessMode ; owl:allValuesFrom xsd:string ]

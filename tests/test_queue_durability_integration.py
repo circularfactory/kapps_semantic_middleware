@@ -1,4 +1,4 @@
-"""Queue durability + recovery integration tests (#17) against a live GraphDB.
+"""Queue durability + recovery integration tests against a live GraphDB.
 
 On startup a resource reconstructs its operation queue from the graph — re-enqueuing its
 own ``queued`` Operations and failing its own orphaned ``running`` ones (never auto-rerun) —
@@ -46,7 +46,7 @@ def _register_hello_resource(ogm) -> tuple[str, str]:
     Returns (service_iri, capability_iri). Simulates a resource that existed before a crash.
     """
     # The address is the middleware's own (port 8993 below), so the restarting instance
-    # re-adopts this node rather than minting a second one (ADR 0022).
+    # re-adopts this node rather than minting a second one.
     service_iri = mint_service_iri(seed.HELLO_RESOURCE, "http://127.0.0.1:8993")
     cap_iri = mint_capability_iri(seed.HELLO_RESOURCE, "hello_world")
     wf_iri = mint_workflow_iri(service_iri, "hello_world")

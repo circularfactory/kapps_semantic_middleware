@@ -1,4 +1,4 @@
-"""Self-contained seeding for the example scenarios (ADR 0010).
+"""Self-contained seeding for the example scenarios.
 
 Every example scenario runs against a dedicated, clearable GraphDB repository.
 These helpers clear it. They load exactly the ground-truth ontology the
@@ -159,10 +159,9 @@ def seed_scenario3(db, ogm) -> None:
     **through the OGM**.
 
     This function creates instances rather than authored as Turtle. So the seed
-    exercises the same validated write path a running middleware uses (root
-    ADR 0008), and the ontology file stays classes-only.
+    exercises the same validated write path a running middleware uses, and the ontology file stays classes-only.
 
-    No ``inf:hasValue`` literals: scenario 3 is a locator (ADR 0024). The
+    No ``inf:hasValue`` literals: scenario 3 is a locator. The
     graph records where each value lives. The live value exists only in the
     datamodel and over REST.
     """

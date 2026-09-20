@@ -12,7 +12,6 @@ OWL-inferable. They receive no write. Each registration is a clean single-instan
 rather than a read-modify-write append onto a growing multi-valued property. Queries in this
 module therefore use the materialized (instance-owned) direction.
 """
-# ADR: root 0002, 0003, 0004, 0006, 0007
 
 from __future__ import annotations
 
@@ -34,13 +33,9 @@ if TYPE_CHECKING:
 class OntologyGroundTruthError(Exception):
     """A referenced class does not pre-exist as the required kind."""
 
-    # ADR: 0003
-
 
 class OperationResolutionError(Exception):
     """An Operation cannot resolve to a reachable Workflow endpoint."""
-
-    # ADR: 0002
 
 
 RDF_TYPE = IRI("http://www.w3.org/1999/02/22-rdf-syntax-ns#type")
@@ -85,7 +80,6 @@ def mint_service_iri(resource_iri: IRI, address: str) -> IRI:
     Raises:
         ValueError: If ``address`` is not an absolute http(s) URL.
     """
-    # ADR: 0021, 0022
     try:
         discriminator = IRI(normalize_address(address)).lined
     except InvalidIRIError as exc:
@@ -138,7 +132,6 @@ def assert_class_registered(
     Raises:
         OntologyGroundTruthError: If the class is missing or not the required subclass.
     """
-    # ADR: 0003
     if class_iri != base_iri and not ogm.db.is_subclass(
         class_iri, base_iri, named_graph=named_graph
     ):
@@ -241,7 +234,6 @@ def register_workflow(
     *provides* (``cfc:hasCapability``, Resource -> Capability). The resource *provides* the
     Capability. Raises OntologyGroundTruthError if the classes are not the required subclasses.
     """
-    # ADR: 0002
     assert_class_registered(ogm, workflow_class, SVC.Workflow, named_graph)
     assert_class_registered(ogm, capability_class, CFC.Capability, named_graph)
 
@@ -319,7 +311,6 @@ def deregister_service(
     properties to clear are found via a read on the instance-owned inverse (``svc:isWorkflowOf``
     / ``svc:isStatePropertyOf``). Structural triples and rdf:type are preserved.
     """
-    # ADR: 0007
     db = ogm.db
     _set(ogm, service_iri, {str(SVC.address): []}, named_graph)
 
@@ -335,7 +326,7 @@ def deregister_service(
 
 
 # --------------------------------------------------------------------------- #
-# Liveness: heartbeat (per-service) and watchdog sweep (centralized). ADR 0007.
+# Liveness: heartbeat (per-service) and watchdog sweep (centralized).
 # --------------------------------------------------------------------------- #
 
 
@@ -400,9 +391,8 @@ def sweep_stale_services(
     sibling survives is *also* wrong. A surviving monitor realizes no Workflow. It would shield
     a dead controller queue forever. The correct predicate is per-Operation ("does any surviving
     Service realize this Operation Capability"). ``_reconstruct_queue`` needs the same
-    treatment. Tracked as #63. It is out of scope for #47.
+    treatment. Neither is done yet.
     """
-    # ADR: 0002, 0007, 0009, 0022
     stale = find_stale_services(ogm, max_age_seconds, now=now, named_graph=named_graph)
     for service_iri in stale:
         resource_iri = _resource_of_service(ogm, service_iri, named_graph=named_graph)
@@ -424,7 +414,7 @@ def sweep_stale_services(
 
 
 # --------------------------------------------------------------------------- #
-# Event-trigger dispatch & operation queue (ADR 0009 / 0010).
+# Event-trigger dispatch & operation queue.
 # --------------------------------------------------------------------------- #
 
 
@@ -434,7 +424,6 @@ EVENT_TRIGGER_WORKFLOW_NAME = "event_trigger"
 
 def build_event_trigger_url(address: str) -> str:
     """Build the receiver event-trigger endpoint (``POST /workflows/event_trigger/execute``)."""
-    # ADR: 0009
     return f"{address.rstrip('/')}/workflows/{EVENT_TRIGGER_WORKFLOW_NAME}/execute"
 
 
@@ -468,7 +457,6 @@ def create_operation(
     ``cfc:hasCapability`` link written at *registration* is a separate, multi-valued append. It
     stays on the low-level path until ``kapps_ogm`` grows a validated single-triple append.
     """
-    # ADR: 0008, 0009, 0010, 0011
     create_data: dict = {
         str(CFC.implementsCapability): [_ref(capability_iri)],
         str(SVC.operationStatus): [status],
@@ -498,7 +486,6 @@ def resolve_dispatch_target(
     Raises:
         OperationResolutionError: If no reachable Service realizes the capability class.
     """
-    # ADR: 0002, 0009
     resource_filter = ""
     if target_resource is not None:
         resource_filter = f"\n        ?svc <{SVC.isServiceOf}> <{target_resource}> ."
@@ -542,7 +529,6 @@ def revert_operation(
     ``rdf:type`` triples then receive removal via the low-level ``ogm.db.triple_delete`` (a
     sanctioned kapps_triplestore_interface write).
     """
-    # ADR: 0008, 0010, 0011
     clear_literals: dict = {str(SVC.operationStatus): []}
     if data:
         clear_literals.update({k: [] for k in data})
@@ -553,7 +539,7 @@ def revert_operation(
     ogm.db.triple_delete((operation_iri, RDF_TYPE, operation_class), named_graph=named_graph)
 
 
-# ---- Pull-and-run: status transitions + terminal provenance (ADR 0009 / 0010) ----
+# ---- Pull-and-run: status transitions + terminal provenance ----
 
 
 class OperationQueueEmpty(Exception):
@@ -571,7 +557,6 @@ def resolve_operation_workflow(
     Raises:
         OperationResolutionError: If no Workflow realizes the Operation Capability.
     """
-    # ADR: 0002
     sparql = f"""
     SELECT ?wf WHERE {{
         <{operation_iri}> <{CFC.implementsCapability}> ?cap .
@@ -602,7 +587,6 @@ def set_operation_status(
 
     This covers the queued->running transition and any other single-status transition.
     """
-    # ADR: 0009
     _set(ogm, operation_iri, {str(SVC.operationStatus): [status]}, named_graph)
 
 
@@ -625,7 +609,6 @@ def record_terminal_status(
     ``svc:failureState`` in the same commit. The failed status and the state that produced it
     are never separable.
     """
-    # ADR: 0009
     if timestamp is None:
         timestamp = datetime.now(timezone.utc)
     data: dict = {
@@ -640,7 +623,7 @@ def record_terminal_status(
     _set(ogm, operation_iri, data, named_graph)
 
 
-# ---- Queue durability + recovery (ADR 0009) ----
+# ---- Queue durability + recovery ----
 
 
 def find_resource_operations(
@@ -665,7 +648,6 @@ def find_resource_operations(
     Returns:
         List of Operation IRIs matching the criteria.
     """
-    # ADR: 0009
     status_filter = ", ".join(f'"{s}"' for s in statuses)
     sparql = f"""
     SELECT DISTINCT ?op WHERE {{
@@ -707,7 +689,6 @@ def services_of_resource(
     Returns:
         List of Service IRIs.
     """
-    # ADR: 0007, 0022
     reachability = f"\n        ?svc <{SVC.address}> ?addr ." if reachable_only else ""
     sparql = f"""
     SELECT DISTINCT ?svc WHERE {{
@@ -745,7 +726,6 @@ def mark_operation_failed(
     sweep a dead resource stranded Operations. Recovery is never a silent physical replay. The
     Operation goes to ``failed``. A planner decides whether to re-dispatch.
     """
-    # ADR: 0009
     _set(
         ogm,
         operation_iri,
@@ -757,13 +737,12 @@ def mark_operation_failed(
     )
 
 
-# ---- Possession + handover (Core reified possession, ADR 0011) ----
+# ---- Possession + handover (Core reified possession) ----
 
 
 class HandoverPreconditionError(Exception):
     """A handover precondition failed (caller lacks possession, or counterpart lacks the
     complementary handover ability). Rejection occurs before any physical work begins."""
-    # ADR: 0011
 
 
 def mint_possession_state_iri(workpiece_iri: IRI) -> IRI:
@@ -789,9 +768,8 @@ def create_possession(
     Returns:
         The minted PossessionState IRI.
     """
-    # ADR: 0008, 0011
     ps_iri = mint_possession_state_iri(workpiece_iri)
-    # A resource may possess several workpieces at once (ADR 0011 — possession is not
+    # A resource may possess several workpieces at once (possession is not
     # universally maxCount 1), so `cfc:hasPossessor` is APPENDED via the kapps_triplestore_interface
     # atomic insertion. A workpiece has exactly one possession, so `cfc:hasPossessedWorkpiece`
     # is SET through the OGM commit path (an atomic replace). The PossessionState node comes

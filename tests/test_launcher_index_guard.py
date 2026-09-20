@@ -1,4 +1,4 @@
-"""Guard tests enforcing separation of concerns for the Launcher's index page (#72, ADR 0029).
+"""Guard tests enforcing separation of concerns for the Launcher's index page.
 
 - index.py names none of: subprocess, Popen, signal, SIGTERM
 - launcher.py names none of: fastapi, uvicorn, HTMLResponse

@@ -23,8 +23,9 @@ covers the packages:
 pip install "kapps-semantic-middleware[examples]"
 ```
 
-Copy the runnable files out of the installed package into a directory you own — a notebook inside
-`site-packages` cannot be opened, edited or re-run:
+Run `kapps-examples` to copy the runnable files out of the installed package into a directory you
+own — a notebook inside `site-packages` cannot be opened, edited or re-run. The path is relative to
+your current working directory:
 
 ```bash
 kapps-examples ./kapps-examples
@@ -49,11 +50,29 @@ This works the same on Linux, macOS and Windows.
 
 Then point the library at it:
 
+Linux and macOS:
 ```bash
 export GRAPHDB_URL=http://localhost:7200
 export GRAPHDB_USERNAME=admin
 export GRAPHDB_PASSWORD=root
 ```
+
+PowerShell (current session only):
+```powershell
+$env:GRAPHDB_URL = "http://localhost:7200"
+$env:GRAPHDB_USERNAME = "admin"
+$env:GRAPHDB_PASSWORD = "root"
+```
+
+cmd.exe (current session only):
+```batch
+set GRAPHDB_URL=http://localhost:7200
+set GRAPHDB_USERNAME=admin
+set GRAPHDB_PASSWORD=root
+```
+
+To persist across sessions on Windows, use `setx` instead of `set`. **`setx` does not affect the
+shell that runs it** — open a new shell after running it.
 
 Three variables, not four. `GraphDBCredentials.from_env()` in `kapps_triplestore_interface` also
 reads `GRAPHDB_REPOSITORY`, and your own code may well use it — but nothing here does. The examples

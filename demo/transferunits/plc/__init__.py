@@ -1,4 +1,4 @@
-"""TransferUnit PLC module — split per ADR 0029.
+"""TransferUnit PLC module — split by tier.
 
 - transfer_unit.py: MQTT PLC logic (no HTTP)
 - panel.py: FastAPI web interface (no MQTT, no asyncio)

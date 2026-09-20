@@ -1,4 +1,4 @@
-"""Controller.rebuild_view: the live differential rebuild (#82).
+"""Controller.rebuild_view: the live differential rebuild.
 
 No real peer process here. ``rebuild_view``'s own work -- ``view()`` (a SPARQL query),
 ``wire_view()`` (recognition: SPARQL + the graph's own ``svc:address``), and
@@ -44,7 +44,7 @@ def _publish_service(graphdb, resource_iri, address: str) -> None:
 
 def _unpublish_service(graphdb, resource_iri) -> None:
     """Take ``resource_iri`` offline: delete its Service triples entirely, the graph
-    state a clean deregistration (ADR 0029) leaves behind -- the live clause then binds
+    state a clean deregistration leaves behind -- the live clause then binds
     nothing for it, exactly like an offline unit's absence in ``test_controller_view.py``.
     """
     service_iri = f"{resource_iri}Service"
@@ -95,8 +95,8 @@ class TestDifferentialRebuild:
     async def test_one_rebuild_covers_a_joiner_a_leaver_and_an_unchanged_hit(
         self, graphdb, factory3, unit_scope
     ):
-        """#82's own acceptance criterion: "a test covers joiner, leaver and unchanged
-        in one rebuild." Units 1 and 2 start live and loaded; unit 1 goes offline and
+        """One rebuild covers a joiner, a leaver and an unchanged unit at once.
+        Units 1 and 2 start live and loaded; unit 1 goes offline and
         unit 3 comes online in the same moment; one rebuild_view call must report all
         three categories and leave self.units matching the new hit set exactly."""
         unit1, unit2, unit3 = (seed._mint_transfer_unit_iri(n) for n in (1, 2, 3))

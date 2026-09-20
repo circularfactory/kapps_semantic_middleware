@@ -6,8 +6,6 @@ scenarios and the multi-process factory demo use this library code, so it
 lives here rather than in examples/.
 """
 
-# ADR: 0030
-
 from __future__ import annotations
 
 from importlib import resources
@@ -16,7 +14,7 @@ from kapps_triplestore_interface import IRI
 
 from kapps_semantic_middleware.vocabulary import CORE_ONTOLOGY, MES_ONTOLOGY, SVC_ONTOLOGY
 
-# Named-graph IRIs for seeding — same terms as vocabulary.py's *_ONTOLOGY constants (ADR 0021),
+# Named-graph IRIs for seeding — same terms as vocabulary.py's *_ONTOLOGY constants,
 # aliased here because "graph to load ontology X into" is this module's own concern.
 CORE_GRAPH = CORE_ONTOLOGY
 SERVICE_GRAPH = SVC_ONTOLOGY
@@ -31,7 +29,6 @@ def _read_core_ontology() -> str:
     superior: imported and specialized, never modified. It is vendored rather than fetched,
     so seeding stays reproducible offline and a scenario stays self-contained.
     """
-    # ADR: 0012, examples 0001
     return (
         resources.files("kapps_semantic_middleware")
         .joinpath("ontology", "core.ttl")

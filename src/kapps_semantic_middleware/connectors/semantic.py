@@ -16,8 +16,6 @@ for one protocol coexist without a shared ancestor.
 MQTT is the first instance of this seam, not its shape. See ``mqtt_binding.py``.
 """
 
-# ADR: root 0001, 0023
-
 from __future__ import annotations
 
 import logging
@@ -77,8 +75,6 @@ class Registration:
     them at all. This is what an inspecting instance needs.
     """
 
-    # ADR: 0022, 0032
-
     connector: Any
     """A constructed framework connector instance (e.g. ``MqttClientConnector``)."""
 
@@ -105,8 +101,6 @@ class ParameterBinding:
     Everything here comes from the ClassSpec and the graph, never from materialized instance
     data. This is what makes construction-time registration possible.
     """
-
-    # ADR: 0023
 
     resource_iri: IRI
     """The individual carrying the parameter, for example a belt or barrier."""
@@ -136,17 +130,17 @@ class ParameterBinding:
     """The top-level resource individual recognition started from (e.g. the TransferUnit).
 
     ``resource_iri`` above is the *holder* of the parameter, a belt or a barrier. REST
-    addressing (ADR 0017) is structural and relative to the **root**, not the holder, so a
+    addressing is structural and relative to the **root**, not the holder, so a
     binding one level of nesting deep needs both. ``None`` only for a ``ParameterBinding``
     built by hand outside recognition (as the MQTT tests do); nothing that reads
     ``root_iri`` is reachable from one of those."""
 
     root_class_local_name: Optional[str] = None
     """The root resource's class IRI, mangled (``IRI(...).lined``), the ``{Model}``
-    segment of an ADR 0017 route. Not the bare fragment: ``kapps_ogm``'s
+    segment of a recursive REST route. Not the bare fragment: ``kapps_ogm``'s
     ``ClassSpec.to_pydantic_model`` names the materialized class after the whole mangled
     IRI (``class_spec.py``), so this must match that or a REST connector's own PUT/GET
-    404s against the real served route (kapps_semantic_middleware#80). Paired with
+    404s against the real served route. Paired with
     ``root_iri``; see its docstring."""
 
     path_steps: Tuple[Tuple[str, str], ...] = ()
@@ -216,7 +210,7 @@ class BindingDescriptor(Protocol):
     **Not** the projection's source of truth. It once was, and that was wrong. A set built from
     the registered bindings only knows the protocols this middleware has code for, so a
     parameter reachable over an unregistered protocol had its endpoint served northbound. The
-    projection asks the *ontology* instead (ADR 0028). Cross-check this declaration against
+    projection asks the *ontology* instead. Cross-check this declaration against
     it at construction, and report a disagreement. The two should coincide, and where they
     do not, either the contract grew a term this binding ignores or the binding expects one the
     ontology never declares."""
@@ -249,8 +243,6 @@ class SemanticConnectorRegistry:
     no property is recognized as a parameter. The parameter node then becomes ordinary
     data, and is served northbound. The least-privileged instance would leak the most.
     """
-
-    # ADR: 0020, 0028
 
     def __init__(self, descriptors: Optional[Sequence[Type[BindingDescriptor]]] = None) -> None:
         self._by_property: Dict[str, Type[BindingDescriptor]] = {}

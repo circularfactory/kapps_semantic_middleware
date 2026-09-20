@@ -1,10 +1,10 @@
 """Factory seeding for the multi-process TransferUnit demo.
 
 This module mints IRIs and creates instance data for N TransferUnits plus one control station.
-The IRI scheme is index-derived (ADR 0030): unit 1 keeps the IRIs from
+The IRI scheme is index-derived: unit 1 keeps the IRIs from
 ``examples/seed.py``, and higher indices follow the same pattern. This module
 does not import from ``examples/`` — constants are duplicated on purpose so the
-demo package is self-contained (ADR 0030: "the duplication ends in its own commit").
+demo package is self-contained ("the duplication ends in its own commit").
 """
 
 from __future__ import annotations
@@ -34,7 +34,7 @@ TRANSFER_UNIT_CLASS = IRI(f"{TU_NS}TransferUnit")
 CONVEYOR_BELT_CLASS = IRI(f"{TU_NS}ConveyorBelt")
 LIGHT_BARRIER_CLASS = IRI(f"{TU_NS}LightBarrier")
 # Already declared in transferunit.ttl, alongside the domain classes above — the
-# middleware runner registers as this, not the generic svc:Service (ADR 0018's
+# middleware runner registers as this, not the generic svc:Service (the
 # per-domain Service subclass, same convention factory.ttl repeats for fac:).
 TRANSFER_UNIT_SERVICE_CLASS = IRI(f"{TU_NS}TransferUnitService")
 
@@ -46,11 +46,11 @@ TU_HAS_UNIT = IRI(f"{TU_NS}hasUnit")
 
 # --- Interface property IRIs (inf:) ------------------------------------------ #
 #
-# Reached through `vocabulary.INF`, never minted here. ADR 0021 puts every ontology IRI in
+# Reached through `vocabulary.INF`, never minted here. The library puts every ontology IRI in
 # one place, and `inf:` is *library* vocabulary: the connectors match on these very terms,
 # so a demo that spelled them itself could drift out of step with the code that reads them.
 # The `tu:` and `fac:` IRIs above are different -- those are domain terms this demo owns,
-# and ADR 0030 keeps them here on purpose.
+# and the demo keeps them here on purpose.
 
 # --- Control station ---------------------------------------------------------- #
 
@@ -60,7 +60,7 @@ CONTROL_STATION_SERVICE_CLASS = IRI(f"{FAC_NS}ControlStationService")
 
 MQTT_BROKER_IP = "127.0.0.1"
 
-# Every unit's own broker (ADR 0029 as amended, ADR 0030 as amended). Not 1883 + n: 1900 is
+# Every unit's own broker. Not 1883 + n: 1900 is
 # SSDP/UPnP and is live on most Linux desktops, so --units 17 would break on a
 # machine-specific collision that presents as a broker fault. 18830 is a quiet, unassigned
 # stretch of the registered range that never touches 1883 itself.
@@ -72,7 +72,7 @@ def broker_port(n: int) -> int:
 
     Both readers -- the middleware, off inf:hasMQTTBrokerPort on the graph, and the PLC, off
     the launcher's --broker-port flag -- must know this before either process starts, so it is
-    a pure function of the unit index, exactly like every IRI and every topic (ADR 0030).
+    a pure function of the unit index, exactly like every IRI and every topic.
 
     Unit 1's port, 18831, coincides with tests/conftest.py's MQTT_TEST_PORT -- picked there,
     separately, as an unlikely-to-collide high port. Harmless: the demo's own launcher and the
@@ -98,7 +98,7 @@ def _mint_light_barrier_iri(n: int, position: str) -> IRI:
 
 
 def _mqtt_topic(n: int, component: str, position: str, param: str) -> str:
-    """Build the MQTT topic for a parameter (ADR 0023 scheme).
+    """Build the MQTT topic for a parameter.
 
     Topic shape: TransferUnit<n>/<component>/<position>/<param>. A setpoint
     appends _set to the param segment.
@@ -183,10 +183,10 @@ def _create_transfer_unit(ogm, n: int) -> IRI:
         },
     )
 
-    # A human-readable name (#89 item 5). discover_resources binds ?label off exactly
+    # A human-readable name. discover_resources binds ?label off exactly
     # this predicate and returned label=None for every unit before this line existed --
     # the graph had no rdfs:label on a TransferUnit individual for the SPARQL OPTIONAL to
-    # find. #82 (the control station board) renders unit identity on every card, so this
+    # find. The control station board renders unit identity on every card, so this
     # is seeded rather than dropped from ResourceInfo: a real name for a real card, not an
     # empty field nothing downstream can build on. A plain triple_add, the same way the
     # control station's own label goes on below -- ogm.create's class_scope only covers
@@ -222,7 +222,7 @@ def seed_factory(db, ogm, units: int) -> None:
         _create_transfer_unit(ogm, n)
 
     db.triple_add((CONTROL_STATION, RDF.type, CONTROL_STATION_CLASS))
-    # Same reasoning as a unit's label above (#89 item 5): a real name for the one card
+    # Same reasoning as a unit's label above: a real name for the one card
     # that isn't a TransferUnit.
     db.triple_add((CONTROL_STATION, RDFS.label, Literal("Control Station")))
 

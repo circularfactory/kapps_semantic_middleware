@@ -1,16 +1,16 @@
 [project]
 name = "kapps-semantic-middleware"
-version = "0.1.0"
+version = "0.1.1"
 description = "Semantic middleware for industrial data integration, built on transitional-sync-middleware"
 readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE"]
 requires-python = ">=3.12"
-# Both names reach PyPI and nothing else does. #110 settled that the publish repo takes one
-# commit per release and carries no ancestry, so this list, `LICENSE`, `README.md` and
+# Both names reach PyPI and nothing else does. The publish repo takes one commit per release
+# and carries no ancestry, so this list, `LICENSE`, `README.md` and
 # `CHANGELOG.md` are the entire credit for the work -- there is no contributor graph on the
-# other side to fall back on. `prepare_release.py`'s `CREDITED` asserts both survive into the
-# built wheel's METADATA, because a build backend that drops an author is a thing that has
+# other side to fall back on. `credited` in `release/config.toml` asserts both survive into
+# the built wheel's METADATA, because a build backend that drops an author is a thing that has
 # actually happened in this family (poetry-core wrote only the first entry).
 authors = [
     { name = "Etienne Hoffmann", email = "etienne.hoffmann@kit.edu" },
@@ -20,30 +20,35 @@ maintainers = [
     { name = "Etienne Hoffmann", email = "etienne.hoffmann@kit.edu" },
     { name = "Sören Weindel", email = "soeren.weindel@kit.edu" },
 ]
-# All three siblings are published, so all three are ordinary version pins (#167, absorbing
-# #120). They were editable path sources until this release: `[tool.uv.sources]` pointed each
+# All three siblings are published, so all three are ordinary version pins. They were
+# editable path sources until this release: `[tool.uv.sources]` pointed each
 # at `../<name>`, which uv locks as a *path* with no revision, so `uv.lock` recorded where each
 # sibling was and nothing about what was in it. That is why a fresh machine did not reproduce a
 # working demo, and it is why `siblings.lock.toml` had to exist beside the lockfile.
+#
+# All three are ranges of the form `~=X.Y.Z`, which admits `>=X.Y.Z, ==X.Y.*`: a patch release of
+# a sibling reaches a fresh install with no human in the loop, and this project's own lock takes
+# it on a deliberate `uv lock --upgrade-package <name>`, while a minor release needs a deliberate
+# bump of the pin here, proven by this project's own test suite before it lands.
 dependencies = [
-    "kapps-ogm>=0.2.0",
-    "kapps-triplestore-interface>=2.1.0",
-    # The floor is 0.1.0 and not 0.2.6: this is the fork of `aas-middleware`, published under
-    # its own name with its own numbering, which restarted. The import package renames with it,
-    # to `transitional_sync_middleware`, and that rename happens at *its* release time -- so a
+    "kapps-ogm~=0.2.0",
+    "kapps-triplestore-interface~=2.1.1",
+    # The range's floor is 0.1.0 and not 0.2.6: this is the fork of `aas-middleware`, published
+    # under its own name with its own numbering, which restarted. The import package renames with
+    # it, to `transitional_sync_middleware`, and that rename happens at *its* release time -- so a
     # dev checkout of the sibling still says `aas_middleware` while the published wheel does
     # not. Swapping this pin and sweeping this project's imports had to be one change.
-    "transitional-sync-middleware>=0.1.0",
+    "transitional-sync-middleware~=0.1.0",
     "httpx>=0.27.0",
     # transitional_sync_middleware keeps aiomqtt in an optional "industrial" extra, but the MQTT
-    # semantic connector is a first-class part of this middleware (#40), so it is a plain
-    # dependency here. Declaring it is also what stops the OGM repo's #15 failure -- importing a
-    # module the manifest never mentions -- from recurring.
+    # semantic connector is a first-class part of this middleware, so it is a plain
+    # dependency here. Declaring it is also what stops a failure the OGM repo once had --
+    # importing a module the manifest never mentions -- from recurring.
     "aiomqtt>=2.1.0",
     # fastapi is imported directly by the library itself -- middleware.py, rest_router.py and
     # activity.py all `from fastapi import ...`, not just the demo. It only survived until now by
     # arriving transitively through the sibling, which is not a promise that repo makes, so it
-    # is declared here (#115). The transitive route stays as a backup.
+    # is declared here. The transitive route stays as a backup.
     "fastapi>=0.111.0",
 ]
 
@@ -53,7 +58,7 @@ dependencies = [
 # demo is present and its runtime dependencies are not.
 kapps-transferunit-factory = "kapps_semantic_middleware.demonstrations.transferunits.__main__:main"
 # Copies the runnable scenario files out of the installed package into a directory the user
-# chooses, because a notebook inside site-packages cannot be opened, edited or re-run (#115).
+# chooses, because a notebook inside site-packages cannot be opened, edited or re-run.
 kapps-examples = "kapps_semantic_middleware.examples_cli:main"
 
 [project.optional-dependencies]
@@ -61,15 +66,15 @@ kapps-examples = "kapps_semantic_middleware.examples_cli:main"
 # (as .py or .ipynb) and the six-process factory demo. A plain `uv add kapps-semantic-middleware`
 # installs the reference implementation alone; `uv add "kapps-semantic-middleware[examples]"` adds
 # what the runnable examples need on top of it. fastapi is NOT here: the library imports it
-# directly, so it moved to the core dependencies above (#115).
+# directly, so it moved to the core dependencies above.
 examples = [
     "uvicorn>=0.29.0",
-    # The per-unit broker (ADR 0034). Pure Python and run in-process, because mosquitto
+    # The per-unit broker. Pure Python and run in-process, because mosquitto
     # would need root, which a fresh checkout cannot assume. The factory needs it; the
     # scenarios do not; the single umbrella covers both.
     "amqtt>=0.11.0",
     # scenario 2 imports rdflib.namespace directly. Declared here rather than leaned on
-    # transitively through kapps-ogm / kapps-triplestore-interface (#115).
+    # transitively through kapps-ogm / kapps-triplestore-interface.
     "rdflib>=7.1.3",
 ]
 # The notebook toolchain is a separate, heavier opt-in -- only someone who opens the .ipynb
@@ -94,22 +99,18 @@ dev = [
     "httpx>=0.27.0",
     # A pure-Python MQTT broker, run in-process as a pytest fixture. mosquitto would need
     # root to install, which no CI runner and no fresh checkout can assume; this keeps the
-    # mock PLC's round-trip genuinely live and portable (#40). Also declared under the
-    # `examples` extra, because the demo runs one per unit at runtime (ADR 0034).
+    # mock PLC's round-trip genuinely live and portable. Also declared under the
+    # `examples` extra, because the demo runs one per unit at runtime.
     "amqtt>=0.11.0",
 ]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-# `scripts/` is not a package and is not installed, but `release_checks.py` there is covered by
-# tests/test_release_checks.py -- it gates every public release (#129), so it is tested like
-# library code rather than trusted like a shell one-liner.
-pythonpath = ["scripts"]
 addopts = ["--strict-markers", "-m", "not lap and not smoke"]
 markers = [
     "live: needs a reachable GraphDB (the GRAPHDB_* env vars). Applied automatically to any test that requests the `graphdb` fixture, so `-m 'not live'` selects the tier that runs anywhere.",
-    "lap: measures a control lap rather than asserting anything, and its timings are machine-dependent. Deselected by default (see `addopts`); run it with `-m lap -s` when the algorithm's tick needs revisiting (#82, #94).",
-    "smoke: boots the whole factory as six real processes and re-checks the claims only a run can show (#79, #88). Deselected by default (see `addopts`) because it needs the launcher's fixed port free, seeds the graph the GRAPHDB_* variables point at, and costs about a minute; run it with `-m smoke`.",
+    "lap: measures a control lap rather than asserting anything, and its timings are machine-dependent. Deselected by default (see `addopts`); run it with `-m lap -s` when the algorithm's tick needs revisiting.",
+    "smoke: boots the whole factory as six real processes and re-checks the claims only a run can show. Deselected by default (see `addopts`) because it needs the launcher's fixed port free, seeds the graph the GRAPHDB_* variables point at, and costs about a minute; run it with `-m smoke`.",
 ]
 # pytest-asyncio warns when this is unset and defaults it to "function". Stated explicitly so
 # the default is a decision rather than a warning; the async fixtures here are per-test.
@@ -119,8 +120,8 @@ asyncio_default_fixture_loop_scope = "function"
 python_version = "3.12"
 # The library and the demo. `demo` typechecks only because demo/ and demo/transferunits/
 # carry an __init__.py -- without them mypy stops at the first relative import and checks
-# nothing at all. ADR 0030 already called demo/transferunits a real package; now it is one.
-files = ["src", "demo", "scripts"]
+# nothing at all. The factory design already called demo/transferunits a real package; now it is one.
+files = ["src", "demo"]
 
 [[tool.mypy.overrides]]
 # None of the three siblings ships a py.typed marker, and neither does amqtt. Left
@@ -142,7 +143,7 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 # The demo ships inside the library's namespace as
 # `kapps_semantic_middleware.demonstrations`, rather than claiming a top-level `demo` on
-# PyPI -- a name that generic would collide with half the index. Root ADR 0004 fixes where
+# PyPI -- a name that generic would collide with half the index. The scenario rule fixes where
 # scenario code lives *on disk* (`demo/`), and says nothing about its installed name, so the
 # remap below satisfies both.
 #
@@ -171,18 +172,18 @@ dev-mode-dirs = ["src", "."]
 # citations arrive and their replacements do not.
 #
 # Costs nothing on balance. These three are 84 KB; the 32 ADRs that stop shipping alongside this
-# (#129) are 268 KB, so the wheel gets ~184 KB smaller while gaining the useful half.
+# are 268 KB, so the wheel gets ~184 KB smaller while gaining the useful half.
 #
-# Deliberately NOT a release-time edit. `prepare_release.py`'s manifest edits all remove facts
-# that are only true in a dev checkout (sibling path sources, the ADR genre); this one is equally
-# true in both trees. Release-only would also mean the wheel #129's cross-check builds and tests
-# is not the wheel that ships.
+# Deliberately NOT a release-time edit. The release-time edits (`release/edits.toml`) all remove
+# facts that are only true in a dev checkout (sibling path sources, the ADR genre); this one is equally
+# true in both trees. Release-only would also mean the wheel the release cross-check builds and
+# tests is not the wheel that ships.
 "AGENTS.md" = "kapps_semantic_middleware/AGENTS.md"
 "CONTEXT-MAP.md" = "kapps_semantic_middleware/CONTEXT-MAP.md"
 "docs/mechanics" = "kapps_semantic_middleware/docs/mechanics"
 
 # There is deliberately no entry here for the compose files. They live at `examples/docker/`
-# in the source tree as of #167 (#157), so the `examples` -> `kapps_semantic_middleware/examples`
+# in the source tree, so the `examples` -> `kapps_semantic_middleware/examples`
 # mapping above already carries them into the wheel, and `kapps-examples` copies them out with
 # the rest of the payload.
 #
@@ -194,8 +195,8 @@ dev-mode-dirs = ["src", "."]
 # `examples/`, and in a *dev checkout* there is no wheel remapping, so the copy would have
 # worked when installed and failed from a source tree. One location is what makes those agree.
 
-# There is deliberately no `[tool.uv.sources]` here, and this is the release that removed it
-# (#167, absorbing #120). Three editable path entries pointed at `../aas_middleware_inf`,
+# There is deliberately no `[tool.uv.sources]` here, and this is the release that removed it.
+# Three editable path entries pointed at `../aas_middleware_inf`,
 # `../kapps_ogm` and `../kapps_triplestore_interface`; all three siblings are now published, so
 # the floors above are real pins and `uv.lock` resolves from the index alone.
 #
@@ -204,7 +205,8 @@ dev-mode-dirs = ["src", "."]
 # source records no revision, and `scripts/check_siblings.py`, which checked a machine against
 # it. A `uv sync` on a clean checkout now reproduces what CI resolves.
 #
-# The `[tool.uv] override-dependencies` hack died a ticket earlier, in #133. It existed because
+# The `[tool.uv] override-dependencies` hack went earlier, when the triplestore interface was
+# published under its new name. It existed because
 # kapps_ogm's manifest pinned the triplestore interface to a git URL, which uv saw as
 # conflicting with this project's editable path source for the same package.
 #

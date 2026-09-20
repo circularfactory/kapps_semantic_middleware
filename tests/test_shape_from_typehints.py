@@ -2,7 +2,7 @@
 
 These are the one part of the middleware with no graph interaction, so they run
 without a live GraphDB (unlike the integration tests). See
-src/kapps_semantic_middleware/shacl_interop/ and its ADR.
+src/kapps_semantic_middleware/shacl_interop/.
 """
 
 from __future__ import annotations

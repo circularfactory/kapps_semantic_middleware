@@ -20,8 +20,8 @@ def bind_free_socket(host: str) -> socket.socket:
     """Bind and listen on an OS-assigned free port, without releasing it.
 
     Reading back a discovered port, closing the socket, and letting uvicorn bind a new
-    one reopens the allocate-hand-off-bind race ADR 0029 credits self-allocation with
-    removing -- another process could take the port in between. Handing uvicorn this same,
+    one reopens the allocate-hand-off-bind race self-allocation exists to
+    remove -- another process could take the port in between. Handing uvicorn this same,
     still-listening socket instead of a bare port number closes that gap.
     """
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -43,12 +43,12 @@ async def main() -> None:
     parser.add_argument("--unit-index", type=int, default=1, help="Unit index (default: 1)")
     parser.add_argument("--broker", type=str, default="127.0.0.1", help="MQTT broker host")
     # 1883 here is only the bare fallback for a standalone run with the flag omitted -- the
-    # launcher always passes --broker-port <seed.broker_port(unit_index)> explicitly (#79).
+    # launcher always passes --broker-port <seed.broker_port(unit_index)> explicitly.
     parser.add_argument("--broker-port", type=int, default=1883, help="MQTT broker port")
     parser.add_argument("--panel-port", type=int, default=0, help="Panel HTTP port (0 = free)")
-    # A belt ramps toward its setpoint rather than snapping to it (#83); this is the "slow PID
+    # A belt ramps toward its setpoint rather than snapping to it; this is the "slow PID
     # controller" rate, in speed-units/s^2. Exposed as a flag -- unlike publish_interval -- so a
-    # presentation can slow it down or a lap-time measurement (#82) can speed it up with no code
+    # presentation can slow it down or a lap-time measurement can speed it up with no code
     # change.
     parser.add_argument(
         "--ramp-rate",

@@ -1,7 +1,7 @@
 # MQTT payloads: raw scalar and JSON envelope
 
-How the MQTT semantic connector reads and writes a parameter's value on the wire
-(ADR 0023). One property decides it, and it is honoured symmetrically on read and
+How the MQTT semantic connector reads and writes a parameter's value on the wire.
+One property decides it, and it is honoured symmetrically on read and
 write.
 
 ## Raw scalar — the default
@@ -67,7 +67,7 @@ inventing values the middleware does not have, and echoing a stale read is worse
 the field.
 
 A payload with no value at the declared path reads as **unobserved** — an empty
-`inf:hasValue`, with a warning naming the path. Under the locator pattern (ADR 0024) that is
+`inf:hasValue`, with a warning naming the path. Under the locator pattern that is
 an ordinary state, not an error: a parameter simply has no value until the device publishes
 one.
 
@@ -88,9 +88,9 @@ the model that is served over REST, because `setattr` replaces the whole node an
 sees only the payload.
 
 Connection metadata never travels in either direction: it is what the connector *uses*, and it
-is projected out of every **datamodel** served northbound (ADR 0028).
+is projected out of every **datamodel** served northbound.
 
-**That holds on the log path too**, which it did not until issue #76 closed. The `/activity` feed
+**That holds on the log path too**, which it did not always. The `/activity` feed
 serves this package's INFO records over HTTP, and this connector used to log its topic there — so
 a topic reached a browser while the datamodel routes on the same instance hid it. Both legs now
 log the topic at DEBUG and the value at INFO. The feed's handler filters at INFO on its own

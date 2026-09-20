@@ -9,8 +9,6 @@ registry tells the projection which properties are southbound. Population before
 the requirement. Population before wiring is not enough on its own.
 """
 
-# ADR: 0028
-
 from kapps_semantic_middleware.connectors.knowledge_graph_connector import (
     KnowledgeGraphConnector,
 )

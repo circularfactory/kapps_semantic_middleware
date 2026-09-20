@@ -1,13 +1,13 @@
 """The panel's convergence verdict: `diverged` means stopped converging, not unequal.
 
-#81 redefined the word and amended #31 to say so; the panel kept the older reading
-(`abs(cmd - speed) > 1e-9`) until #93 item 3. Under #83's ramp the two values are unequal
+The word was redefined that way for the whole demo; the panel kept the older reading
+(`abs(cmd - speed) > 1e-9`) for a while. Under the belt's ramp the two values are unequal
 during every set by design, so the old rule painted a healthy belt as a fault the whole way
 to its setpoint.
 
 No broker, no graph, no HTTP: `ConvergenceTracker` is a state machine over observations, so
 these run with no fixtures and an injected clock — the same shape, and the same reason, as
-`test_write_status.py` for the controller's `WriteTracker` (#82).
+`test_write_status.py` for the controller's `WriteTracker`.
 """
 
 from __future__ import annotations
@@ -39,7 +39,7 @@ def _tracker(still_seconds: float = 6.0):
 
 class TestARampingBeltIsHealthy:
     def test_a_belt_still_moving_never_reads_diverged(self):
-        """The regression #93 item 3 names: a belt ramping toward its setpoint is healthy
+        """The regression the old reading caused: a belt ramping toward its setpoint is healthy
         however long the ramp takes, because it is still closing the gap."""
         tracker, clock = _tracker(still_seconds=6.0)
 
@@ -82,7 +82,7 @@ class TestStoppingShortIsTheFault:
         assert tracker.status("left", 2.5, 3.0) == "diverged"
 
     def test_polling_harder_does_not_hasten_divergence(self):
-        """#82's property, held here too: a poll is a browser asking. Counting polls would
+        """The station board's property, held here too: a poll is a browser asking. Counting polls would
         let two open tabs call a belt stuck in half the time."""
         tracker, clock = _tracker(still_seconds=6.0)
 

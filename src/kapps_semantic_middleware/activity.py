@@ -21,8 +21,6 @@ The SSE endpoint polls that deque on a short sleep. This decouples the logging p
 introspection or ``call_soon_threadsafe`` is required.
 """
 
-# ADR: 0022
-
 from __future__ import annotations
 
 import asyncio

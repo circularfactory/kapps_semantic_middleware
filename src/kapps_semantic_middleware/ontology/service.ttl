@@ -137,19 +137,19 @@ svc:lastHeartbeat rdf:type owl:DatatypeProperty ;
     rdfs:range xsd:dateTime .
 
 #################################################################
-# Execution provenance (R12, ADR 0009)
+# Execution provenance (R12)
 #
-# Written back onto a cfc:Operation by the pull-and-run terminal transition
-# (ADR 0010), folded into the done/failed status change. Together these record
+# Written back onto a cfc:Operation by the pull-and-run terminal transition,
+# folded into the done/failed status change. Together these record
 # which Workflow handled the Operation (actor/context), when, and an optional
 # serialized result — so any past Operation is reconstructible from the graph
 # alone. Whether the operation succeeded is carried by svc:operationStatus
-# (done/failed) per ADR 0009, not a separate boolean.
+# (done/failed), not a separate boolean.
 #################################################################
 
 svc:operationStatus rdf:type owl:DatatypeProperty ;
     rdfs:label "operationStatus" ;
-    rdfs:comment "The lifecycle state of an Operation: queued (created and addressed, awaiting pull) -> running (pulled, in progress) -> done | failed (terminal). Written onto a cfc:Operation to drive coordination and recovery (ADR 0009). The terminal value (done vs failed) also carries whether execution succeeded, replacing the former svc:executionSuccess boolean. Values are plain xsd:string literals; there is no status class or enumerated individuals in v1." ;
+    rdfs:comment "The lifecycle state of an Operation: queued (created and addressed, awaiting pull) -> running (pulled, in progress) -> done | failed (terminal). Written onto a cfc:Operation to drive coordination and recovery. The terminal value (done vs failed) also carries whether execution succeeded, replacing the former svc:executionSuccess boolean. Values are plain xsd:string literals; there is no status class or enumerated individuals in v1." ;
     rdfs:domain cfc:Operation ;
     rdfs:range xsd:string .
 
@@ -173,6 +173,6 @@ svc:executionResult rdf:type owl:DatatypeProperty ;
 
 svc:failureState rdf:type owl:DatatypeProperty ;
     rdfs:label "failureState" ;
-    rdfs:comment "An optional JSON snapshot of the executing resource's transitional_sync_middleware datamodel captured at the moment an Operation failed, written atomically with svc:operationStatus=failed (ADR 0009). It records the observed resource state under which the failure occurred, so a failed Operation is diagnosable and replayable from the graph alone. Absent on successful (done) Operations." ;
+    rdfs:comment "An optional JSON snapshot of the executing resource's transitional_sync_middleware datamodel captured at the moment an Operation failed, written atomically with svc:operationStatus=failed. It records the observed resource state under which the failure occurred, so a failed Operation is diagnosable and replayable from the graph alone. Absent on successful (done) Operations." ;
     rdfs:domain cfc:Operation ;
     rdfs:range xsd:string .

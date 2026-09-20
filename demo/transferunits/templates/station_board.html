@@ -131,7 +131,7 @@ let dirty = false;
 let lastState = null;
 // Which cards are open is the *only* state this page keeps for itself, and it is
 // display-only: every connector stays live and every value stays current behind a shut
-// card. This is not ADR 0032's collapsed monitor row, which genuinely holds no data
+// card. This is not the monitor's collapsed row, which genuinely holds no data
 // because it has not fetched.
 const expandedCards = new Set();
 
@@ -148,7 +148,7 @@ async function post(url, body) {
 function reportViewOutcome(s) {
   // Reads straight from the /api/state shape -- the same one every regular poll
   // receives -- so a malformed or zero-hit heuristic is reported here whether a human
-  // just clicked "run" or the view re-ran unattended on an ordinary poll (#82: "the
+  // just clicked "run" or the view re-ran unattended on an ordinary poll ("the
   // view re-runs on every poll", and its errors must surface the same way either time).
   const errEl = document.getElementById('view-error');
   if (s.view_error) {
@@ -205,7 +205,7 @@ function formatValue(val, facets) {
 }
 
 // The verdict itself is the server's (controller.py's WriteTracker). "Has this write
-// stopped converging?" is a domain judgement, and #82 requires it to be provable in a
+// stopped converging?" is a domain judgement, and it has to be provable in a
 // test -- pytest cannot reach a function that lives in here. This only dresses it.
 function getRowStatus(param) {
   const status = param.status;
@@ -252,7 +252,7 @@ function render(s) {
   pauseBtn.textContent = algo.paused ? 'resume' : 'pause';
   pauseBtn.disabled = false;
 
-  // Set controls are inert while the algorithm runs, and live while paused (#82) --
+  // Set controls are inert while the algorithm runs, and live while paused --
   // this line is the page's own explanation of *why*, tied to the same `algo.paused`
   // flag that drives each row's own `disabled` attribute below, so the two can never
   // say different things.
@@ -357,10 +357,10 @@ function toggleCard(key) {
   render(lastState);
 }
 
-// The teaching-hover mechanism (#68's pattern, mirroring templates/index.html): hovering
+// The teaching-hover mechanism (mirroring templates/index.html): hovering
 // any [data-teach] element freezes the poll and shows what it is and which backend file
 // to read. Reused here for the view box, the algorithm bar, a station card's header, and
-// a parameter row -- the same four things #82's own teaching text names.
+// a parameter row -- the same four things the teaching text names.
 function bind() {
   document.querySelectorAll('[data-teach]').forEach(el => {
     el.onmouseenter = () => teach(el.dataset.teach, el);

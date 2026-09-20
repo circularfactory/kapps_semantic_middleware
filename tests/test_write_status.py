@@ -1,15 +1,15 @@
-"""The write-status seam: ``converging`` -> ``settled`` | ``rejected`` | ``diverged`` (#82).
+"""The write-status seam: ``converging`` -> ``settled`` | ``rejected`` | ``diverged``.
 
 **Why this is Python and not JavaScript.** The classification began life in
 ``station_board.html``'s own script, which put a domain judgement -- "has this write
 stopped converging?" -- in a template, where this repo's test runner cannot reach it.
-#82's acceptance requires ``rejected`` and ``diverged`` to be distinguishable *in a
-test*, so the judgement moved to :class:`WriteTracker` and the page now renders the
+``rejected`` and ``diverged`` must be distinguishable *in a test*, so the judgement
+moved to :class:`WriteTracker` and the page now renders the
 verdict the server already reached.
 
-**``diverged`` means stopped converging, not unequal.** #83 gave the belt momentum, so
-commanded and actual are unequal during every set *by design* (#81 amended #31 on exactly
-this point). An equality test would fire on every write; what actually distinguishes a
+**``diverged`` means stopped converging, not unequal.** The belt has momentum, so
+commanded and actual are unequal during every set *by design*. An equality test would
+fire on every write; what actually distinguishes a
 stuck belt is that its observed value has stopped moving while still short of the
 command.
 
@@ -60,7 +60,7 @@ class TestNothingCommanded:
     def test_a_parameter_never_written_through_this_controller_has_no_status(self):
         """No badge at all -- not "settled". The board shows a status only for a value
         this controller itself commanded, because the served datamodel carries no
-        setpoint to compare against (ADR 0024's locator pattern)."""
+        setpoint to compare against (the locator pattern)."""
         assert _tracker().observe(BELT, SPEED, 1.5) is None
 
     def test_an_uncommanded_parameter_stays_silent_however_long_it_sits(self):
@@ -113,7 +113,7 @@ class TestSettled:
 
 class TestConverging:
     def test_a_ramp_in_progress_is_converging_not_diverged(self):
-        """#83's ramp: unequal on every poll, but moving. This is the case an equality
+        """A ramp: unequal on every poll, but moving. This is the case an equality
         test would have wrongly called divergence on every single set."""
         tracker = _tracker()
         tracker.record_commanded(BELT, SPEED, 3.0, origin="operator")
@@ -123,7 +123,7 @@ class TestConverging:
         assert statuses == [CONVERGING] * 4, statuses
 
     def test_a_long_ramp_never_diverges_while_it_keeps_moving(self):
-        """Guards #82's rule head-on: no passage of time turns a *moving* value into a
+        """Guards the rule head-on: no passage of time turns a *moving* value into a
         diverged one. Only stillness does."""
         clock = FakeClock()
         tracker = _tracker(clock)
@@ -139,7 +139,7 @@ class TestConverging:
 
 class TestDiverged:
     def test_a_value_frozen_short_of_the_command_diverges(self):
-        """#94's real symptom: the belt freezes one ramp step short and stays there."""
+        """The real symptom of a stuck belt: it freezes one ramp step short and stays there."""
         clock = FakeClock()
         tracker = _tracker(clock)
         tracker.record_commanded(BELT, SPEED, 3.0, origin="operator")
@@ -150,7 +150,7 @@ class TestDiverged:
         assert tracker.observe(BELT, SPEED, 2.95) == DIVERGED
 
     def test_divergence_is_not_declared_the_moment_a_value_stops(self):
-        """A quiet moment is a slow lap, not a stuck belt -- #82's own "the tick must
+        """A quiet moment is a slow lap, not a stuck belt -- the "the tick must
         exceed one lap" constraint says a lap can straddle a poll."""
         clock = FakeClock()
         tracker = _tracker(clock)
@@ -216,7 +216,7 @@ class TestDiverged:
 class TestRejected:
     def test_a_rejected_write_reports_rejected_with_its_reason(self):
         """``rejected`` is an *immediate* PUT failure -- unit down, 4xx, bad payload --
-        and #82 requires the reason on screen, so the tracker carries it."""
+        and the reason must reach the screen, so the tracker carries it."""
         tracker = _tracker()
         tracker.record_rejected(BELT, SPEED, "Connection refused")
 
@@ -224,7 +224,7 @@ class TestRejected:
         assert tracker.error_for(BELT, SPEED) == "Connection refused"
 
     def test_rejected_is_distinguishable_from_diverged(self):
-        """The pair #82's acceptance names explicitly. One never reached the unit; the
+        """The pair that must be distinguishable. One never reached the unit; the
         other reached it and stopped short."""
         clock = FakeClock()
         tracker = _tracker(clock)
@@ -258,7 +258,7 @@ class TestRejected:
 
 class TestCommandedValue:
     def test_the_commanded_value_carries_its_origin(self):
-        """"operator" or "algorithm" -- #81 chose one global pause precisely so exactly
+        """"operator" or "algorithm" -- the demo has one global pause precisely so exactly
         one author exists at a time, but the board still shows which one it was."""
         tracker = _tracker()
         tracker.record_commanded(BELT, SPEED, 3.0, origin="algorithm")

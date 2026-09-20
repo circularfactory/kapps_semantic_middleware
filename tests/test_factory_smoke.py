@@ -1,7 +1,7 @@
-"""Boot the whole factory and re-check the four claims only a run can show (#93 item 4).
+"""Boot the whole factory and re-check the four claims only a run can show.
 
-#79 and #88 each closed with acceptance boxes that were verified live, by hand, and recorded
-in a commit message:
+The per-unit broker and the activity feed each landed with acceptance claims that were
+verified live, by hand, and recorded in a commit message:
 
 1. ``python -m demo.transferunits --units 2`` runs end to end with no broker running beforehand.
 2. Two brokers listen, on 18831 and 18832. Nothing listens on 1883 because of this demo.
@@ -74,12 +74,12 @@ SECOND_SETPOINT = 2.5
 the first one cannot pass the second test without the belt having moved again."""
 
 EXPECTED_BROKER_PORTS = {STOPPED_UNIT: 18831, SURVIVING_UNIT: 18832}
-"""#79's box names two literal numbers: "Two brokers listen, on 18831 and 18832."
+"""The claim names two literal numbers: "Two brokers listen, on 18831 and 18832."
 
 Written out rather than read off ``seed.broker_port``, because the decision being pinned is
 *which* numbers. ``18830 + n`` was chosen over the obvious ``1883 + n`` because 1900 is SSDP/UPnP
 and is live on most Linux desktops, so a large enough factory would collide with it and present
-the collision as a broker fault (ADR 0030 as amended). A test that recomputed the port from the
+the collision as a broker fault. A test that recomputed the port from the
 same function the seed uses would agree with any renumbering, including that one."""
 
 READY_TIMEOUT_SECONDS = 180.0
@@ -104,7 +104,7 @@ arrives; this covers the PUT's own trip through persistence and out to the write
 
 LOOP_TIMEOUT_SECONDS = 60.0
 """How long the return half gets, from an accepted command to the unit's middleware observing
-the belt at it. Dominated by #83's ramp, which is distance over rate -- 2.5 m/s is about 2.5 s
+the belt at it. Dominated by the belt's ramp, which is distance over rate -- 2.5 m/s is about 2.5 s
 at ``DEFAULT_RAMP_RATE`` -- plus the PLC's 0.5 s republish. ``test_lap_measurement.py`` measures
 this properly and tabulates it; this is a bound around it, not a measurement."""
 
@@ -197,7 +197,7 @@ def _traffic_flows(unit_index: int, timeout: float) -> bool:
 
     This is the only honest reading of "that unit's MQTT traffic is untouched". A listening
     socket says the broker is up; it says nothing about whether the device on the other side
-    of it still talks, and ADR 0029's claim is about the unit, not about the port.
+    of it still talks, and the claim is about the unit, not about the port.
     """
     topic = seed._mqtt_topic(unit_index, "ConveyorBelt", "left", "speed")
 
@@ -228,7 +228,7 @@ def _feed_search(
     """Read a middleware's activity feed until one line carries every fragment.
 
     Returns the verdict *and* every message read, because "the feed said nothing at all" and
-    "the feed was busy but never carried this line" are different failures of #88's box and a
+    "the feed was busy but never carried this line" are different failures of claim 4 and a
     bare ``False`` cannot tell them apart.
 
     The stream is endless by design, so it is read against a deadline rather than to its end,
@@ -289,7 +289,7 @@ class FactoryHandle:
 def factory() -> Iterator[FactoryHandle]:
     """Boot the factory once for this whole file, then take it down.
 
-    The wait at the end of this fixture *is* #79's first box: a factory that never comes up
+    The wait at the end of this fixture *is* claim 1: a factory that never comes up
     fails here, quoting what the launcher said, before any test body runs.
 
     One boot for the file rather than one per test, because a boot costs a repository wipe and
@@ -304,7 +304,7 @@ def factory() -> Iterator[FactoryHandle]:
             "cannot mean anything against one it did not start."
         )
 
-    # #79's box says the factory runs "with no broker running beforehand", so the absence has
+    # Claim 1 says the factory runs "with no broker running beforehand", so the absence has
     # to be established here. Afterwards a listening port cannot say who bound it, and the
     # fixture's own teardown names the way that goes wrong: an orphaned PLC from an earlier
     # run keeps a broker port bound.
@@ -392,7 +392,7 @@ def factory() -> Iterator[FactoryHandle]:
         yield handle
     finally:
         # Stop the children through the launcher first, so every middleware deregisters its
-        # service from the graph while its PLC still answers (ADR 0029's teardown order). A
+        # service from the graph while its PLC still answers (the teardown order). A
         # factory killed outright leaves stale services behind, and the next run of it
         # refuses to start on them.
         try:
@@ -426,7 +426,7 @@ def factory() -> Iterator[FactoryHandle]:
 
 
 class TestTheFactoryComesUp:
-    """This class tests #79's first two boxes: the factory runs end to end with no broker
+    """This class tests claims 1 and 2: the factory runs end to end with no broker
     running beforehand, and each unit ends up with its own broker and no shared one."""
 
     def test_every_participant_is_live_and_addressable(self, factory: FactoryHandle) -> None:
@@ -434,7 +434,7 @@ class TestTheFactoryComesUp:
 
         The pid set is what makes this "six processes" rather than "six boxes on a page": the
         launcher, the control station, and a middleware and a PLC per unit are separate
-        operating-system processes (ADR 0029), and a factory that quietly served two of them from
+        operating-system processes, and a factory that quietly served two of them from
         one process would still render identically.
         """
         snapshot = factory.state()
@@ -460,11 +460,11 @@ class TestTheFactoryComesUp:
         )
 
     def test_each_unit_brought_up_its_own_broker(self, factory: FactoryHandle) -> None:
-        """Both of #79's ports answer now, and the fixture established that neither did before.
+        """Both ports answer now, and the fixture established that neither did before.
 
-        Nothing in this file starts a broker, and neither does the launcher -- #79 took
-        ``_start_broker`` out of it. Each unit's middleware brings its own up on a daemon
-        thread the first time it registers an MQTT connector (ADR 0029 as amended, ADR 0034),
+        Nothing in this file starts a broker, and neither does the launcher -- the per-unit
+        broker took ``_start_broker`` out of it. Each unit's middleware brings its own up on a daemon
+        thread the first time it registers an MQTT connector,
         so two ports answering, from an absence the fixture checked, is that whole mechanism
         seen from outside.
         """
@@ -475,8 +475,8 @@ class TestTheFactoryComesUp:
             )
             assert seed.broker_port(index) == port, (
                 f"unit {index}'s parameters were seeded against port "
-                f"{seed.broker_port(index)}, not the {port} #79 chose. 1883 + n is the "
-                "renumbering ADR 0030 rejected: 1900 is SSDP/UPnP and is live on most Linux "
+                f"{seed.broker_port(index)}, not the {port} the demo chose. 1883 + n is the "
+                "renumbering the demo rejected: 1900 is SSDP/UPnP and is live on most Linux "
                 "desktops, where the collision presents as a broker fault."
             )
 
@@ -491,7 +491,7 @@ class TestTheFactoryComesUp:
         assert _listening(seed.MQTT_BROKER_IP, 1883) == factory.port_1883_before_boot, (
             "1883 changed state across the factory's boot. It was "
             f"{'busy' if factory.port_1883_before_boot else 'free'} before it started: no "
-            "part of this factory may touch that port (ADR 0030 as amended)."
+            "part of this factory may touch that port."
         )
 
 
@@ -521,7 +521,7 @@ def _drive_a_belt(factory: FactoryHandle, value: float) -> DrivenBelt:
     """Command one belt of the surviving unit from the control station, as a person would.
 
     Shared by the two tests below, which assert different things about the same act: that the
-    command reaches the device's topic (#88's box), and that the device's own reading comes
+    command reaches the device's topic (claim 4), and that the device's own reading comes
     back to the screen the command was given on (milestone 1's own sentence). Driving twice
     from one helper keeps them independent -- neither reads the other's leftovers -- while the
     lookup, which is the fiddly half, is written once.
@@ -529,7 +529,7 @@ def _drive_a_belt(factory: FactoryHandle, value: float) -> DrivenBelt:
     snapshot = factory.state()
     station = snapshot["controller"]["address"]
 
-    # The board refuses a hand-driven set while the algorithm runs (#82), and says so with a
+    # The board refuses a hand-driven set while the algorithm runs, and says so with a
     # 409 rather than by writing anyway.
     paused = httpx.post(
         _url(station, "api/algorithm/pause"), json={"paused": True}, timeout=10.0
@@ -595,9 +595,9 @@ def _drive_a_belt(factory: FactoryHandle, value: float) -> DrivenBelt:
 
 
 class TestTheFeedCarriesRealLines:
-    """This class tests #88's last box: the activity feed shows real lines during a run.
+    """This class tests claim 4: the activity feed shows real lines during a run.
 
-    #88 shipped with the feed switched off everywhere in the factory -- a built and tested
+    The feed once shipped switched off everywhere in the factory -- a built and tested
     feature dark in the only place it was built for -- and the box that closed it was checked
     by opening the page. A page that renders is not the property; a page that carries the line
     a write just produced is.
@@ -619,8 +619,8 @@ class TestTheFeedCarriesRealLines:
         # for every value the belt publishes back, and the ramp passes through this setpoint on
         # its way there, so the direction is what separates the command from its echo.
         #
-        # **The topic is deliberately absent from what this matches.** #76 moved it to DEBUG
-        # precisely so it cannot reach this feed, which is served over HTTP -- ADR 0028 strips
+        # **The topic is deliberately absent from what this matches.** It was moved to DEBUG
+        # precisely so it cannot reach this feed, which is served over HTTP -- the projection strips
         # a broker topic from the datamodel, and a log line one URL along was handing it back.
         # The label pins which belt, and the marker pins the leg on its own: `->` is written in
         # one place, `MQTTParameterFormatter.serialize`, and `<-` in one other. The topic was
@@ -659,7 +659,7 @@ class TestTheLoopCloses:
     really moved, and its middleware really saw it move.
 
     **It stops at the unit's middleware, and that is a property of the design rather than a
-    gap in the test.** Under ADR 0024's locator pattern a parameter has one value slot, and a
+    gap in the test.** Under the locator pattern a parameter has one value slot, and a
     PUT writes the commanded value straight into it -- at the unit's middleware, and (because
     ``/api/set`` assigns in place before pushing) at the controller too. So the value the board
     renders reads as the setpoint the instant the command is accepted, whatever the belt is
@@ -678,7 +678,7 @@ class TestTheLoopCloses:
         """Command a belt, and wait for the unit's middleware to report observing it there.
 
         Every hop is in this one wait: the PUT reaches the unit's middleware, its write leg
-        publishes to the device's set topic, the PLC ramps toward it (#83's momentum, so the
+        publishes to the device's set topic, the PLC ramps toward it (the belt's momentum, so the
         belt climbs rather than jumps), it publishes its *actual* speed on its own topic, and
         the unit middleware's read leg observes that and logs it.
 
@@ -689,8 +689,8 @@ class TestTheLoopCloses:
         class above drove, so a line already in the feed cannot satisfy this either.
 
         This used to match the belt's **actual** topic as well, and take some care not to
-        match the set topic, since ``.../speed`` is a prefix of ``.../speed_set``. #76 took
-        the topic out of the feed -- it is southbound metadata, and the feed is HTTP -- and
+        match the set topic, since ``.../speed`` is a prefix of ``.../speed_set``. The topic was
+        taken out of the feed -- it is southbound metadata, and the feed is HTTP -- and
         the care went with it: the marker identifies the leg on its own, because one function
         writes each. The label pins which belt. See the probe recorded on the test above:
         flipping the marker is not the discriminating mutation here, since both legs carry
@@ -699,7 +699,7 @@ class TestTheLoopCloses:
         belt = _drive_a_belt(factory, SECOND_SETPOINT)
 
         # `2.5` rather than a parsed float: the ramp snaps exactly onto its target on the
-        # last step (#83, "float-exact at rest"), so the settled publish reprs as the setpoint
+        # last step ("float-exact at rest"), so the settled publish reprs as the setpoint
         # itself, while every value on the way there is visibly short of it.
         observed, seen = _feed_search(
             belt.middleware,
@@ -715,7 +715,7 @@ class TestTheLoopCloses:
 
 
 class TestStoppingOneUnit:
-    """This class tests #79's third box: a unit's three parts die together, and the other unit
+    """This class tests claim 3: a unit's three parts die together, and the other unit
     does not notice.
 
     It runs last, and the order is load-bearing: it destroys unit 1, and every test above it
@@ -758,14 +758,14 @@ class TestStoppingOneUnit:
         )
 
         # The broker is a daemon thread inside that middleware process, so nothing anywhere
-        # was asked to stop it and its port going quiet is the whole of ADR 0029's amendment
+        # was asked to stop it and its port going quiet is the whole of the rule
         # ("a unit's broker dies with its unit") observed from outside.
         stopped_port = seed.broker_port(STOPPED_UNIT)
         _await(
             lambda: not _listening(seed.MQTT_BROKER_IP, stopped_port),
             STOP_TIMEOUT_SECONDS,
             f"unit {STOPPED_UNIT}'s broker still answers on {stopped_port} after its "
-            "middleware died, so it is not the thread ADR 0029 says it is",
+            "middleware died, so it is not the thread the design says it is",
         )
 
         surviving_port = seed.broker_port(SURVIVING_UNIT)
@@ -774,8 +774,8 @@ class TestStoppingOneUnit:
         )
         assert _traffic_flows(SURVIVING_UNIT, MQTT_TIMEOUT_SECONDS), (
             f"unit {SURVIVING_UNIT}'s broker still answers, but its PLC stopped publishing "
-            f"when unit {STOPPED_UNIT} was stopped -- the shared point of failure ADR 0029's "
-            "amendment names is still there"
+            f"when unit {STOPPED_UNIT} was stopped -- the shared point of failure the "
+            "per-unit broker removed is still there"
         )
 
         # And the page says all of that, since the page is the only place a person sees it.

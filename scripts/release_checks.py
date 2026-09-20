@@ -43,7 +43,7 @@ PRIVATE_HOSTS: tuple[str, ...] = (
 )
 """The private hosts that must appear nowhere in a public tree.
 
-Index 0 is the private Git host -- where this library is developed from #167 onward, and the
+Index 0 is the private Git host -- where this library is developed, and the
 one all three siblings already ban. Index 1 is the institute's GraphDB, added by analogy with
 `kapps_ogm`, where it had actually fired: a changelog entry there quoted the endpoint it was
 measured against. Here it appears once, in a working note that does not ship, so this entry is
@@ -58,17 +58,53 @@ named service hosts are private.
 DEAD_REFERENCE_DIRS: tuple[str, ...] = (
     "docs/" + "adr/",
     "docs/" + "prd/",
+    "docs/" + "research/",
+    "docs/" + "agents/",
 )
-"""The two record directories that never ship, so a pointer at one is dead on arrival.
+"""The four `docs/` directories that never ship, so a pointer at one is dead on arrival.
 
-Index 0 is the decision records, index 1 the requirements documents.
+Index 0 is the decision records, index 1 the requirements documents, index 2 the working
+notes, index 3 the dev-side agent configuration. The last two were added later: the release
+allowlist had always excluded them, but only a release-time rewrite of `CLAUDE.md` stood
+between a link into one and the public tree, and its own note said no check would catch the
+next one.
+
+Index 3 is the same fragment check 3 bans as a *path*. The two checks ask different
+questions -- is the directory there, and does anything point at it -- so it is listed in both
+places rather than one check leaning on the other.
+"""
+
+CITATION: re.Pattern[str] = re.compile("ADR" + r"[-:\s]*" + "[0-9]{4}")
+"""A decision record cited by number, in every separator this repository has written it with.
+
+Wider than the `ADR ?[0-9]{4}` a first sweep measured with, because that sweep found five
+citations that regex could not see -- four with the number on the next line of a docstring, one
+joined to its number with hyphens. A gate that stops at the line end fails open on exactly the
+prose that has been reflowed to fit.
+
+The colon was added afterwards, and for this reason: the
+marker comment form, a colon between the word and the number, is a citation like any other,
+the first regex did not match it, so 65 of them survived a sweep whose acceptance criterion read
+"finds nothing". A gate written to the shape of the citations somebody happened to think of is
+a gate with a hole in it. This paragraph cannot show you the form -- check 5 scans this module
+in the public tree, and an example here would be the one citation it finds.
+
+The rule, decided 2026-09-11: all published content may only reference content that is
+publicly available to the community. The records never ship, so a number that names one is a
+reference the reader cannot resolve -- in printed output, a docstring, a comment or a Turtle
+file alike. An earlier decision had let the bare number stand as a provenance marker; this rule
+reversed that, and a sweep removed the 405 the tree carried when the rule was made.
+
+Written as `ADR 00nn` wherever this file needs to name the form. A four-digit example in a
+comment here would be the one citation check 5 finds in the public tree.
 """
 
 BANNED_PATH_FRAGMENTS: tuple[str, ...] = (
-    "docs/agents/",
+    "docs/" + "agents/",
     ".claude/",
     ".gitlab-ci.yml",
     "RELEASE.md",
+    "tests_adr/",
     "tests_release/",
 )
 """Dev-only path fragments that must never appear in a public release tree.
@@ -79,10 +115,13 @@ the root, which ships as the one-line AGENTS.md stub.
 `.gitlab-ci.yml` names the private forge **in its filename alone**, so check 4 -- which reads
 contents -- would never see it.
 
-`SIBLINGS.md`, `siblings.lock.toml` and `check_siblings.py` were here until #167 and are gone
-because the files are gone, not because they became safe. They existed to manage three
-editable path checkouts; the siblings are published versions now, so there is nothing left to
-pin outside `uv.lock` and nothing left to leak.
+`SIBLINGS.md`, `siblings.lock.toml` and `check_siblings.py` were here until the siblings were
+published, and are gone because the files are gone, not because they became safe. They existed
+to manage three editable path checkouts; the siblings are published versions now, so there is
+nothing left to pin outside `uv.lock` and nothing left to leak.
+
+`tests_adr/` is the record-traceability suite. It names the record directories on
+purpose and must never reach a tree where they are absent.
 
 `scripts/` is deliberately absent: `release_checks.py` is the one file out of that directory
 that ships, and a fragment banning the directory would ban this file. Everything else in there
@@ -304,12 +343,18 @@ def check_secrets(tree: Path) -> list[Violation]:
 
 
 def check_references(tree: Path) -> list[Violation]:
-    """Check 5 — references. No shipped file points at a decision-record directory.
+    """Check 5 — references. No shipped file points at anything the allowlist left behind.
 
-    Walks ``tree``, skipping ``.git/`` and binary files. A file violates when its
-    text contains either entry of ``DEAD_REFERENCE_DIRS``. Both shapes fail: a full
-    path with a filename, and a bare directory named in prose. A bare citation like
-    ``ADR 0012`` does NOT fire — it names no directory.
+    Walks ``tree``, skipping ``.git/`` and binary files. A file violates when its text contains
+    any entry of ``DEAD_REFERENCE_DIRS`` — a full path with a filename, or a bare directory
+    named in prose — or any match of ``CITATION``, a record named by number. A file is reported
+    once per kind: one line for the first dead directory it names, one line carrying the
+    citation count, so the sweep is sized before it starts rather than one number per run.
+
+    The count is of matches, so a citation naming several records in one breath counts once --
+    a bare `, 0028` after a comma is a citation only because of the words in front of it, and a
+    pattern loose enough to read that would fire on any four-digit number in prose. Sizing a
+    sweep is what the count is for; catching the file is the property that matters.
     """
     violations: list[Violation] = []
 
@@ -324,6 +369,16 @@ def check_references(tree: Path) -> list[Violation]:
                     Violation("references", rel_str, f"references dead directory '{dead_dir}'")
                 )
                 break
+
+        cited = len(CITATION.findall(content))
+        if cited:
+            violations.append(
+                Violation(
+                    "references",
+                    rel_str,
+                    f"{cited} citation(s) of a decision record, which does not ship",
+                )
+            )
 
     return violations
 
@@ -342,7 +397,7 @@ def run_tree_checks(tree: Path) -> list[Violation]:
 
 
 def run_ci_checks(repo: Path) -> list[Violation]:
-    """Run checks 2-5 — the backstop the release repo's own CI runs (#129).
+    """Run checks 2-5 — the backstop the release repo's own CI runs.
 
     Check 1 (remotes) is the one check a CI checkout cannot answer: the runner's remote is
     whatever `actions/checkout` configured, and says nothing about where a release was pushed
@@ -380,7 +435,7 @@ def main(argv: list[str] | None = None) -> int:
         python scripts/release_checks.py [TREE]                    # checks 2-5
         python scripts/release_checks.py [TREE] --origin URL       # checks 1-5
 
-    Without ``--origin`` this is the release repo's CI backstop, which #129 specifies as
+    Without ``--origin`` this is the release repo's CI backstop, which is specified as
     checks 2-5. Only check 1 needs the expected origin, so only check 1 waits for it.
     """
     parser = argparse.ArgumentParser(

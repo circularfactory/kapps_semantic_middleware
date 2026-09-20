@@ -19,7 +19,7 @@ import pytest_asyncio
 from kapps_semantic_middleware.credentials import graphdb_env_present
 
 # The suite wipes the repository it connects to, so it names that repository itself rather
-# than inheriting GRAPHDB_REPOSITORY, which may point at anything (issue #146). Capitalised
+# than inheriting GRAPHDB_REPOSITORY, which may point at anything. Capitalised
 # to match the repository on the KIT server; tests do not ship, so this name is dev-only.
 TEST_REPOSITORY = "Tests"
 
@@ -62,7 +62,7 @@ def methods_at(app, path: str) -> set:
 def git_in(repo: Path, *args: str) -> str:
     """Run git in ``repo`` with a fixed identity and no signing, returning stdout.
 
-    The release tests (#129) each build a throwaway repository to plant a violation in, and
+    The release tests each build a throwaway repository to plant a violation in, and
     every one of them needs the same three ``-c`` overrides: a bare CI runner has no
     ``user.email``, so ``commit`` fails outright, and a developer with ``commit.gpgsign``
     set globally would have every test commit reach for a signing key.
@@ -113,7 +113,7 @@ def isolate_connector_sync_manager():
     Isolating here rather than in one file because the collision is between *any* two tests
     that build a middleware over the same resource, and the next such pair would rediscover
     it. The leak itself is a real defect and is filed separately; a middleware that owns its
-    whole process, which is what the factory demo runs (ADR 0029), never meets it.
+    whole process, which is what the factory demo runs, never meets it.
     """
     from transitional_sync_middleware.middleware.sync.connector_sync_manager import (
         connector_sync_manager,
@@ -148,8 +148,8 @@ def unit_scope():
     """The consumer's view of a scenario-3 TransferUnit, rooted at the unit.
 
     Two levels, because a TransferUnit's parameters hang off its belts and barriers. A view
-    belongs to its consumer and is configured in embedding code rather than in the ontology
-    (ADR 0018), so it is stated once here rather than in each test that needs a wired unit.
+    belongs to its consumer and is configured in embedding code rather than in the ontology,
+    so it is stated once here rather than in each test that needs a wired unit.
     """
     import sys
     from pathlib import Path

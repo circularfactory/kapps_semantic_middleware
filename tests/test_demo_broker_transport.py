@@ -1,9 +1,9 @@
-"""``demo.transferunits.middleware``'s transport seam (#79, ADR 0034).
+"""``demo.transferunits.middleware``'s transport seam.
 
 ``ensure_transport`` is the demo's fill of the library's transport hook: bring up this unit's
 own in-process amqtt broker, idempotently, on a daemon thread. Real sockets throughout -- an
 in-process broker is exactly what the demo runs, and a mock here would prove nothing about the
-actual race ADR 0034 exists to close.
+actual race the transport hook exists to close.
 """
 
 from __future__ import annotations
@@ -57,7 +57,7 @@ class TestEnsureTransport:
 
             asyncio.run(_connect_and_publish())
         finally:
-            # No teardown API exists on purpose (ADR 0034: the library owns no lifetime, and
+            # No teardown API exists on purpose (the library owns no lifetime, and
             # neither does this call) -- the broker's daemon thread dies with the test process.
             pass
 
@@ -73,7 +73,7 @@ class TestEnsureTransport:
 
     def test_does_nothing_when_something_already_listens(self, monkeypatch):
         """ensure_transport never starts a second broker on top of one already at this
-        address (ADR 0034: idempotent -- a broker already listening means nothing happens).
+        address (idempotent -- a broker already listening means nothing happens).
 
         Stubs the probe rather than reusing the ``mqtt_broker`` fixture's real broker: a bare
         TCP connect-and-immediately-close -- exactly what a real ``_listening`` probe against

@@ -1,9 +1,9 @@
-"""Event-trigger coordination end-to-end integration test (#13) against a live GraphDB.
+"""Event-trigger coordination end-to-end integration test against a live GraphDB.
 
-Prove the decentralized event trigger over REST (ADR 0009). Resource A *dispatches*
+Prove the decentralized event trigger over REST. Resource A *dispatches*
 an Operation to resource B. Create it in the graph (status ``queued``). Trigger B
 event-trigger endpoint over HTTP. B enqueues it. Leave it ``queued``. Also cover
-the atomic revert (ADR 0010). A dispatch trigger cannot be delivered. Remove the
+the atomic revert. A dispatch trigger cannot be delivered. Remove the
 created Operation. Skip when GRAPHDB_* env vars are absent (see conftest).
 """
 
@@ -123,7 +123,7 @@ def test_event_trigger_dispatch_enqueues_over_rest(graphdb):
 
 @requires_graphdb
 def test_event_trigger_revert_on_undeliverable(graphdb):
-    """A dispatch event trigger cannot be delivered. Revert the created Operation (ADR 0010)."""
+    """A dispatch event trigger cannot be delivered. Revert the created Operation."""
     db = graphdb
     seed.seed_scenario1(db)
 
@@ -175,8 +175,8 @@ def test_event_trigger_revert_on_undeliverable(graphdb):
 
 
 # --------------------------------------------------------------------------- #
-# Pull-and-run (#14): claim the next queued Operation. Run the work. Record the
-# terminal status + provenance atomically (ADR 0009 / 0010).
+# Pull-and-run: claim the next queued Operation. Run the work. Record the
+# terminal status + provenance atomically.
 # --------------------------------------------------------------------------- #
 
 
@@ -221,7 +221,7 @@ def test_pull_and_run_completes_operation(graphdb):
     db = graphdb
     seed.seed_scenario1(db)
     mw_b = _hello_resource(graphdb, B_PORT)
-    # Per-instance since ADR 0022. Derived from the instance. Not from the resource.
+    # Per-instance. Derived from the instance. Not from the resource.
     wf_instance = mint_workflow_iri(mw_b.service_iri, "hello_world")
     server, thread = _start_server(mw_b, B_PORT)
     try:
@@ -234,7 +234,7 @@ def test_pull_and_run_completes_operation(graphdb):
             assert claimed.operation is not None  # re-fetched under the scope
             claimed.result = hello_world()
 
-        # Terminal transition: done + provenance folded in (ADR 0009).
+        # Terminal transition: done + provenance folded in.
         status = list(db.triples_get(sub=op_iri, pred=SVC.operationStatus))
         assert status and str(status[0][2]) == OperationStatus.DONE
         assert db.triple_exists((op_iri, SVC.executedByWorkflow, wf_instance))
@@ -251,11 +251,11 @@ def test_pull_and_run_completes_operation(graphdb):
 
 @requires_graphdb
 def test_pull_and_run_failure_marks_failed(graphdb):
-    """A body exception marks the Operation `failed`. Error message + provenance (ADR 0009)."""
+    """A body exception marks the Operation `failed`. Error message + provenance."""
     db = graphdb
     seed.seed_scenario1(db)
     mw_b = _hello_resource(graphdb, B_PORT)
-    # Per-instance since ADR 0022. Derived from the instance. Not from the resource.
+    # Per-instance. Derived from the instance. Not from the resource.
     wf_instance = mint_workflow_iri(mw_b.service_iri, "hello_world")
     server, thread = _start_server(mw_b, B_PORT)
     try:
@@ -297,8 +297,8 @@ def test_claim_next_empty_queue_raises(graphdb):
 
 
 # --------------------------------------------------------------------------- #
-# Domain callback on enqueue (#15): a registered callback fires when an Operation
-# is enqueued and drives a background pull-and-run (ADR 0009).
+# Domain callback on enqueue: a registered callback fires when an Operation
+# is enqueued and drives a background pull-and-run.
 # --------------------------------------------------------------------------- #
 
 
@@ -315,7 +315,7 @@ def _wait_for_status(db, op_iri, status: str, timeout: float = 15.0) -> None:
 
 @requires_graphdb
 def test_callback_runs_operation_on_enqueue(graphdb):
-    """A registered callback fires on enqueue. Drive a pull-and-run to done + provenance (#15).
+    """A registered callback fires on enqueue. Drive a pull-and-run to done + provenance.
 
     The no-callback path exists. An Operation left `queued`. Covered by
     test_event_trigger_dispatch_enqueues_over_rest. Dispatch without a callback.
@@ -323,7 +323,7 @@ def test_callback_runs_operation_on_enqueue(graphdb):
     db = graphdb
     seed.seed_scenario1(db)
     mw_b = _hello_resource(graphdb, B_PORT)
-    # Per-instance since ADR 0022. Derived from the instance. Not from the resource.
+    # Per-instance. Derived from the instance. Not from the resource.
     wf_instance = mint_workflow_iri(mw_b.service_iri, "hello_world")
     mw_b.register_callback(lambda operation: hello_world())  # domain work function
     server, thread = _start_server(mw_b, B_PORT)
@@ -344,7 +344,7 @@ def test_callback_runs_operation_on_enqueue(graphdb):
 
 
 # --------------------------------------------------------------------------- #
-# Two-instance REST event-trigger proof (#16): A dispatches to B over real HTTP.
+# Two-instance REST event-trigger proof: A dispatches to B over real HTTP.
 # B enqueues (queued). Pull-and-runs a STATEFUL workflow (done). The door state
 # change is B observable side effect.
 # --------------------------------------------------------------------------- #
@@ -371,7 +371,7 @@ def test_two_instance_rest_event_trigger_full_lifecycle(graphdb):
         capability_class=seed.DOOR_OPEN_CAPABILITY_CLASS,
         workflow_class=seed.DOOR_OPEN_WORKFLOW_CLASS,
     )(door_open)
-    # Per-instance since ADR 0022. Derived from the instance. Not from the resource.
+    # Per-instance. Derived from the instance. Not from the resource.
     open_wf = mint_workflow_iri(mw_b.service_iri, "door_open")
 
     server, thread = _start_server(mw_b, B_PORT)

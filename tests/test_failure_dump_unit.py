@@ -1,4 +1,4 @@
-"""Unit tests for the failed-Operation resource-datamodel dump (#14 / svc:failureState).
+"""Unit tests for the failed-Operation resource-datamodel dump (svc:failureState).
 
 These verify the load-bearing guarantee that ``_dump_resource_datamodel`` is BEST-EFFORT and
 never raises into ``claim_next``'s failure-recording path, across all of its branches. Pure

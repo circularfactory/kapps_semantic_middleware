@@ -1,4 +1,4 @@
-"""Scenario 3 end to end: mock PLC -> MQTT -> the connectors the graph wired (#40).
+"""Scenario 3 end to end: mock PLC -> MQTT -> the connectors the graph wired.
 
 The full loop the map is named for. The graph says where each value lives; the middleware
 reads that, builds connectors, and a value published by the device arrives through them —
@@ -76,7 +76,7 @@ def wired(graphdb, mqtt_broker):
     The seeded broker address is rewritten to the test broker's host:port, because the
     binding reads the address out of the graph — which is the property under test. Pointing
     the graph at the test broker is how you redirect a whole TransferUnit, and it is exactly
-    what provisioning (#54) will do for real.
+    what provisioning will do for real once it is built.
     """
     return _wire_scenario3_to_test_broker(graphdb, mqtt_broker, declare_port=False)
 
@@ -116,7 +116,7 @@ class TestDeviceToMiddleware:
         assert value == 1.25
 
     async def test_the_formatter_rebuilds_the_whole_parameter_node(self, wired):
-        """A bare scalar would blank the unit in the model that gets served (ADR 0023)."""
+        """A bare scalar would blank the unit in the model that gets served."""
         plan, host, port = wired
         registration = _connector_for(plan, "left/speed", SyncDirection.TO_PERSISTENCE)
 
@@ -176,7 +176,7 @@ class TestMiddlewareToDevice:
                 [node] = registration.formatter.deserialize(2.75)
                 await connector.consume(registration.formatter.serialize([node]))
                 await unit.wait_for_setpoint(timeout=5.0)
-                # The setpoint ramps the belt rather than snapping it (#83); wait for the ramp
+                # The setpoint ramps the belt rather than snapping it; wait for the ramp
                 # to converge before asserting the exact value.
                 await unit.wait_for_convergence("left", timeout=10.0)
             finally:
@@ -185,7 +185,7 @@ class TestMiddlewareToDevice:
             assert unit.speeds["left"] == 2.75
 
     async def test_a_read_only_parameter_has_no_write_connector(self, wired):
-        """A controller cannot write a sensor, structurally (ADR 0023)."""
+        """A controller cannot write a sensor, structurally."""
         plan, _, _ = wired
 
         with pytest.raises(AssertionError):
@@ -239,7 +239,7 @@ def wired_with_declared_port(graphdb, mqtt_broker):
 @requires_graphdb
 @pytest.mark.asyncio
 class TestDeclaredPortReachesALiveBroker:
-    """#69's stated acceptance: proven against a live broker on a non-default port, not a mock."""
+    """The declared port is proven against a live broker on a non-default port, not a mock."""
 
     async def test_the_connector_is_already_built_on_the_declared_port(
         self, wired_with_declared_port

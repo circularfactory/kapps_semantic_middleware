@@ -88,7 +88,7 @@ const TEACH = __TEACH__;
 const SOURCES = __SOURCES__;
 let frozen = false;
 
-// A loopback address is this launcher's own dynamically-allocated child port (#85) — swap
+// A loopback address is this launcher's own dynamically-allocated child port — swap
 // its host for the browsing host, so a page reached through a tunnel links through the
 // same tunnel. A non-loopback address (e.g. a remote knowledge graph) is left alone.
 function hrefFor(address) {
@@ -108,7 +108,7 @@ function hrefFor(address) {
 
 function box(key, id, title, node, wide) {
   const isLink = node.address && node.address.startsWith('http');
-  // Only middleware and the control station hold an activity feed (ADR 0029) — a PLC
+  // Only middleware and the control station hold an activity feed — a PLC
   // holds no middleware, so it gets no link, and that asymmetry is the demonstration.
   const hasActivityFeed = key === 'middleware' || key === 'controller';
   const activityLink = (isLink && hasActivityFeed)
@@ -138,7 +138,7 @@ const openOutputs = new Set();
 function outputTarget(id) {
   if (id === 'controller') return [0, 'controller'];
   const [kind, n] = id.split('-');
-  // A broker is a thread inside its unit's own middleware process (#79) -- it captures no
+  // A broker is a thread inside its unit's own middleware process -- it captures no
   // output of its own, so a failed broker box opens that middleware's output instead.
   if (kind === 'broker') return [parseInt(n, 10), 'middleware'];
   return [parseInt(n, 10), kind === 'mw' ? 'middleware' : 'plc'];

@@ -1,4 +1,4 @@
-"""Offline tests for the quiet /favicon.ico route (#89 item 2).
+"""Offline tests for the quiet /favicon.ico route.
 
 Before this, every page load of the launcher index, the PLC panel, and the control
 station logged a 404 for /favicon.ico -- the only console error on an otherwise clean

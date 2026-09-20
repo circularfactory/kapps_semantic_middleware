@@ -1,6 +1,6 @@
-"""Handover primitive integration tests (#18) against a live GraphDB.
+"""Handover primitive integration tests against a live GraphDB.
 
-The change-of-possession primitive (ADR 0011): a source resource that currently possesses a
+The change-of-possession primitive: a source resource that currently possesses a
 workpiece hands it to a counterpart carrying the complementary handover ability. Possession
 is Core's reified `cfc:PossessionState`; the switch is one atomic OGM commit that re-points
 the workpiece to a fresh PossessionState possessed by the counterpart. Skipped when GRAPHDB_*
@@ -121,7 +121,7 @@ def test_handover_body_exception_aborts(graphdb):
 def test_handover_preserves_counterpart_existing_possession(graphdb):
     """The counterpart's new possession is APPENDED — a workpiece it already holds is not lost.
 
-    A resource may possess several workpieces (ADR 0011 — possession is not universally maxCount
+    A resource may possess several workpieces (possession is not universally maxCount
     1), so switching a workpiece to a counterpart must not clobber its existing possessions.
     """
     db = graphdb

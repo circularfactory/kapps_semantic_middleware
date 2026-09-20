@@ -1,4 +1,4 @@
-"""Recursive REST routes terminate at interface-accessible parameters (#41).
+"""Recursive REST routes terminate at interface-accessible parameters.
 
 The framework generates CRUD routes for a data model, then recurses through complex properties
 to expose terminal parameters — conveyor speed, barrier occupancy — as leaf endpoints. A naive
@@ -12,7 +12,7 @@ implementation makes two mistakes that this guard exists to catch:
    visited ids, a cyclic instance graph hangs forever. The recursion must stop at parameters
    and at already-seen ids.
 
-3. **PUT body misclassified as a query parameter (#87).** FastAPI infers body-vs-query from
+3. **PUT body misclassified as a query parameter.** FastAPI infers body-vs-query from
    whether a field's annotation looks scalar. A COMPLEX property that isn't required has an
    `Optional[Annotated[conlist(...), BeforeValidator]]` annotation, and that `Optional` wrapper
    defeats the inference -- every real PUT route 422ed. The other fixtures below use a plain
@@ -101,7 +101,7 @@ def _coerce_speed(value: Any) -> Any:
 # because of the coercion validator, `conlist` rather than plain `list` for the min/max bound.
 # Every fixture above this point uses the simpler `list[Speed]` shape instead, which FastAPI's
 # scalar check always classifies as a body regardless of how the route wires the parameter --
-# that shape would not have caught issue #87.
+# that shape would not have caught the misclassification.
 _realistic_speed_field: Any = Optional[
     Annotated[conlist(Speed, min_length=0), BeforeValidator(_coerce_speed)]
 ]
@@ -190,7 +190,7 @@ class _StubConnector:
 
     Stands in for a ``PersistedConnector``, so it must carry that class's signature:
     ``origin`` and ``changed`` are how a caller tells the fan-out what it attributed the
-    write to and which region of the model actually moved (#92, #94). Recording
+    write to and which region of the model actually moved. Recording
     ``changed`` rather than swallowing it makes this stub the fast, GraphDB-free place to
     assert that the PUT handler scopes its write to one parameter.
     """
@@ -429,7 +429,7 @@ def test_put_to_one_belt_mutates_only_that_belt():
 
 
 def test_put_tells_the_fan_out_which_parameter_moved():
-    """#94: mutating one field is not enough -- the ``consume`` call has to say so.
+    """Mutating one field is not enough -- the ``consume`` call has to say so.
 
     The whole model goes to persistence either way, because a persistence connector is
     keyed by *(data_model_name, model_id)* and holds the resource entire. Without
@@ -519,7 +519,7 @@ def test_put_body_is_bound_as_a_json_body_not_a_query_parameter():
     -- optional because the property isn't required, `Annotated` because of the coercion
     validator, `conlist` rather than `list` for the min/max bound. FastAPI's implicit body-vs-query
     inference (`field_annotation_is_scalar`) does not see through that `Optional` wrapper the same
-    way, and silently classifies the parameter as a query param instead -- issue #87, reproduced
+    way, and silently classifies the parameter as a query param instead -- reproduced
     against the real installed FastAPI in isolation before this test was written. Every other test
     in this file uses the simpler shape and would not have caught this.
     """
