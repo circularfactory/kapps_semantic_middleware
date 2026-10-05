@@ -95,21 +95,18 @@ class KnowledgeGraphConnector:
             The fetched Node from the knowledge graph.
 
         Raises:
-            ConnectionError: If fetching the data from the knowledge graph fails.
+            Exception: Every error that ``OGM.fetch`` raises, unchanged. The caller receives
+                the same object, with its own type and message. ``OGM.fetch`` names the
+                types.
         """
-        try:
-            fetch_call = partial(
-                self.ogm.fetch,
-                instance_iri=self.instance_iri,
-                class_spec=self.class_spec,
-                class_scope=self.class_scope,
-                materialize=self.materialize,
-            )
-            return await anyio.to_thread.run_sync(fetch_call)
-        except Exception as exc:
-            raise ConnectionError(
-                f"Failed to fetch instance {self.instance_iri} from the knowledge graph"
-            ) from exc
+        fetch_call = partial(
+            self.ogm.fetch,
+            instance_iri=self.instance_iri,
+            class_spec=self.class_spec,
+            class_scope=self.class_scope,
+            materialize=self.materialize,
+        )
+        return await anyio.to_thread.run_sync(fetch_call)
 
     async def consume(self, body: Any) -> None:
         """
@@ -122,17 +119,15 @@ class KnowledgeGraphConnector:
             body: The data dictionary to commit to the knowledge graph.
 
         Raises:
-            ConnectionError: If committing the data to the knowledge graph fails.
+            Exception: Every error that ``OGM.commit`` raises, unchanged. The caller receives
+                the same object, with its own type and message. So a store that refuses the
+                write, for example on a SHACL violation, reaches the caller as the error the
+                OGM raised for it. ``OGM.commit`` names the types.
         """
-        try:
-            commit_call = partial(
-                self.ogm.commit,
-                instance_iri=self.instance_iri,
-                data=body,
-                named_graph=self.named_graph,
-            )
-            await anyio.to_thread.run_sync(commit_call)
-        except Exception as exc:
-            raise ConnectionError(
-                f"Failed to commit instance {self.instance_iri} to the knowledge graph"
-            ) from exc
+        commit_call = partial(
+            self.ogm.commit,
+            instance_iri=self.instance_iri,
+            data=body,
+            named_graph=self.named_graph,
+        )
+        await anyio.to_thread.run_sync(commit_call)

@@ -43,6 +43,7 @@ import aiomqtt
 import httpx
 import pytest
 
+from _sse import follow
 from conftest import requires_graphdb
 
 from demo.transferunits import seed
@@ -231,28 +232,22 @@ def _feed_search(
     "the feed was busy but never carried this line" are different failures of claim 4 and a
     bare ``False`` cannot tell them apart.
 
-    The stream is endless by design, so it is read against a deadline rather than to its end,
-    and a read timeout is the ordinary way that ends -- not an error.
+    A stream ends after a short lifetime, so it is followed across its ends as a browser
+    follows it, and read against a deadline.
     """
     seen: List[str] = []
     deadline = time.monotonic() + timeout
 
-    with httpx.Client(timeout=httpx.Timeout(timeout, connect=10.0)) as client:
-        try:
-            with client.stream("GET", _url(address, "activity/stream")) as response:
-                response.raise_for_status()
-                for line in response.iter_lines():
-                    # Anything else is an SSE keepalive comment or the blank line that
-                    # terminates an event.
-                    if line.startswith("data: "):
-                        message = json.loads(line[len("data: ") :]).get("message", "")
-                        seen.append(message)
-                        if all(fragment in message for fragment in fragments):
-                            return True, seen
-                    if time.monotonic() >= deadline:
-                        break
-        except httpx.ReadTimeout:
-            pass
+    for line in follow(
+        _url(address, "activity/stream"), until=lambda: time.monotonic() >= deadline
+    ):
+        # Anything else is the `id:` or `retry:` field, or the blank line that terminates an
+        # event.
+        if line.startswith("data: "):
+            message = json.loads(line[len("data: ") :]).get("message", "")
+            seen.append(message)
+            if all(fragment in message for fragment in fragments):
+                return True, seen
 
     return False, seen
 

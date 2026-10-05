@@ -40,6 +40,19 @@ _PACKAGE = __package__ or "demo.transferunits"
 
 SLOW_AFTER_SECONDS = 30.0
 WATCH_INTERVAL_SECONDS = 1.0
+
+STOP_TIMEOUT_SECONDS = 5.0
+"""How long a child gets to stop gracefully before the launcher kills it. A kill skips the
+middleware's deregistration."""
+
+GRACEFUL_SHUTDOWN_SECONDS = 3.0
+"""How long a child's uvicorn waits for open connections before it cancels them.
+
+uvicorn runs the lifespan shutdown, where a middleware deregisters, only after that wait, and it
+waits without a limit by default. So one connection that stays open holds the stop open until
+``STOP_TIMEOUT_SECONDS`` passes and the kill comes. The bound leaves the deregistration two
+seconds before the kill. The activity stream already ends by itself within its lifetime; the
+bound covers every other connection that stays open."""
 if sys.platform == "win32":
     _NEW_PROCESS_GROUP = subprocess.CREATE_NEW_PROCESS_GROUP
 else:
@@ -313,7 +326,7 @@ def _terminate_and_wait(handles: List[ChildHandle], timeout: float) -> List[str]
     return stragglers
 
 
-def stop_factory(children: List[ChildHandle], timeout: float = 5.0) -> None:
+def stop_factory(children: List[ChildHandle], timeout: float = STOP_TIMEOUT_SECONDS) -> None:
     """Stop every child, middleware and the control station first, then the PLCs."""
     graph_children = [c for c in children if c.kind in ("middleware", "controller")]
     plc_children = [c for c in children if c.kind == "plc"]
@@ -425,8 +438,8 @@ class Factory:
 
         graph_children = [c for c in children if c.kind == "middleware"]
         plc_children = [c for c in children if c.kind == "plc"]
-        _terminate_and_wait(graph_children, timeout=5.0)
-        _terminate_and_wait(plc_children, timeout=5.0)
+        _terminate_and_wait(graph_children, timeout=STOP_TIMEOUT_SECONDS)
+        _terminate_and_wait(plc_children, timeout=STOP_TIMEOUT_SECONDS)
 
         for c in children:
             c.state = "stopped"

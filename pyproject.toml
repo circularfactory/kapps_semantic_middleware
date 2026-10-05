@@ -1,6 +1,6 @@
 [project]
 name = "kapps-semantic-middleware"
-version = "0.1.1"
+version = "0.2.0"
 description = "Semantic middleware for industrial data integration, built on transitional-sync-middleware"
 readme = "README.md"
 license = "MIT"
@@ -31,8 +31,8 @@ maintainers = [
 # it on a deliberate `uv lock --upgrade-package <name>`, while a minor release needs a deliberate
 # bump of the pin here, proven by this project's own test suite before it lands.
 dependencies = [
-    "kapps-ogm~=0.2.0",
-    "kapps-triplestore-interface~=2.1.1",
+    "kapps-ogm~=0.3.0",
+    "kapps-triplestore-interface~=2.2.0",
     # The range's floor is 0.1.0 and not 0.2.6: this is the fork of `aas-middleware`, published
     # under its own name with its own numbering, which restarted. The import package renames with
     # it, to `transitional_sync_middleware`, and that rename happens at *its* release time -- so a
@@ -54,8 +54,13 @@ dependencies = [
 
 [project.scripts]
 # Installed unconditionally, because a console script cannot be gated on an extra. Without
-# `[examples]` the factory exits on a missing uvicorn/amqtt, which is the honest failure: the
-# demo is present and its runtime dependencies are not.
+# `[examples]` the factory does not exit, and this comment claimed for two releases that it did.
+# Measured: uvicorn and rdflib arrive transitively, `amqtt` does not. The unit broker's thread
+# dies on the missing import and writes its traceback, but the launcher echoes only lines that
+# carry an address, so the console never shows it. The launcher seeds, the first middleware
+# starts, and the PLC then retries a refused connection forever -- no traceback on the console,
+# and `Factory running` never printed. The README's "Questions" section names that symptom so a
+# reader can recognise it; making the failure loud is a code change, not a manifest one.
 kapps-transferunit-factory = "kapps_semantic_middleware.demonstrations.transferunits.__main__:main"
 # Copies the runnable scenario files out of the installed package into a directory the user
 # chooses, because a notebook inside site-packages cannot be opened, edited or re-run.
@@ -68,7 +73,7 @@ kapps-examples = "kapps_semantic_middleware.examples_cli:main"
 # what the runnable examples need on top of it. fastapi is NOT here: the library imports it
 # directly, so it moved to the core dependencies above.
 examples = [
-    "uvicorn>=0.29.0",
+    "uvicorn>=0.41.0",
     # The per-unit broker. Pure Python and run in-process, because mosquitto
     # would need root, which a fresh checkout cannot assume. The factory needs it; the
     # scenarios do not; the single umbrella covers both.

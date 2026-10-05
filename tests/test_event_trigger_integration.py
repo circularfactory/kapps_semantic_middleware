@@ -3,8 +3,9 @@
 Prove the decentralized event trigger over REST. Resource A *dispatches*
 an Operation to resource B. Create it in the graph (status ``queued``). Trigger B
 event-trigger endpoint over HTTP. B enqueues it. Leave it ``queued``. Also cover
-the atomic revert. A dispatch trigger cannot be delivered. Remove the
-created Operation. Skip when GRAPHDB_* env vars are absent (see conftest).
+a dispatch trigger that cannot be delivered: the created Operation stays ``queued``, and
+the caller gets ``NotificationUndelivered``. Skip when GRAPHDB_* env vars are absent (see
+conftest).
 """
 
 from __future__ import annotations
@@ -23,6 +24,7 @@ from kapps_ogm import OGM
 from kapps_ogm.utils.class_scope import ClassScope
 from kapps_semantic_middleware import SemanticMiddleware
 from kapps_semantic_middleware.credentials import graphdb_env_present, graphdb_for
+from kapps_semantic_middleware.errors import NotificationUndelivered
 from kapps_semantic_middleware.registration import (
     OperationQueueEmpty,
     mint_capability_iri,
@@ -122,8 +124,9 @@ def test_event_trigger_dispatch_enqueues_over_rest(graphdb):
 
 
 @requires_graphdb
-def test_event_trigger_revert_on_undeliverable(graphdb):
-    """A dispatch event trigger cannot be delivered. Revert the created Operation."""
+def test_an_undeliverable_event_trigger_leaves_the_operation_queued(graphdb):
+    """A dispatch event trigger cannot be delivered. The created Operation stays ``queued``:
+    its receiver takes it up when it starts."""
     db = graphdb
     seed.seed_scenario1(db)
 
@@ -160,7 +163,7 @@ def test_event_trigger_revert_on_undeliverable(graphdb):
         port=8997,
     )
 
-    with pytest.raises(Exception):
+    with pytest.raises(NotificationUndelivered):
         with mw_a.request(
             capability_class=seed.HELLO_CAPABILITY_CLASS,
             operation_class=str(CFC.Operation),
@@ -168,10 +171,12 @@ def test_event_trigger_revert_on_undeliverable(graphdb):
             pass
     op_iri = op.iri
 
-    # The Operation reverted. No type remains. No capability link remains. No status remains.
-    assert not db.triple_exists((op_iri, RDF.type, CFC.Operation))
-    assert not db.triple_exists((op_iri, CFC.implementsCapability, cap_instance))
-    assert not db.triples_get(sub=op_iri, pred=SVC.operationStatus)
+    # Nothing is undone: the type, the capability link and the status ``queued`` stay.
+    assert db.triple_exists((op_iri, RDF.type, CFC.Operation))
+    assert db.triple_exists((op_iri, CFC.implementsCapability, cap_instance))
+    assert [str(t[2]) for t in db.triples_get(sub=op_iri, pred=SVC.operationStatus)] == [
+        OperationStatus.QUEUED
+    ]
 
 
 # --------------------------------------------------------------------------- #

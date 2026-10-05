@@ -125,6 +125,15 @@ An **empty** projection is legitimate — the graph holds the information, and a
 is a bare individual serves a one-field datamodel and starts normally.
 _Avoid_: Filter, Query (a ClassScope is a reusable named view of which metadata to materialise).
 
+**Predefined scope**:
+A ClassScope for a common circular-factory class that the middleware ships beside its generic core,
+together with the rules for creating an instance of that class: the inputs it requires, and the
+writes it adds to the same commit (a Workpiece's first Possession, an Operation's Capability). The
+generic core knows only
+`svc:` and standard RDF; everything specific to the circular factory enters through a Predefined
+scope.
+_Avoid_: cfc scope, preset, template
+
 **Root** (of a view):
 The node a ClassScope is rooted at. Being a root is what makes a Resource a *top-level* thing rather
 than a component — TransferUnit1 is a unit and ConveyorBelt1_left is a part of it **because a view is
@@ -263,26 +272,135 @@ graph-level unit of work exchanged between middleware instances.
 _Avoid_: Workflow invocation, Job (Operation is the graph-level unit of work; a single
 Operation resolves to exactly one Workflow via its Capability).
 
+**Production system level**:
+The outer level of control in a factory. It assigns each Operation to a Station, as a process on a
+product by that Station, and it reacts when a Station reports that it cannot finish one.
+_Avoid_: job level, factory level
+
+**Station level**:
+The inner level of control, inside one Station. The Station's own resources carry out an Operation
+the Station received, and coordinate with each other by workflow calls.
+_Avoid_: step level, cell level
+
+**Station**:
+One resource, or several resources that act together, that receives Operations from the Production
+system level and carries them out. The graph need not name a Station: several resources can be one
+Station only in how they coordinate.
+_Avoid_: cell, work center
+
+**Admission**:
+The triple store's acceptance of a commit, after its SHACL engine has validated the state
+transition. A state transition is admitted before it is executed, so a refused one never happens
+physically.
+_Avoid_: booking, move-then-commit
+
+**State transition**:
+A change of the graph that a participant commits through `mw.commit()`, so that the store admits or
+refuses it before the work it describes begins. It has three parts, each a set of OGM changes
+written as one commit: the **entry transition**, committed before the body runs; the **exit
+transition**, committed together with the body's changes at a clean exit; and the **error
+transition**, committed instead when the body fails or is cancelled. The **body** is the work
+itself, such as a robot's move: domain code that holds no transaction and no connection of the
+triple store while it runs, and whose changes reach the graph only through `transition.update()`.
+The object that `mw.commit()` yields is called the transition.
+_Avoid_: Job (the Operation's Avoid list has it too); Transaction held across the body (no
+transaction spans the body: each transition is one commit of its own).
+
+**Creation**:
+The making of one new instance through `mw.create()`, built on a **State transition**. The
+middleware mints the instance's IRI when the creation is entered, so that the body can link it
+before anything is written, and the body sets the instance's properties with
+`creation.update()`. Alone, a creation is committed at its clean exit. Inside the body of a write
+of the same middleware that is still to come, it joins that write, and the store admits or
+refuses both together. An error in the body writes nothing: nothing exists yet that could carry an
+error transition. A **Predefined scope** adds its rules to a creation. The object that
+`mw.create()` yields is called the creation.
+_Avoid_: Insert, Add (a creation is admitted or refused as a whole, with the changes of its
+Predefined scope); Create, for the whole act (a `Create` is the one kapps_ogm change of the new
+instance inside it).
+
 **Event trigger** (`execute()`):
-The receiver-side built-in Workflow that every resource-mode middleware exposes on its REST
-API. A caller "triggers" it to signal that an Operation addressed to that resource now exists in
-the graph. The receiver enqueues the Operation, `ogm.fetch`es it, and hands it to an optional
-domain callback (else leaves it `queued`). The trigger carries only the Operation IRI — the
-payload lives in the graph — and does not block on the work or return a business result.
+The receiver-side built-in Workflow that every resource-mode middleware exposes on its REST API. A
+caller "triggers" it to signal that an Operation addressed to that resource now exists in the graph,
+or that such an Operation changed state. A trigger crosses levels: between the Production system
+level and a Station. Resources inside one Station call workflows instead. The receiver reads the
+Operation, enqueues it, and hands it to an optional domain callback (else leaves it `queued`). A
+receiver with a **Notification handler** puts it into its **Intake** instead, and queues nothing.
+**Feedback** is not queued, and it runs no workflow. The trigger carries only the Operation IRI —
+the payload lives in the graph — and does not block on the work or return a business result.
 _Avoid_: RPC call, Invoke (the event trigger notifies; it does not run the work synchronously).
 
+**Notification**:
+A message that names one Operation in the graph and carries nothing else. It goes in both
+directions: down, "an Operation for you exists" (the Production system level to a Station), and up,
+"this Operation ended or changed" (a Station to the Production system level). It is plumbing that
+stands in for a triple store that cannot trigger events itself: it is not in the graph, nothing is
+written to the graph for it, and no Operation or Workflow is of a notified kind. Every middleware
+can receive one, through its **Event trigger**, found through its `svc:address`. `notify` sends it.
+The middleware itself sends the up direction to an Operation's **Issuer** as **Feedback**, after the
+commit that claims the Operation and after the commit that ends it.
+_Avoid_: Ring, Doorbell, Callback, Event (a notification carries no state change of its own; the
+state is in the graph).
+
+**Notification handler**:
+What a subproject provides, with `on_notification`, for the notifications that match none of its
+workflows, such as "this Operation ended". It also gets **Feedback**, also when a workflow of the
+instance realizes the Operation's Capability. It gets the Operation object. An instance with one
+takes its notifications through its **Intake**; an instance without one keeps the
+**Operation queue**.
+_Avoid_: Hook, Callback (a callback is `register_callback`'s work function of the dispatch
+lifecycle).
+
+**Intake**:
+How a middleware with a **Notification handler** takes the Operations it is notified of: one at a
+time, in arrival order, each to the exposed workflow that realizes its Capability, if that
+Capability is the middleware's own, or else to the Notification handler. The exception is
+**Feedback**: it goes to the Notification handler, also when the Operation's Capability is the
+middleware's own. The intake writes nothing: the workflow or the handler commits its own state
+transitions.
+_Avoid_: Queue, for the intake (the **Operation queue** is the dispatch lifecycle's); Dispatch (that
+is the caller's side).
+
 **Dispatch**:
-The caller-side act of handing an Operation to another resource: create the Operation
-individual in the graph (through the OGM-routed write path) and then fire the receiver's
-event trigger. Accessed from domain Python as a transaction context manager — the body populates
-the Operation, the atomic exit performs the create-and-notify.
+The caller-side act of handing an Operation to another resource: find a live Service that realizes
+the Capability, create the Operation individual in the graph (a **Creation**), and then notify that
+Service through its event trigger. Accessed from domain Python as `request()`, a context manager:
+the body populates the Operation, and the exit creates it in one commit, `queued`, with its
+**Issuer**, and notifies the receiver only after the store has admitted that commit. A failed
+notification undoes nothing: the Operation stays `queued`, the receiver takes it up when it starts,
+and the caller gets the notification's error. What `request()` yields is the **Issued Operation**.
 _Avoid_: Send, Publish (there is no message bus; dispatch is a graph write plus an event trigger).
 
+**Issuer**:
+The Resource of the middleware whose `request()` created an Operation, recorded on it as
+`svc:issuedBy` in the same commit and never changed. The Issuer is responsible for the Operation
+while it is `queued`; the Resource that claims it is responsible from `running` on. The middleware
+that claims the Operation, and the one that ends it, notifies the Issuer after its commit: that
+notification is **Feedback**.
+_Avoid_: Owner (ownership passes from the Issuer to the claimer), Requester, Caller (the Issuer is a
+Resource, not a call).
+
+**Issued Operation**:
+The handle that `request()` yields, an `IssuedOperation`: in the block, the draft of the new
+Operation; after it, the issued Operation with its IRI and its **Issuer**. It waits until the
+Operation is claimed and until it ends: it reads the status from the graph, and reads it again
+when a notification of the Operation arrives at the Issuer's event trigger.
+_Avoid_: Future, Promise (the handle holds no result; the status and the outcome are in the graph).
+
+**Feedback**:
+A **Notification** of an Operation that the receiver's own Resource issued, as its **Issuer**, and
+that is no longer `queued`. It tells the Issuer that the Operation was claimed or has ended. The
+receiver tells feedback from work by the Operation's Issuer and status in the graph, not by who sent
+it. Feedback is never work: it is not queued, it runs no workflow, and the **Notification handler**
+gets it.
+_Avoid_: Reply, Response (feedback answers no call), Acknowledgement (that is the event trigger's
+confirmation of receipt), Status update (the status is in the graph; a notification carries none).
+
 **Operation queue**:
-A resource-mode middleware's pending-work list — the Operations addressed to its Resource
-that await or are in progress. Held in memory as a cache and reconstructed at startup by
-querying the graph (own `queued` operations, plus own orphaned `running` operations to
-reclaim); filled live by event triggers. A dead resource's stranded operations are swept
+The pending-work list of a resource-mode middleware without a **Notification handler** — the
+Operations addressed to its Resource that await or are in progress. Held in memory as a cache and
+reconstructed at startup by querying the graph (own `queued` operations, plus own orphaned
+`running` operations to reclaim); filled live by event triggers. A dead resource's stranded operations are swept
 centrally by a watchdog, not by per-resource polling.
 _Avoid_: Message queue, Broker (there is no broker; the queue is a view over graph state).
 
@@ -303,6 +421,40 @@ _Avoid_: Poll, Consume (pull-and-run is the guarded unit of work, not the delive
 **Resource**:
 Defined in Core (`cfc:Resource`). The physical or logical thing a Service wraps (a door, a
 transformer cell, a screwing tool). Required at construction time in resource mode.
+
+**Workpiece**:
+Defined in Core (`cfc:Workpiece`). A production item that is processed, moved or stored on the
+shopfloor. A Workpiece is never a Resource.
+_Avoid_: item, material
+
+**Possession**:
+Which Resource holds a Workpiece now. A Workpiece has exactly one Possessor from its creation on:
+the middleware that creates it names that Possessor, which need not be the middleware's own
+Resource. A Resource may possess any number of Workpieces unless a domain rule limits it (a
+conveyor module holds one box, a shelf holds many).
+_Avoid_: custody, ownership, holding
+
+**Possessor**:
+The one Resource that possesses a Workpiece directly. The graph records only this Resource; a
+Resource that contains it is an Indirect possessor.
+_Avoid_: holder, owner, custodian
+
+**Indirect possessor**:
+A Resource that contains a Workpiece's Possessor, directly or through other Resources (a station
+that contains the conveyor module). Its Possession follows from the containment and is never
+recorded as Possession.
+_Avoid_: co-possessor, joint possessor
+
+**Possession state**:
+Defined in Core (`cfc:PossessionState`). The node that ties one Resource to the Workpieces it
+possesses. A Resource gets its one Possession state with its first Possession and keeps it for life;
+each Possession state has exactly one Possessor.
+_Avoid_: custody group, possession record; "state" in the sense of idle or busy
+
+**Handover**:
+One Workpiece passing from its Possessor to another Resource. Its change of Possession is one state
+transition, admitted before the physical move.
+_Avoid_: transfer, hand-off, possession switch
 
 **Mode**:
 A `SemanticMiddleware` construction-time choice governing what the instance is *for*:

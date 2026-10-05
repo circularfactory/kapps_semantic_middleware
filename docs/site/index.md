@@ -40,6 +40,26 @@ To also open the notebooks in Jupyter:
 pip install "kapps-semantic-middleware[examples,notebooks]"
 ```
 
+:::{note}
+With uv, the same three lines are `uv add kapps-semantic-middleware`,
+`uv add "kapps-semantic-middleware[examples]"` and
+`uv add "kapps-semantic-middleware[examples,notebooks]"`. Pick one route and follow it; uv creates
+and manages the environment itself.
+
+If `pip` answers `externally-managed-environment`, you are on Debian or Ubuntu, which mark the
+system Python as externally managed. Install into a virtual environment first
+(`python3 -m venv .venv && . .venv/bin/activate`).
+:::
+
+:::{warning}
+The `[examples]` extra is **not optional for the factory demonstration**, and leaving it out does
+not look like an error. `uvicorn` and `rdflib` arrive as dependencies of something else; `amqtt` —
+the in-process broker each unit brings up — does not. Without it the launcher seeds the graph, the
+first middleware prints its address, and the mock PLC then repeats
+`[Errno 111] Connection refused` indefinitely. No traceback appears, and neither does
+`Factory running`.
+:::
+
 Copy the example notebooks into your working directory. This is also how you get the compose
 files that start GraphDB, so it comes first:
 

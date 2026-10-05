@@ -35,6 +35,7 @@ from kapps_semantic_middleware.credentials import DEMO_REPOSITORY, graphdb_for
 
 from . import algorithm, seed, station_board
 from .controller import Controller
+from .launcher import GRACEFUL_SHUTDOWN_SECONDS
 
 logger = logging.getLogger(__name__)
 
@@ -90,8 +91,14 @@ async def run_server(
     host: str, port: int, controller: Controller, sock: socket.socket | None = None
 ) -> None:
     """Run the FastAPI server on this loop (uvicorn on the main thread)."""
+    # Bounded below the launcher's stop timeout, so that a connection which stays open cannot
+    # hold the stop open past the kill and cost the deregistration.
     config = __import__("uvicorn").Config(
-        app=controller.app, host=host, port=port, log_level="warning"
+        app=controller.app,
+        host=host,
+        port=port,
+        log_level="warning",
+        timeout_graceful_shutdown=GRACEFUL_SHUTDOWN_SECONDS,
     )
     server = __import__("uvicorn").Server(config=config)
     await server.serve(sockets=[sock] if sock is not None else None)

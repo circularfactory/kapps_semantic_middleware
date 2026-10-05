@@ -17,25 +17,34 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime, timedelta, timezone
-from typing import TYPE_CHECKING, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Callable, Mapping, NamedTuple, Optional, Sequence, Tuple
 from urllib.parse import urlsplit, urlunsplit
 
 from kapps_triplestore_interface import IRI
-from kapps_triplestore_interface.exceptions import InvalidIRIError
+from kapps_triplestore_interface.exceptions import InvalidIRIError, PreconditionFailedError
 from kapps_ogm.utils.class_scope import ClassScope
+from kapps_ogm import Create, Update
 
-from kapps_semantic_middleware.vocabulary import CFC, MES, OperationStatus, SVC
+from kapps_semantic_middleware.errors import (  # noqa: F401 - their earlier home, kept importable
+    HandoverPreconditionError,
+    OntologyGroundTruthError,
+    OperationQueueEmpty,
+    OperationResolutionError,
+    PossessionSwitchConflict,
+)
+from kapps_semantic_middleware.operation import _implements
+from kapps_semantic_middleware.possession import _switch_conflict, possession_change
+# jms_kapps's seed imports mint_possession_state_iri from here.
+from kapps_semantic_middleware.possession import mint_possession_state_iri  # noqa: F401
+from kapps_semantic_middleware.vocabulary import (
+    CFC,
+    MES,
+    OperationStatus,
+    SVC,
+)
 
 if TYPE_CHECKING:
     from kapps_ogm import OGM
-
-
-class OntologyGroundTruthError(Exception):
-    """A referenced class does not pre-exist as the required kind."""
-
-
-class OperationResolutionError(Exception):
-    """An Operation cannot resolve to a reachable Workflow endpoint."""
 
 
 RDF_TYPE = IRI("http://www.w3.org/1999/02/22-rdf-syntax-ns#type")
@@ -162,8 +171,8 @@ def _create(
     """Create a typed individual with its instance-owned properties via the OGM.
 
     ``data`` maps property-IRI strings to lists of values (object references as IRI strings,
-    literals as their Python/str value). Idempotent for unchanged structure (RDF set semantics
-    on the OGM underlying add).
+    literals as their Python/str value). The IRI must be new: if the graph already holds
+    statements about it, the OGM writes nothing and raises ``PreconditionFailedError``.
     """
     scope = ClassScope.from_property_chains([[IRI(prop)] for prop in data])
     ogm.create(
@@ -174,6 +183,30 @@ def _create(
         persist=True,
         named_graph=named_graph,
     )
+
+
+def _create_or_adopt(
+    ogm: "OGM",
+    class_iri: IRI,
+    instance_iri: IRI,
+    data: dict,
+    named_graph: Optional[IRI] = None,
+) -> None:
+    """Create a registration individual, or adopt the one an earlier run left in the graph.
+
+    Registration IRIs are stable across restarts, and deregistration keeps the structural
+    triples and ``rdf:type``. So a returning instance finds its individuals in place, and the OGM
+    refuses to create them again. Such an individual is adopted: ``data`` is set on it through
+    ``OGM.commit``. An unchanged individual gives an empty diff, and nothing is written. A
+    structural link that changed is replaced.
+
+    Only for the deterministic registration IRIs. An Operation IRI is fresh for each dispatch,
+    so an Operation that already exists is an error, and ``_create`` raises it.
+    """
+    try:
+        _create(ogm, class_iri, instance_iri, data, named_graph)
+    except PreconditionFailedError:
+        _set(ogm, instance_iri, data, named_graph)
 
 
 def _set(
@@ -209,7 +242,7 @@ def register_service(
     Raises OntologyGroundTruthError if ``service_class`` is not ``svc:Service`` or a subclass.
     """
     assert_class_registered(ogm, service_class, SVC.Service, named_graph)
-    _create(
+    _create_or_adopt(
         ogm, service_class, service_iri, {str(SVC.isServiceOf): [_ref(resource_iri)]}, named_graph
     )
     _set(ogm, service_iri, {str(SVC.address): [str(address)]}, named_graph)
@@ -237,11 +270,11 @@ def register_workflow(
     assert_class_registered(ogm, workflow_class, SVC.Workflow, named_graph)
     assert_class_registered(ogm, capability_class, CFC.Capability, named_graph)
 
-    _create(
+    _create_or_adopt(
         ogm, workflow_class, workflow_iri, {str(SVC.isWorkflowOf): [_ref(service_iri)]}, named_graph
     )
     _set(ogm, workflow_iri, {str(SVC.endpoint): [str(endpoint)]}, named_graph)
-    _create(
+    _create_or_adopt(
         ogm,
         capability_class,
         capability_iri,
@@ -278,7 +311,7 @@ def register_state_property(
     assert_class_registered(ogm, state_property_class, SVC.StateProperty, named_graph)
     assert_class_registered(ogm, capability_class, CFC.Capability, named_graph)
 
-    _create(
+    _create_or_adopt(
         ogm,
         state_property_class,
         state_property_iri,
@@ -286,7 +319,7 @@ def register_state_property(
         named_graph,
     )
     _set(ogm, state_property_iri, {str(SVC.endpoint): [str(endpoint)]}, named_graph)
-    _create(
+    _create_or_adopt(
         ogm,
         capability_class,
         capability_iri,
@@ -393,6 +426,19 @@ def sweep_stale_services(
     Service realize this Operation Capability"). ``_reconstruct_queue`` needs the same
     treatment. Neither is done yet.
     """
+    return _sweep_stale_services(ogm, max_age_seconds, now=now, named_graph=named_graph)
+
+
+def _sweep_stale_services(
+    ogm: "OGM",
+    max_age_seconds: float,
+    *,
+    now: Optional[datetime] = None,
+    named_graph: Optional[IRI] = None,
+    failed: Callable[[IRI], None] = lambda operation_iri: None,
+) -> list[IRI]:
+    """The sweep of :func:`sweep_stale_services`. It calls ``failed`` with each Operation that it
+    marked ``failed``, after that commit, so the watchdog notifies the Operation's issuer."""
     stale = find_stale_services(ogm, max_age_seconds, now=now, named_graph=named_graph)
     for service_iri in stale:
         resource_iri = _resource_of_service(ogm, service_iri, named_graph=named_graph)
@@ -409,6 +455,7 @@ def sweep_stale_services(
                     "stranded operation swept by watchdog: the resource is stale/dead",
                     named_graph=named_graph,
                 )
+                failed(op_iri)
         deregister_service(ogm, service_iri, named_graph=named_graph)
     return stale
 
@@ -448,22 +495,30 @@ def create_operation(
 ) -> None:
     """Create an Operation individual for dispatch. Address it to a target Capability.
 
-    The whole Operation receives creation in ONE ``OGM.create``. This includes its ``rdf:type``,
-    the single-valued ``cfc:implementsCapability`` link, and ``svc:operationStatus`` (plus any
-    svc:-domain ``data``). This is the single validated write path (paper §4.3/4.4.2,
-    "every write originates as an OGM commit"). This requires the loaded ontology to declare the
-    Core Operation-property domains (``cfc:implementsCapability`` with ``rdfs:domain
-    cfc:Operation``). The scenario/demo ontologies do. The Resource->Capability
-    ``cfc:hasCapability`` link written at *registration* is a separate, multi-valued append. It
-    stays on the low-level path until ``kapps_ogm`` grows a validated single-triple append.
+    The whole Operation is written in ONE ``OGM.commit``: its ``rdf:type``, its single-valued
+    ``cfc:implementsCapability`` link, ``svc:operationStatus``, and ``data``, whose properties
+    the Operation's class must declare. Its class scope names every property it sets, because
+    kapps_ogm drops a property that the scope does not name, with only a warning.
+    ``request()`` does not call this: it creates the Operation with ``mw.create()`` under the
+    operation scope. This writer is kept for existing callers, such as tests that seed an
+    Operation. The IRI must be new: the store must hold no statement about it yet, or the
+    store's refusal ``PreconditionFailedError`` is raised, and nothing is written. The
+    Resource->Capability ``cfc:hasCapability`` link written at *registration* is a separate,
+    multi-valued append. It stays on the low-level path until
+    ``kapps_ogm`` grows a validated single-triple append.
     """
     create_data: dict = {
-        str(CFC.implementsCapability): [_ref(capability_iri)],
+        **_implements(IRI(capability_iri)),
         str(SVC.operationStatus): [status],
+        **(data or {}),
     }
-    if data:
-        create_data.update(data)
-    _create(ogm, operation_class, operation_iri, create_data, named_graph)
+    creation = Create(
+        class_iri=IRI(operation_class),
+        instance_iri=IRI(operation_iri),
+        data=create_data,
+        class_scope=ClassScope.from_property_chains([[IRI(prop)] for prop in create_data]),
+    )
+    ogm.commit(changes=[creation], named_graph=named_graph)
 
 
 def resolve_dispatch_target(
@@ -511,39 +566,7 @@ def resolve_dispatch_target(
     return IRI(str(binding["cap"])), IRI(str(binding["svc"])), str(binding["addr"])
 
 
-def revert_operation(
-    ogm: "OGM",
-    operation_iri: IRI,
-    *,
-    operation_class: IRI,
-    capability_iri: IRI,
-    data: Optional[dict] = None,
-    named_graph: Optional[IRI] = None,
-) -> None:
-    """Remove a just-created Operation whose event trigger failed to deliver.
-
-    Atomic create-and-notify: a failed notify reverts the created Operation. ``OGM.delete`` is
-    not implemented in ``kapps_ogm`` yet. This removes exactly what ``create_operation`` wrote.
-    Literal properties receive clear through the OGM commit path first (commit needs the
-    ``rdf:type`` triple present to resolve the class). The ``cfc:implementsCapability`` and
-    ``rdf:type`` triples then receive removal via the low-level ``ogm.db.triple_delete`` (a
-    sanctioned kapps_triplestore_interface write).
-    """
-    clear_literals: dict = {str(SVC.operationStatus): []}
-    if data:
-        clear_literals.update({k: [] for k in data})
-    _set(ogm, operation_iri, clear_literals, named_graph)
-    ogm.db.triple_delete(
-        (operation_iri, CFC.implementsCapability, capability_iri), named_graph=named_graph
-    )
-    ogm.db.triple_delete((operation_iri, RDF_TYPE, operation_class), named_graph=named_graph)
-
-
 # ---- Pull-and-run: status transitions + terminal provenance ----
-
-
-class OperationQueueEmpty(Exception):
-    """Raised when `claim_next` finds no `queued` Operation to pull."""
 
 
 def resolve_operation_workflow(
@@ -557,23 +580,119 @@ def resolve_operation_workflow(
     Raises:
         OperationResolutionError: If no Workflow realizes the Operation Capability.
     """
+    return _resolve_claim(ogm, operation_iri, named_graph).workflow
+
+
+class _ClaimRead(NamedTuple):
+    """What the read before a claim finds about the Operation."""
+
+    #: The Workflow that realizes the Operation's Capability, for the provenance.
+    workflow: IRI
+    #: The Operation's issuer (``svc:issuedBy``), or None when it has none.
+    issuer: Optional[IRI]
+
+
+def _resolve_claim(
+    ogm: "OGM", operation_iri: IRI, named_graph: Optional[IRI] = None
+) -> _ClaimRead:
+    """The read before a claim, in one query: the Workflow that realizes the Operation's
+    Capability, as :func:`resolve_operation_workflow` finds it, and the Operation's issuer, whom
+    the claimer notifies after the claim and after the end.
+
+    Raises:
+        OperationResolutionError: If no Workflow realizes the Operation Capability.
+    """
     sparql = f"""
-    SELECT ?wf WHERE {{
+    SELECT ?wf ?issuer WHERE {{
         <{operation_iri}> <{CFC.implementsCapability}> ?cap .
         ?cap <{SVC.realizedByWorkflow}> ?wf .
+        OPTIONAL {{ <{operation_iri}> <{SVC.issuedBy}> ?issuer . }}
     }}
     """
-    result = ogm.db.query(sparql, convert_bindings=True)
-    bindings = (
-        result.get("results", {}).get("bindings", []) if isinstance(result, dict) else []
-    )
+    bindings = _bindings(ogm.db.query(sparql, convert_bindings=True))
     if not bindings:
         raise OperationResolutionError(
             f"Operation {operation_iri} cannot be resolved to any Workflow "
             "(no Capability realized by a Workflow)."
         )
     binding = bindings[0]
-    return IRI(str(binding["wf"]))
+    issuer = binding.get("issuer")
+    return _ClaimRead(IRI(str(binding["wf"])), IRI(str(issuer)) if issuer is not None else None)
+
+
+def _issuers(ogm: "OGM", operation_iris: Sequence[IRI]) -> dict[IRI, IRI]:
+    """The issuer (``svc:issuedBy``) of each of ``operation_iris`` that has one, in one read."""
+    if not operation_iris:
+        return {}
+    values = " ".join(f"<{iri}>" for iri in operation_iris)
+    sparql = f"""
+    SELECT ?op ?issuer WHERE {{
+        VALUES ?op {{ {values} }}
+        ?op <{SVC.issuedBy}> ?issuer .
+    }}
+    """
+    bindings = _bindings(ogm.db.query(sparql, convert_bindings=True))
+    return {IRI(str(b["op"])): IRI(str(b["issuer"])) for b in bindings}
+
+
+def _operation_statuses(ogm: "OGM", operation_iri: IRI) -> frozenset[str]:
+    """Every ``svc:operationStatus`` of an Operation that the store holds, in one read. One, as
+    a rule; none when the store holds no status for it."""
+    sparql = f"""
+    SELECT ?status WHERE {{
+        <{operation_iri}> <{SVC.operationStatus}> ?status .
+    }}
+    """
+    bindings = _bindings(ogm.db.query(sparql, convert_bindings=True))
+    return frozenset(str(b["status"]) for b in bindings)
+
+
+class _NotifiedRead(NamedTuple):
+    """What the middleware reads about a notified Operation to tell feedback from work: an
+    instance without a notification handler reads it at its event trigger, and the intake reads
+    it for an Operation that matches a workflow of the instance, to decide whether the workflow
+    runs."""
+
+    #: Every status of the Operation that the store holds.
+    statuses: frozenset[str]
+    #: The Operation's issuer, or None.
+    issuer: Optional[IRI]
+
+
+def _read_notified(ogm: "OGM", operation_iri: IRI) -> _NotifiedRead:
+    """Read a notified Operation's status and issuer in one query, and check that the store
+    holds it.
+
+    Raises:
+        ValueError: If the store holds no class for the Operation.
+    """
+    sparql = f"""
+    SELECT ?type ?status ?issuer WHERE {{
+        <{operation_iri}> a ?type .
+        OPTIONAL {{ <{operation_iri}> <{SVC.operationStatus}> ?status . }}
+        OPTIONAL {{ <{operation_iri}> <{SVC.issuedBy}> ?issuer . }}
+    }}
+    """
+    bindings = _bindings(ogm.db.query(sparql, convert_bindings=True))
+    if not bindings:
+        raise ValueError(f"Could not determine class IRI for instance {operation_iri}")
+    statuses = frozenset(str(b["status"]) for b in bindings if b.get("status") is not None)
+    issuers = [IRI(str(b["issuer"])) for b in bindings if b.get("issuer") is not None]
+    return _NotifiedRead(statuses, issuers[0] if issuers else None)
+
+
+def _bindings(result: Any) -> list:
+    """The rows of a SELECT's answer."""
+    return result.get("results", {}).get("bindings", []) if isinstance(result, dict) else []
+
+
+def _operation_status_update(operation_iri: IRI, status: str) -> Update:
+    """The kapps_ogm ``Update`` that sets `svc:operationStatus` on an Operation.
+
+    This covers the queued->running transition and any other single-status transition. Nothing
+    is written here: ``claim_next()`` commits it as the entry of ``mw.commit()``, its claim.
+    """
+    return Update(instance_iri=IRI(operation_iri), data={str(SVC.operationStatus): [status]})
 
 
 def set_operation_status(
@@ -585,9 +704,42 @@ def set_operation_status(
 ) -> None:
     """Set `svc:operationStatus` on an Operation via the OGM atomic commit path.
 
-    This covers the queued->running transition and any other single-status transition.
+    It writes :func:`_operation_status_update` in one ``OGM.commit``. ``claim_next()`` no longer
+    calls this: it commits the same change through ``mw.commit()``. This writer is kept for
+    existing callers.
     """
-    _set(ogm, operation_iri, {str(SVC.operationStatus): [status]}, named_graph)
+    ogm.commit(changes=[_operation_status_update(operation_iri, status)], named_graph=named_graph)
+
+
+def _terminal_status_update(
+    *,
+    operation_iri: IRI,
+    workflow_iri: IRI,
+    status: str,
+    result: Optional[str] = None,
+    failure_state: Optional[str] = None,
+    timestamp: Optional[datetime] = None,
+) -> Update:
+    """The kapps_ogm ``Update`` of a terminal status (`done`/`failed`) with execution provenance.
+
+    Status and provenance are one change, so one commit writes them together. An Operation is
+    never terminal-without-provenance. On failure, ``failure_state`` (a JSON snapshot of the
+    resource datamodel) goes into ``svc:failureState`` in the same change. The failed status and
+    the state that produced it are never separable. Nothing is written here: ``claim_next()``
+    commits it as the exit or the error transition of ``mw.commit()``.
+    """
+    if timestamp is None:
+        timestamp = datetime.now(timezone.utc)
+    data: dict = {
+        str(SVC.operationStatus): [status],
+        str(SVC.executedByWorkflow): [_ref(workflow_iri)],
+        str(SVC.executionTimestamp): [timestamp.isoformat()],
+    }
+    if result is not None:
+        data[str(SVC.executionResult)] = [str(result)]
+    if failure_state is not None:
+        data[str(SVC.failureState)] = [failure_state]
+    return Update(instance_iri=IRI(operation_iri), data=data)
 
 
 def record_terminal_status(
@@ -603,24 +755,20 @@ def record_terminal_status(
 ) -> None:
     """Record terminal status (`done`/`failed`) with execution provenance in ONE commit.
 
-    Write status + provenance atomically (single commit). An Operation is never
-    terminal-without-provenance. On failure,
-    ``failure_state`` (a JSON snapshot of the resource datamodel) receives write into
-    ``svc:failureState`` in the same commit. The failed status and the state that produced it
-    are never separable.
+    The commit writes :func:`_terminal_status_update`, so status and provenance are written
+    atomically, and on failure the dumped state with them. ``claim_next()`` no longer calls
+    this: it commits the same change through ``mw.commit()``. This writer is kept for existing
+    callers.
     """
-    if timestamp is None:
-        timestamp = datetime.now(timezone.utc)
-    data: dict = {
-        str(SVC.operationStatus): [status],
-        str(SVC.executedByWorkflow): [_ref(workflow_iri)],
-        str(SVC.executionTimestamp): [timestamp.isoformat()],
-    }
-    if result is not None:
-        data[str(SVC.executionResult)] = [str(result)]
-    if failure_state is not None:
-        data[str(SVC.failureState)] = [failure_state]
-    _set(ogm, operation_iri, data, named_graph)
+    change = _terminal_status_update(
+        operation_iri=operation_iri,
+        workflow_iri=workflow_iri,
+        status=status,
+        result=result,
+        failure_state=failure_state,
+        timestamp=timestamp,
+    )
+    ogm.commit(changes=[change], named_graph=named_graph)
 
 
 # ---- Queue durability + recovery ----
@@ -737,18 +885,7 @@ def mark_operation_failed(
     )
 
 
-# ---- Possession + handover (Core reified possession) ----
-
-
-class HandoverPreconditionError(Exception):
-    """A handover precondition failed (caller lacks possession, or counterpart lacks the
-    complementary handover ability). Rejection occurs before any physical work begins."""
-
-
-def mint_possession_state_iri(workpiece_iri: IRI) -> IRI:
-    """Mint a fresh PossessionState IRI. Each change of possession makes a new state.
-    The previous one is kept as implicit history."""
-    return IRI(f"{workpiece_iri}_possession_{uuid.uuid4().hex[:12]}")
+# ---- Possession + handover (Core reified possession, one state per Resource) ----
 
 
 def create_possession(
@@ -758,25 +895,20 @@ def create_possession(
     possessor_iri: IRI,
     named_graph: Optional[IRI] = None,
 ) -> IRI:
-    """Establish an initial possession over Core reified model (verified vs Core 0.9.0).
+    """Give a workpiece its first Possessor, in one OGM commit.
 
-    A ``cfc:PossessionState`` the possessor holds (``cfc:hasPossessor``, appended as an atomic
-    insertion since a resource may possess several workpieces) and the workpiece is possessed by
-    (``cfc:hasPossessedWorkpiece``, set through the OGM commit/update path). The
-    scenario ontology must declare these Core terms domains so the OGM commit validates.
+    The same write as :func:`switch_possession`, under the name that callers of a first
+    possession use: the workpiece points at the possessor's one ``cfc:PossessionState``, and
+    when the possessor has none yet, the same commit creates it as ``<possessor>_possession``
+    (its ``Create`` writes its type) and links the possessor to it. A possessor that has a state
+    keeps its link unchanged, however many workpieces it possesses.
 
     Returns:
-        The minted PossessionState IRI.
+        The possessor's PossessionState IRI.
     """
-    ps_iri = mint_possession_state_iri(workpiece_iri)
-    # A resource may possess several workpieces at once (possession is not
-    # universally maxCount 1), so `cfc:hasPossessor` is APPENDED via the kapps_triplestore_interface
-    # atomic insertion. A workpiece has exactly one possession, so `cfc:hasPossessedWorkpiece`
-    # is SET through the OGM commit path (an atomic replace). The PossessionState node comes
-    # into being as their shared object (inferably a cfc:PossessionState via rdfs:range).
-    ogm.db.triple_add((possessor_iri, CFC.hasPossessor, ps_iri), named_graph=named_graph)
-    _set(ogm, workpiece_iri, {str(CFC.hasPossessedWorkpiece): [_ref(ps_iri)]}, named_graph)
-    return ps_iri
+    return switch_possession(
+        ogm, workpiece_iri=workpiece_iri, new_possessor_iri=possessor_iri, named_graph=named_graph
+    )
 
 
 def find_possession_state(
@@ -832,24 +964,73 @@ def switch_possession(
     *,
     workpiece_iri: IRI,
     new_possessor_iri: IRI,
+    workpiece_update: Optional[Mapping[str, Sequence[Any]]] = None,
     named_graph: Optional[IRI] = None,
 ) -> IRI:
-    """Atomically change possession of a workpiece to a new possessor.
+    """Hand a workpiece to a new possessor in one OGM commit, with no move around it.
 
-    A fresh ``cfc:PossessionState`` receives mint for the new possessor. The new possessor
-    ``cfc:hasPossessor`` receives APPEND as an atomic insertion (kapps_triplestore_interface). A resource
-    may possess several workpieces. This must not disturb its existing possessions, because
-    possession is not universally maxCount 1. The workpiece ``cfc:hasPossessedWorkpiece`` then
-    receives re-point via a single ``OGM.commit``. This is the update path, an atomic
-    DELETE/INSERT. It keeps the workpiece pointed to exactly one PossessionState throughout.
-    Core Workpiece cardinality-1 (the commit-time SHACL backstop) is never transiently violated.
-    Append the possessor link BEFORE the re-point. A failed re-point leaves the prior possession
-    fully intact. The previous PossessionState is kept as implicit history.
+    This is the possession change of ``SemanticMiddleware.handover()`` on its own. The workpiece's
+    ``cfc:hasPossessedWorkpiece`` points at the new possessor's one state, and
+    ``workpiece_update`` changes more of its properties in the same commit. When the new
+    possessor has no state yet, the same commit creates it and links the possessor to it. The
+    previous possessor keeps its state and its link, and so does a new possessor that has a
+    state. The store validates the whole commit once; if it refuses, nothing of it stays.
+
+    Another write that moves the workpiece at the same moment is refused only in part. Inside the
+    commit, kapps_ogm compares the workpiece with a fresh read of it: a write that landed before
+    that read is overwritten. One that lands between that read and the write makes the store
+    refuse this commit and write nothing of it, and the switch raises
+    ``PossessionSwitchConflict``.
+
+    A participant hands over with ``SemanticMiddleware.handover()``. This module-level helper,
+    and ``create_possession``, serve callers that hold no middleware; they write through
+    ``OGM.commit``, the validated write, not through ``mw.commit()``.
+
+    Args:
+        workpiece_update: More properties of the workpiece to set in the same commit, as
+            ``{property IRI: [values]}``; each listed property is replaced. An IRI value (an
+            ``IRI`` or an rdflib ``URIRef``), or ``{"id": iri}``, is a reference to that object;
+            any other value goes to the OGM as it is.
 
     Returns:
-        The new PossessionState IRI.
+        The new possessor's PossessionState IRI.
+
+    Raises:
+        ValueError: If ``workpiece_update`` names ``cfc:hasPossessedWorkpiece``, which the
+            change sets itself, or the new possessor has more than one possession state.
+        PossessionSwitchConflict: If another write changed what the commit had read, so the
+            store found its precondition false (``PreconditionFailedError``, the cause).
+            Nothing is written.
     """
-    new_ps = mint_possession_state_iri(workpiece_iri)
-    ogm.db.triple_add((new_possessor_iri, CFC.hasPossessor, new_ps), named_graph=named_graph)
-    _set(ogm, workpiece_iri, {str(CFC.hasPossessedWorkpiece): [_ref(new_ps)]}, named_graph)
-    return new_ps
+    change = possession_change(
+        ogm,
+        workpiece_iri=workpiece_iri,
+        possessor_iri=new_possessor_iri,
+        workpiece_update=workpiece_update,
+    )
+    try:
+        ogm.commit(changes=change.changes, named_graph=named_graph)
+    except PreconditionFailedError as error:
+        raise _switch_conflict(workpiece_iri) from error
+    return change.state
+
+
+def reachable_service_addresses(ogm: "OGM", resource_iri: IRI) -> list[Tuple[IRI, str]]:
+    """Every reachable Service of a resource, with its ``svc:address``.
+
+    The reachability rule of ``services_of_resource(..., reachable_only=True)``: a Service is
+    reachable while it carries an ``svc:address``. The address is read in the same query, so a
+    Service cannot lose it between two reads. A resource may have several reachable Services
+    (one per middleware instance); the caller decides what that means.
+    """
+    sparql = f"""
+    SELECT DISTINCT ?svc ?addr WHERE {{
+        ?svc <{SVC.isServiceOf}> <{resource_iri}> .
+        ?svc <{SVC.address}> ?addr .
+    }}
+    """
+    result = ogm.db.query(sparql, convert_bindings=True)
+    bindings = (
+        result.get("results", {}).get("bindings", []) if isinstance(result, dict) else []
+    )
+    return [(IRI(str(b["svc"])), str(b["addr"])) for b in bindings]

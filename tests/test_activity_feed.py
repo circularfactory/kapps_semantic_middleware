@@ -13,11 +13,11 @@ one critical section. It inserted in another. Two threads interleave. The deque
 orders ``[.., 6, 5]``. The stream re-sends record 6 on every poll forever. The
 concurrency test pins this race.
 
-**Critical hazard:** The SSE endpoint is an endless generator. TestClient runs
-it on a blocking portal. The portal waits for the generator to finish. Iterate
-through it and the test run hangs forever. Break and exit the with block. The
-hang persists. Tests drive the generator directly instead. The HTML page at
-/activity is safe to fetch with TestClient.
+**Critical hazard:** The SSE endpoint is a generator that runs for its whole
+lifetime. TestClient runs it on a blocking portal. The portal waits for the
+generator to finish. Break and exit the with block. The wait persists. Tests
+drive the generator directly instead. The HTML page at /activity is safe to
+fetch with TestClient.
 
 No GraphDB, no broker, no network. These tests run entirely offline under
 ``pytest -m 'not live'``.
@@ -36,6 +36,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from kapps_semantic_middleware import activity
 from kapps_semantic_middleware.activity import (
     ActivityFeed,
     _ActivityHandler,
@@ -86,18 +87,20 @@ def fake_middleware():
     return _FakeMiddleware()
 
 
-async def _drive_stream(mw: Any, n: int, timeout: float = 3.0) -> list[str]:
-    """Drive the SSE generator directly and return n chunks.
+async def _drive_stream(
+    mw: Any, n: int, timeout: float = 3.0, last_event_id: str | None = None
+) -> list[dict[str, str]]:
+    """Drive the SSE generator directly and return its first n events.
 
     **Critical:** Do NOT use TestClient for /activity/stream. The endpoint
-    returns an endless StreamingResponse generator. TestClient runs it on a
-    blocking portal. The portal waits for the generator to finish. Iterate
-    through it. The test run hangs forever. Break and exit the with block. The
-    hang persists.
+    returns a StreamingResponse generator that runs for its whole lifetime.
+    TestClient runs it on a blocking portal. The portal waits for the generator
+    to finish. The test then waits the lifetime out for every chunk it reads.
 
     This helper bypasses TestClient. It finds the route. It calls the endpoint
-    directly with a fake request. The request never disconnects. It pulls n
-    chunks from the async iterator with a timeout.
+    directly with a fake request. The request never disconnects. It pulls
+    chunks from the async iterator with a timeout, and keeps the ones that
+    carry data. A ``retry:`` chunk carries none.
     """
     route = next(r for r in mw.app.routes if getattr(r, "path", "") == "/activity/stream")
 
@@ -105,11 +108,25 @@ async def _drive_stream(mw: Any, n: int, timeout: float = 3.0) -> list[str]:
         async def is_disconnected(self) -> bool:
             return False
 
-    response = await route.endpoint(_NeverDisconnected())
+    response = await route.endpoint(_NeverDisconnected(), last_event_id=last_event_id)
     iterator = response.body_iterator.__aiter__()
-    chunks = [await asyncio.wait_for(iterator.__anext__(), timeout) for _ in range(n)]
+    events: list[dict[str, str]] = []
+    while len(events) < n:
+        fields = _fields(await asyncio.wait_for(iterator.__anext__(), timeout))
+        if "data" in fields:
+            events.append(fields)
     await response.body_iterator.aclose()
-    return chunks
+    return events
+
+
+def _fields(chunk: str) -> dict[str, str]:
+    """The fields of one SSE chunk, by name. ``data`` stays a JSON string."""
+    fields = {}
+    for line in chunk.splitlines():
+        if line and not line.startswith(":"):
+            name, _, value = line.partition(": ")
+            fields[name] = value
+    return fields
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -363,14 +380,10 @@ async def test_the_stream_replays_the_backlog(fake_middleware):
     feed.append(timestamp=1.0, level="INFO", logger="test", message="first")
     feed.append(timestamp=2.0, level="INFO", logger="test", message="second")
     
-    chunks = await _drive_stream(fake_middleware, 2)
-    
-    assert len(chunks) == 2
-    assert chunks[0].startswith("data: ")
-    assert chunks[1].startswith("data: ")
-    
-    first = json.loads(chunks[0][6:])
-    second = json.loads(chunks[1][6:])
+    events = await _drive_stream(fake_middleware, 2)
+
+    first = json.loads(events[0]["data"])
+    second = json.loads(events[1]["data"])
     
     assert first["message"] == "first"
     assert second["message"] == "second"
@@ -481,14 +494,17 @@ async def test_a_client_that_falls_behind_is_told_records_were_dropped(fake_midd
     chunks = []
     found_warning = False
     warning_data = None
+    warning_id = None
     for _ in range(20):
         chunk = await asyncio.wait_for(iterator.__anext__(), timeout=2.0)
         chunks.append(chunk)
-        if chunk.startswith("data: "):
-            data = json.loads(chunk[6:])
+        fields = _fields(chunk)
+        if "data" in fields:
+            data = json.loads(fields["data"])
             if data.get("level") == "WARNING" and "dropped" in data.get("message", "").lower():
                 found_warning = True
                 warning_data = data
+                warning_id = fields["id"]
                 break
     
     assert found_warning, "Expected a WARNING about dropped records"
@@ -497,15 +513,18 @@ async def test_a_client_that_falls_behind_is_told_records_were_dropped(fake_midd
     # client consumed through seq 20 when it fell behind.
     expected_dropped = feed.oldest_seq - 20 - 1
     assert warning_data["message"].startswith(f"{expected_dropped} record(s) dropped")
+    # The notice carries an id like every other event. A client that reconnects after it
+    # resumes behind the gap, rather than being told about it a second time.
+    assert warning_id.endswith(f"-{warning_data['seq']}")
 
     # The stream carries on afterwards rather than stalling on the gap. Pulled
     # after the warning was found. The search loop above breaks on it. `chunks`
     # ends there. Looking inside it for what comes next can only fail.
     following = []
     for _ in range(3):
-        chunk = await asyncio.wait_for(iterator.__anext__(), timeout=2.0)
-        if chunk.startswith("data: "):
-            following.append(json.loads(chunk[6:]))
+        fields = _fields(await asyncio.wait_for(iterator.__anext__(), timeout=2.0))
+        if "data" in fields:
+            following.append(json.loads(fields["data"]))
 
     await response.body_iterator.aclose()
 
@@ -553,7 +572,151 @@ async def test_the_stream_stops_when_the_client_disconnects(fake_middleware):
     assert completed, "Stream did not terminate after client disconnected"
     
     # Backlog was delivered before stopping.
-    data_chunks = [c for c in chunks if c.startswith("data: ") and not c.startswith("data: :")]
-    messages = [json.loads(c[6:])["message"] for c in data_chunks if not json.loads(c[6:]).get("message", "").startswith(":")]
+    messages = [
+        json.loads(fields["data"])["message"]
+        for fields in map(_fields, chunks)
+        if "data" in fields
+    ]
     assert "first" in messages
     assert "second" in messages
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Lifetime and resume tests: a stream ends by itself, and a client resumes
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_the_stream_ends_after_its_lifetime(fake_middleware, monkeypatch):
+    """A stream ends by itself, so it never holds a stopping server open.
+
+    uvicorn waits for every open response before it runs the lifespan shutdown,
+    and the instance deregisters only there. A response that never completes
+    holds the stop open until a supervisor kills the process, and a kill skips
+    the deregistration. The client never disconnects here, so only the lifetime
+    can end the stream.
+    """
+    monkeypatch.setattr(activity, "STREAM_LIFETIME_SECONDS", 0.3)
+    enable_activity_feed(fake_middleware)
+    route = next(r for r in fake_middleware.app.routes if getattr(r, "path", "") == "/activity/stream")
+
+    class _NeverDisconnected:
+        async def is_disconnected(self) -> bool:
+            return False
+
+    response = await route.endpoint(_NeverDisconnected())
+    started = asyncio.get_running_loop().time()
+    async with asyncio.timeout(3.0):
+        async for _chunk in response.body_iterator:
+            pass
+
+    assert asyncio.get_running_loop().time() - started >= 0.3
+
+
+@pytest.mark.asyncio
+async def test_the_stream_tells_the_client_to_reconnect_at_once(fake_middleware):
+    """The first chunk sets the reconnection time of a browser's ``EventSource``.
+
+    A browser waits about 3 s by default before it reconnects. Every stream now
+    ends after its lifetime, so that default would put a gap into the feed at
+    every end.
+    """
+    enable_activity_feed(fake_middleware)
+    route = next(r for r in fake_middleware.app.routes if getattr(r, "path", "") == "/activity/stream")
+
+    class _NeverDisconnected:
+        async def is_disconnected(self) -> bool:
+            return False
+
+    response = await route.endpoint(_NeverDisconnected())
+    first = _fields(await asyncio.wait_for(response.body_iterator.__anext__(), 1.0))
+    await response.body_iterator.aclose()
+
+    assert "data" not in first
+    assert 0 < int(first["retry"]) <= 1000
+
+
+@pytest.mark.asyncio
+async def test_every_event_id_names_its_feed_and_its_record(fake_middleware):
+    """The id is what a reconnecting browser sends back as ``Last-Event-ID``."""
+    feed = enable_activity_feed(fake_middleware)
+    feed.append(timestamp=1.0, level="INFO", logger="test", message="first")
+    feed.append(timestamp=2.0, level="INFO", logger="test", message="second")
+
+    events = await _drive_stream(fake_middleware, 2)
+
+    feeds, records = zip(*(event["id"].rsplit("-", 1) for event in events))
+    assert len(set(feeds)) == 1
+    assert list(records) == [str(json.loads(event["data"])["seq"]) for event in events]
+
+
+@pytest.mark.asyncio
+async def test_a_reconnecting_client_gets_only_what_it_has_not_seen(fake_middleware):
+    """``Last-Event-ID`` replaces the backlog replay, so a reconnect repeats nothing."""
+    feed = enable_activity_feed(fake_middleware)
+    for message in ("first", "second", "third"):
+        feed.append(timestamp=1.0, level="INFO", logger="test", message=message)
+    _first, second, _third = await _drive_stream(fake_middleware, 3)
+
+    [event] = await _drive_stream(fake_middleware, 1, last_event_id=second["id"])
+
+    assert json.loads(event["data"])["message"] == "third"
+
+
+@pytest.mark.asyncio
+async def test_an_id_from_another_feed_replays_this_one(fake_middleware):
+    """A browser page outlives the instance it was opened on.
+
+    A new instance on the same address numbers its records from 1 again, so the
+    number alone cannot tell the two feeds apart. Resuming behind the old number
+    would hide this feed's first records, with no notice.
+    """
+    earlier = _FakeMiddleware()
+    enable_activity_feed(earlier).append(timestamp=1.0, level="INFO", logger="test", message="old")
+    [old] = await _drive_stream(earlier, 1)
+
+    feed = enable_activity_feed(fake_middleware)
+    for message in ("first", "second", "third"):
+        feed.append(timestamp=1.0, level="INFO", logger="test", message=message)
+
+    events = await _drive_stream(fake_middleware, 3, last_event_id=old["id"])
+
+    assert [json.loads(event["data"])["message"] for event in events] == [
+        "first",
+        "second",
+        "third",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_a_client_that_resumes_behind_the_window_is_told_what_it_missed(
+    fake_middleware,
+):
+    """The drop notice also fires for records that fell out while a client reconnected."""
+    feed = enable_activity_feed(fake_middleware, capacity=3)
+    for i in range(10):
+        feed.append(timestamp=1.0, level="INFO", logger="test", message=f"msg{i}")
+
+    [newest] = await _drive_stream(fake_middleware, 1)
+    this_feed = newest["id"].rsplit("-", 1)[0]
+
+    notice, following = await _drive_stream(
+        fake_middleware, 2, last_event_id=f"{this_feed}-2"
+    )
+
+    # Records 3 to 7 fell out of a window that now holds 8, 9 and 10.
+    assert json.loads(notice["data"])["message"].startswith("5 record(s) dropped")
+    assert notice["id"] == f"{this_feed}-7"
+    assert json.loads(following["data"])["seq"] == 8
+
+
+@pytest.mark.asyncio
+async def test_a_fresh_stream_after_eviction_reports_no_drop(fake_middleware):
+    """A viewer that just arrived missed nothing: the window is all it was ever offered."""
+    feed = enable_activity_feed(fake_middleware, capacity=3)
+    for i in range(10):
+        feed.append(timestamp=1.0, level="INFO", logger="test", message=f"msg{i}")
+
+    events = await _drive_stream(fake_middleware, 3)
+
+    assert [json.loads(event["data"])["message"] for event in events] == ["msg7", "msg8", "msg9"]

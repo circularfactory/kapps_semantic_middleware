@@ -11,6 +11,7 @@ from __future__ import annotations
 from importlib import resources
 
 from kapps_triplestore_interface import IRI
+from kapps_triplestore_interface.exceptions import GraphDbException
 
 from kapps_semantic_middleware.vocabulary import CORE_ONTOLOGY, MES_ONTOLOGY, SVC_ONTOLOGY
 
@@ -59,8 +60,21 @@ def clear_repository(db) -> None:
 
     Always run this before seeding, so a scenario never accumulates residual
     triples from a previous run or a different scenario.
+
+    The seed must stop where the store refused the clear. Any error that
+    ``clear_graph()`` raises passes on unchanged.
+
+    Raises:
+        GraphDbException: ``clear_graph()`` returned ``False``, as
+            kapps-triplestore-interface 2.1.1 does when the store answers with
+            an error. The error names the repository.
     """
-    db.clear_graph()
+    if not db.clear_graph():
+        raise GraphDbException(
+            f"The store did not clear the default graph of repository "
+            f"{db.repository!r}: clear_graph() returned False. The seed stops "
+            f"here, so it does not write over the old data."
+        )
 
 
 def _graph_is_populated(db, graph_iri: IRI) -> bool:

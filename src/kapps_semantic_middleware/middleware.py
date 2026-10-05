@@ -11,18 +11,26 @@ Capability to a Workflow endpoint, which the system then invokes over HTTP.
 from __future__ import annotations
 
 import asyncio
+import atexit
+import collections
 import contextlib
 import functools
 import inspect
 import json
 import logging
-from typing import Any, Callable, Dict, List, Optional
+import threading
+import time
+import weakref
+from typing import Any, Callable, Deque, Dict, List, Mapping, NamedTuple, Optional, Sequence
 
 import anyio
 import httpx
 from fastapi import APIRouter
 from fastapi.responses import Response
+from kapps_ogm import Update
+from kapps_ogm.utils.class_scope import ClassScope
 from kapps_triplestore_interface import IRI
+from kapps_triplestore_interface.exceptions import PreconditionFailedError
 from pydantic import BaseModel
 
 from transitional_sync_middleware import Middleware
@@ -39,42 +47,66 @@ from kapps_semantic_middleware.connectors.wiring import WiringPlan, plan_wiring
 from kapps_semantic_middleware import modes
 from kapps_semantic_middleware.modes import Mode
 from kapps_semantic_middleware.activity import ActivityFeed, enable_activity_feed
+from kapps_semantic_middleware.commit import (
+    Change,
+    ErrorTransition,
+    ExitTransition,
+    _Commit,
+    _Creation,
+    _nothing_to_join,
+    _property,
+)
+from kapps_semantic_middleware.operation import (
+    _implemented_capabilities,
+    _received_scope,
+    operation,
+)
+from kapps_semantic_middleware.possession import _switch_conflict, possession_change
 from kapps_semantic_middleware.rest_router import generate_recursive_rest_api
-from kapps_semantic_middleware.registration import (
+from kapps_semantic_middleware.errors import (
     HandoverPreconditionError,
+    NotificationUndelivered,
     OperationQueueEmpty,
     OperationResolutionError,
+)
+from kapps_semantic_middleware.registration import (
+    _issuers,
+    _operation_status_update,
+    _operation_statuses,
+    _read_notified,
+    _resolve_claim,
+    _sweep_stale_services,
+    _terminal_status_update,
     build_event_trigger_url,
     build_state_endpoint,
     build_workflow_endpoint,
     counterpart_has_complementary_ability,
-    create_operation,
     deregister_service,
     find_possession_state,
     find_resource_operations,
     mark_operation_failed,
     mint_capability_iri,
-    mint_operation_iri,
     mint_service_iri,
     mint_state_property_iri,
     mint_workflow_iri,
-    record_terminal_status,
+    reachable_service_addresses,
     register_service,
     register_state_property,
     register_workflow,
     resolve_dispatch_target,
-    resolve_operation_workflow,
-    revert_operation,
-    set_operation_status,
-    switch_possession,
-    sweep_stale_services,
     update_heartbeat,
 )
-from kapps_semantic_middleware.vocabulary import OperationStatus
+from kapps_semantic_middleware.vocabulary import SVC, OperationStatus
 
 logger = logging.getLogger(__name__)
 
-__all__ = ["SemanticMiddleware", "OperationResolutionError", "Mode"]
+__all__ = ["SemanticMiddleware", "IssuedOperation", "OperationResolutionError", "Mode"]
+
+#: The statuses of an Operation that a resource has claimed: it runs, or it has ended.
+_CLAIMED = frozenset({OperationStatus.RUNNING, OperationStatus.DONE, OperationStatus.FAILED})
+#: The statuses of an Operation that has ended.
+_ENDED = frozenset({OperationStatus.DONE, OperationStatus.FAILED})
+
 
 
 class _EventTriggerPayload(BaseModel):
@@ -89,17 +121,175 @@ class _EventTriggerPayload(BaseModel):
     operation_iri: str
 
 
-class _OperationDraft:
-    """Mutable draft yielded by ``request(...)``.
+class _ReadOperation(NamedTuple):
+    """A received Operation as the intake read it, with the Capabilities that it implements."""
 
-    The dispatch body populates ``data`` (domain property-IRI str -> list of values) and
-    can read ``iri`` (the minted Operation IRI). The atomic exit turns it into a graph
-    Operation and fires the event trigger.
+    #: The Operation as a kapps_ogm ``Node``, materialized under the intake's scope.
+    node: Any
+    #: The IRIs of the Capabilities that the Operation implements, found in the read.
+    capabilities: List[IRI]
+
+
+class _Received(NamedTuple):
+    """An Operation in the intake's FIFO."""
+
+    #: The Operation's IRI.
+    iri: IRI
+    #: None when it must be read before it runs: it waited, or it was never read.
+    read: Optional[_ReadOperation]
+
+
+class IssuedOperation:
+    """The Operation that ``request()`` issues: its draft in the block, its handle after it.
+
+    ``request()`` makes it; a caller does not. In the block of ``with mw.request(...) as op:``,
+    ``op.data`` takes the Operation's domain properties, as ``{property IRI: [values]}``.
+    ``op.iri`` is the Operation's IRI. After the block, the Operation is in the graph, ``queued``.
+    ``op.issuer`` is its issuer: the Resource of the middleware that issued it. ``svc:issuedBy``
+    records it. Then ``op`` waits for the Operation, in a coroutine::
+
+        if not await op.claimed(timeout=30):
+            ...  # nobody claimed it in time: it is still queued, and still the issuer's
+        status = await op.ended()  # "done" or "failed"
+
+    and with ``op.wait_claimed(timeout)`` and ``op.wait_ended(timeout)`` in code that may block,
+    with the same results.
+
+    A wait reads the status from the graph first, so a claim that came before the wait is seen.
+    Then it waits until a notification of the Operation arrives at the issuer's event trigger, and
+    reads the status again. The middleware that claims the Operation, and the one that ends it,
+    sends that notification after its commit. When the timeout passes, the wait reads the status
+    once more. Nothing else wakes a wait: it does not poll. So a wait ends before its timeout only
+    when the issuer's middleware is served, and has exactly one live Service.
     """
 
-    def __init__(self, iri: IRI) -> None:
+    def __init__(self, middleware: "SemanticMiddleware", iri: IRI, issuer: IRI) -> None:
+        #: The Operation's IRI.
         self.iri = iri
+        #: The issuer: the Resource of the middleware that issued the Operation.
+        self.issuer = issuer
+        #: The Operation's domain properties, set in the block of ``request()``.
         self.data: Dict[str, list] = {}
+        self._middleware = middleware
+        # Whether the Operation is in the graph: only then can a wait read its status.
+        self._in_graph = False
+        # The notifications of the Operation that the issuer's event trigger took, counted, and
+        # the condition on which a blocking wait waits for the next arrival.
+        self._arrival = threading.Condition()
+        self._arrivals = 0
+        # The event of each waiting coroutine, with the event loop that it runs on.
+        self._waiters: set = set()
+
+    async def claimed(self, timeout: Optional[float] = 30) -> bool:
+        """Wait until the Operation is claimed.
+
+        Returns:
+            True once the Operation is claimed: it is ``running``, or it has already ended.
+            False when ``timeout`` seconds pass first. ``None`` waits without a limit.
+        """
+        return await self._until(_CLAIMED, timeout) is not None
+
+    async def ended(self, timeout: Optional[float] = None) -> str:
+        """Wait until the Operation has ended.
+
+        Returns:
+            ``"done"`` or ``"failed"``.
+
+        Raises:
+            TimeoutError: If ``timeout`` seconds pass first. ``None`` waits without a limit.
+        """
+        status = await self._until(_ENDED, timeout)
+        if status is None:
+            raise TimeoutError(f"{self.iri} did not end within {timeout} s")
+        return status
+
+    def wait_claimed(self, timeout: Optional[float] = 30) -> bool:
+        """The blocking twin of :meth:`claimed`, with the same results. It blocks its thread:
+        never call it on the event loop of the issuer's middleware, whose event trigger must
+        take the notification that ends the wait."""
+        return self._wait(_CLAIMED, timeout) is not None
+
+    def wait_ended(self, timeout: Optional[float] = None) -> str:
+        """The blocking twin of :meth:`ended`, with the same results and the same error. It
+        blocks its thread, as :meth:`wait_claimed` does."""
+        status = self._wait(_ENDED, timeout)
+        if status is None:
+            raise TimeoutError(f"{self.iri} did not end within {timeout} s")
+        return status
+
+    def _read(self, wanted: frozenset) -> Optional[str]:
+        """The Operation's status, read from the graph, when it is one of ``wanted``; else None.
+
+        Raises:
+            RuntimeError: If the Operation is not in the graph yet: the block of ``request()``
+                has not ended.
+        """
+        if not self._in_graph:
+            raise RuntimeError(
+                f"{self.iri} is not issued yet: wait for it after the block of request()"
+            )
+        found = sorted(_operation_statuses(self._middleware.ogm, self.iri) & wanted)
+        return found[0] if found else None
+
+    async def _until(self, wanted: frozenset, timeout: Optional[float]) -> Optional[str]:
+        """Wait in a coroutine until the status is one of ``wanted``, and return it; None when
+        the timeout passes first. Each read runs in a worker thread."""
+        loop = asyncio.get_running_loop()
+        arrived = asyncio.Event()
+        waiter = (loop, arrived)
+        with self._arrival:
+            self._waiters.add(waiter)
+        try:
+            deadline = None if timeout is None else loop.time() + timeout
+            while True:
+                # Cleared before the read: a notification that arrives during the read sets it,
+                # and the status is read again.
+                arrived.clear()
+                status = await anyio.to_thread.run_sync(self._read, wanted)
+                if status is not None:
+                    return status
+                remaining = None if deadline is None else deadline - loop.time()
+                if remaining is not None and remaining <= 0:
+                    return None
+                try:
+                    await asyncio.wait_for(arrived.wait(), remaining)
+                except asyncio.TimeoutError:
+                    return await anyio.to_thread.run_sync(self._read, wanted)
+        finally:
+            with self._arrival:
+                self._waiters.discard(waiter)
+
+    def _wait(self, wanted: frozenset, timeout: Optional[float]) -> Optional[str]:
+        """Wait in this thread until the status is one of ``wanted``, and return it; None when
+        the timeout passes first."""
+        deadline = None if timeout is None else time.monotonic() + timeout
+        with self._arrival:
+            seen = self._arrivals
+        while True:
+            status = self._read(wanted)
+            if status is not None:
+                return status
+            with self._arrival:
+                while self._arrivals == seen:
+                    remaining = None if deadline is None else deadline - time.monotonic()
+                    if remaining is not None and remaining <= 0:
+                        break
+                    self._arrival.wait(remaining)
+                timed_out = self._arrivals == seen
+                seen = self._arrivals
+            if timed_out:
+                return self._read(wanted)
+
+    def _wake(self) -> None:
+        """A notification of the Operation arrived at the issuer's event trigger: every wait
+        reads the status again."""
+        with self._arrival:
+            self._arrivals += 1
+            self._arrival.notify_all()
+            waiters = list(self._waiters)
+        for loop, arrived in waiters:
+            with contextlib.suppress(RuntimeError):  # a loop that has closed waits no more
+                loop.call_soon_threadsafe(arrived.set)
 
 
 class _ClaimedOperation:
@@ -115,6 +305,146 @@ class _ClaimedOperation:
         self.iri = iri
         self.operation = operation
         self.result: Optional[str] = None
+
+
+#: How long a stop of the instance, or the end of the process, waits for the issuers'
+#: notifications that are still to send.
+_NOTIFICATIONS_STOP_SECONDS = 1.0
+
+#: How long the worker of the issuers' notifications waits idle before its thread ends. The next
+#: notification starts a new one.
+_NOTIFIER_IDLE_SECONDS = 5.0
+
+
+class _Notifier:
+    """One background worker that sends an instance's notifications of issuers, first in, first
+    out, so the claim's notification of an Operation leaves before the end's.
+
+    At most one worker thread runs at a time. It starts with a job and ends after it waited idle
+    for a while; a later job starts a new one. It is a daemon thread, so the end of the process
+    does not wait for it: an exit handler sends what still waits for a short time first.
+    """
+
+    def __init__(self, name: str) -> None:
+        self._name = name
+        self._condition = threading.Condition()
+        self._jobs: Deque[Callable[[], None]] = collections.deque()
+        self._running = False
+        self._thread: Optional[threading.Thread] = None
+        _NOTIFIERS.add(self)
+
+    def submit(self, job: Callable[[], None]) -> None:
+        """Hand ``job`` to the worker, and return at once."""
+        with self._condition:
+            self._jobs.append(job)
+            if self._thread is None:
+                self._start()
+            self._condition.notify_all()
+
+    def _start(self) -> None:
+        """Start the worker thread. The caller holds the condition."""
+        self._thread = threading.Thread(target=self._work, name=self._name, daemon=True)
+        self._thread.start()
+
+    def _work(self) -> None:
+        """Run the jobs one at a time, in order; end after an idle wait with no job."""
+        me = threading.current_thread()
+        try:
+            while True:
+                with self._condition:
+                    if not self._jobs:
+                        self._condition.wait(_NOTIFIER_IDLE_SECONDS)
+                    if not self._jobs:
+                        # Decided under the condition, so a job that comes now starts a new one.
+                        self._thread = None
+                        return
+                    job = self._jobs.popleft()
+                    self._running = True
+                try:
+                    job()
+                except Exception:  # a job logs its own failures; this is the last guard
+                    logger.warning("A notification of an issuer raised", exc_info=True)
+                finally:
+                    with self._condition:
+                        self._running = False
+                        self._condition.notify_all()
+        finally:
+            with self._condition:
+                if self._thread is me:  # ended by an error, not by idleness: go on in a new one
+                    self._thread = None
+                    if self._jobs:
+                        self._start()
+                self._condition.notify_all()
+
+    def flush(self, timeout: Optional[float] = None) -> bool:
+        """Wait until every job handed over so far is done.
+
+        Returns:
+            True when all are done, False when ``timeout`` seconds passed first.
+        """
+        deadline = None if timeout is None else time.monotonic() + timeout
+        with self._condition:
+            while self._jobs or self._running:
+                remaining = None if deadline is None else deadline - time.monotonic()
+                if remaining is not None and remaining <= 0:
+                    return False
+                self._condition.wait(remaining)
+        return True
+
+    def stop(self, timeout: float) -> int:
+        """Send what waits for up to ``timeout`` seconds, then drop the jobs that have not
+        started. A job that runs at that moment ends in the background.
+
+        Returns:
+            How many jobs were dropped.
+        """
+        self.flush(timeout)
+        with self._condition:
+            dropped = len(self._jobs)
+            self._jobs.clear()
+            self._condition.notify_all()
+        return dropped
+
+
+#: Every notifier, for the exit handler.
+_NOTIFIERS: "weakref.WeakSet[_Notifier]" = weakref.WeakSet()
+
+
+def _stop_notifiers_at_exit() -> None:
+    """At the end of the process, send what still waits for a short time, then drop the rest
+    with one WARNING line per notifier."""
+    for notifier in list(_NOTIFIERS):
+        dropped = notifier.stop(_NOTIFICATIONS_STOP_SECONDS)
+        if dropped:
+            logger.warning(
+                "The process ends and drops %d notification(s) of issuers of %s",
+                dropped,
+                notifier._name,
+            )
+
+
+atexit.register(_stop_notifiers_at_exit)
+
+
+def _issued_and_claimed(notified: Any, resource_iri: Optional[IRI]) -> bool:
+    """Whether a notified Operation is one that ``resource_iri`` issued and that is no longer
+    ``queued``: then the notification tells of its claim or its end, and it is no work."""
+    return notified.issuer == resource_iri and OperationStatus.QUEUED not in notified.statuses
+
+
+def _moved_operations(changes: Sequence[Change]) -> Dict[IRI, str]:
+    """Each Operation that ``changes`` move to ``running``, ``done`` or ``failed``, with that
+    status: an ``Update`` that sets ``svc:operationStatus`` to one value of the three."""
+    moved: Dict[IRI, str] = {}
+    for change in changes:
+        if not isinstance(change, Update) or change.instance_iri is None:
+            continue
+        for key, values in change.data.items():
+            statuses = {str(value) for value in values}
+            moves = len(statuses) == 1 and statuses <= _CLAIMED
+            if _property(key) == SVC.operationStatus and moves:
+                moved[IRI(change.instance_iri)] = statuses.pop()
+    return moved
 
 
 class SemanticMiddleware(Middleware):
@@ -346,11 +676,29 @@ class SemanticMiddleware(Middleware):
             # the receiver-side event-trigger REST route that other resources ring to dispatch.
             self._operation_queue: List[IRI] = []
             # Optional domain callback fired on enqueue. None means leave the Operation
-            # queued for a manual claim_next. The middleware tracks background tasks so they are not
-            # garbage-collected before they finish.
+            # queued for a manual claim_next.
             self._callback: Optional[Any] = None
             self._callback_scope: Any = None
-            self._callback_tasks: set = set()
+            # Optional domain handler (``on_notification``). With one, the instance takes its
+            # notifications through the intake instead of the queue, and the handler gets those
+            # that match no workflow of the instance. None means notifications are queued.
+            self._notification_handler: Optional[Callable[[Any], Any]] = None
+            # The subproject's own ClassScope of a received Operation, united with the default
+            # part when the intake reads one.
+            self._notification_scope: Any = None
+            # The function of each exposed workflow of this instance, by the IRI of the
+            # Capability that it realizes. The intake's match is a lookup here, never a query,
+            # and it knows no workflow of an earlier run of the same resource.
+            self._workflow_functions: Dict[IRI, Callable[..., Any]] = {}
+            # The intake's FIFO, and whether its one worker is at work.
+            self._intake: Deque[_Received] = collections.deque()
+            self._intake_working = False
+            # The background tasks: the callback's pull-and-runs and the intake's worker. The
+            # middleware tracks them so they are not garbage-collected before they finish.
+            self._background_tasks: set = set()
+            # The handle of each Operation that this instance issued, while its caller keeps it,
+            # so a notification of the Operation wakes its waits.
+            self._issued_handles: weakref.WeakValueDictionary = weakref.WeakValueDictionary()
             self._register_event_trigger()
 
             self.add_callback("on_start_up", self._register_service)
@@ -387,6 +735,11 @@ class SemanticMiddleware(Middleware):
             self.service_class = None
             self.service_iri = None
             raise NotImplementedError("mode 'server' is not implemented yet")
+
+        # The background worker that sends the notifications of issuers, and its stop, after
+        # the deregistration so that a stop does not wait for it first.
+        self._notifier = _Notifier(f"issuer-notifications {self.resource_iri or self.mode}")
+        self.add_callback("on_shutdown", self._stop_notifications)
 
         # Opt-in, and deliberately *outside* the mode branches. A controller and a
         # monitor this library configures them differently, so they inherit the feed
@@ -497,17 +850,252 @@ class SemanticMiddleware(Middleware):
         """Deregister every stale service once. Returns the swept service IRIs (as str).
 
         A watchdog-mode instance calls this on its ``sweep_interval``. It is also a
-        plain method, so a test or operator triggers a sweep directly.
+        plain method, so a test or operator triggers a sweep directly. The issuer of each
+        Operation that the sweep marks ``failed`` is notified after that commit.
         """
         swept = await anyio.to_thread.run_sync(
             functools.partial(
-                sweep_stale_services,
+                _sweep_stale_services,
                 self.ogm,
                 self.staleness_threshold,
                 named_graph=self.named_graph,
+                failed=lambda op_iri: self._notify_issuers({op_iri: OperationStatus.FAILED}),
             )
         )
         return [str(s) for s in swept]
+
+    # ------------------------------------------------------------------ #
+    # The general write and the general read.
+    # ------------------------------------------------------------------ #
+
+    def commit(
+        self,
+        *instances: str,
+        class_scope: Any = None,
+        entry: Sequence[Change] = (),
+        exit: ExitTransition = (),
+        error: ErrorTransition = (),
+    ) -> _Commit:
+        """A state transition that the store admits before the work it describes begins.
+
+        Usage, inside a coroutine::
+
+            running = [Update(instance_iri=op, data={str(SVC.operationStatus): ["running"]})]
+            done = [Update(instance_iri=op, data={str(SVC.operationStatus): ["done"]})]
+            failed = [Update(instance_iri=op, data={str(SVC.operationStatus): ["failed"]})]
+
+            async with mw.commit(
+                op, class_scope=scope, entry=running, exit=done, error=failed
+            ) as transition:
+                torque = await robot.screw(transition.node.instance)  # the physical work
+                transition.update(op, {str(SVC.executionResult): [torque]})
+
+        and the same with ``with`` in code that runs in a worker thread, such as a callback, a
+        notification handler or a script. ``entry``, ``exit`` and ``error`` are lists of
+        kapps_ogm ``Create`` and ``Update`` changes. Each is written as one ``OGM.commit``, so
+        each may span several instances. Nothing here is specific to a vocabulary: any
+        datamodel and any state transition fit.
+
+        - **Entry.** The entry transition is committed. If the store refuses it, its error is
+          raised, nothing is written, and the body does not run. Then each of ``instances`` is
+          fetched for the body: materialized under ``class_scope`` when one is given, else as a
+          reference. They are ``transition.nodes`` by IRI, and ``transition.node`` when there is
+          one.
+        - **Body.** Domain code, such as a robot's move. It holds no transaction and no
+          connection of the triple store, so heartbeats and other writes go on while it awaits.
+          A body that blocks its thread (``time.sleep``, a blocking driver call) must run in a
+          worker thread, with the synchronous ``with`` inside that thread, as callbacks and
+          notification handlers run. **Only** ``transition.update(instance, {property:
+          [values]})`` **changes the graph**, at the clean exit. A change made to
+          ``transition.node`` or to its ``.instance`` is not committed, and an assignment to an
+          attribute that the transition does not have raises ``AttributeError``.
+        - **Clean exit.** The body's changes and the exit transition are committed as one
+          ``OGM.commit``. Changes to one instance that a change names merge into one change,
+          because kapps_ogm refuses two changes that write one instance. **A body that sets a
+          property that the exit transition also sets, on the same instance, wins:** its value
+          is committed and the exit transition is skipped as a whole. So a body that sets the
+          status itself keeps it. The merge does not reach a named instance that a change only
+          nests with properties: when two changes both write one, kapps_ogm raises
+          ``ValueError`` at the exit, which commits the error transition and then raises.
+        - **Error in the body.** The body's changes are dropped, the error transition is
+          committed, and the error is raised again. An error of the fetch after the entry is
+          handled the same way, and the body does not run.
+        - **Refused exit.** The error transition is committed, and the store's error is raised.
+
+        ``exit`` may be a function that returns the changes, called at the clean exit, so the
+        exit transition can depend on what the body did. ``error`` may be a function that takes
+        the exception and returns the changes. If the error transition itself fails, the
+        original exception is raised, with a note and a log record that say so.
+
+        **A cancellation of the body** under ``async with`` (a deadline of ``anyio.fail_after``
+        or ``move_on_after`` that runs out, a cancelled task) is an error of the work: the error
+        transition is committed in a shielded cancel scope, so the cancellation cannot interrupt
+        it, and then the cancellation is raised again. ``error`` receives the cancellation
+        exception. An interrupt or an exit (``KeyboardInterrupt``, ``SystemExit``,
+        ``GeneratorExit``) writes no transition, in either form: the entry transition stays, as
+        after a crash. The exit of the asynchronous form is shielded too, so a deadline that
+        runs out after the body finished does not stop its exit commit.
+
+        **Inside a coroutine, use** ``async with``. It runs every graph call (the commits, the
+        fetch and the transition functions) in a worker thread, so graph I/O never blocks the
+        event loop. The synchronous form makes the same calls in the calling thread and blocks
+        it. Nothing stops it from being used on the event loop, where it stalls every other
+        task, heartbeats included.
+
+        **The write goes to the graph only.** All changes go to this instance's named graph. The
+        datamodel that this instance serves over REST does not change, and no synced connector
+        hears of the write, so no device is written.
+
+        **An Operation's issuer is notified.** A write can move an Operation that has an issuer
+        (``svc:issuedBy``) to ``running``, ``done`` or ``failed``. After the store admits such a
+        write, the middleware hands the notification to a background worker of this instance and
+        goes on at once. The worker reads the issuer and notifies it, as :meth:`notify` does, in
+        the order of the writes. If the issuer cannot be notified, a WARNING is logged and
+        nothing is raised, because the write has happened.
+
+        **kapps_ogm's rules apply.** A ``Create`` that carries data must carry its own
+        ``class_scope``: otherwise ``ValueError`` is raised before it is written, in the entry
+        before any write, and in the exit transition at the exit. The store refuses a commit
+        whose precondition is false with ``PreconditionFailedError``, and writes nothing of it:
+        a ``Create`` of an instance that the store already holds, or a change that removes a
+        value that is no longer there, because another write changed it after kapps_ogm read
+        it. The error is not caught: for a ``Create``, it signals a reused IRI.
+
+        Raises:
+            kapps_triplestore_interface.exceptions.TripleStoreInterfaceError: If the store
+                refuses a transition. A SHACL refusal is ``ShaclValidationError``, whose
+                ``report`` is the store's validation report, verbatim. A false precondition is
+                ``PreconditionFailedError``.
+            ValueError: If a change does not fit its class, two changes of one transition write
+                one instance (these from kapps_ogm), or a ``Create`` carries data but no
+                ``class_scope``.
+            requests.exceptions.RequestException: If the store cannot be reached.
+        """
+        return self._transition(
+            *instances, class_scope=class_scope, entry=entry, exit=exit, error=error
+        )
+
+    def _transition(
+        self,
+        *instances: str,
+        class_scope: Any = None,
+        entry: Sequence[Change] = (),
+        exit: ExitTransition = (),
+        error: ErrorTransition = (),
+        issuers: Optional[Mapping[IRI, Optional[IRI]]] = None,
+    ) -> _Commit:
+        """The commit of :meth:`commit`, and of a special function that already read the issuers
+        of the Operations that it moves: ``issuers`` maps such an Operation to its issuer, or to
+        None when it has none, so that it is not read again after the write."""
+        return _Commit(
+            self.ogm,
+            instances=instances,
+            class_scope=class_scope,
+            entry=entry,
+            exit=exit,
+            error=error,
+            named_graph=self.named_graph,
+            on_admitted=functools.partial(self._notify_issuers_of_write, issuers=issuers or {}),
+        )
+
+    @property
+    def resource(self) -> Optional[IRI]:
+        """This middleware's own Resource: the short form where a Resource is named, as in
+        ``workpiece(scope, possessor=mw.resource)``. None in a mode without a Resource."""
+        return self.resource_iri
+
+    def create(self, cls: str, scope: Any, instance_iri: Optional[str] = None) -> _Creation:
+        """Create one new instance of the class ``cls``, built on :meth:`commit`.
+
+        Usage::
+
+            with mw.create(SNAPSHOT, snapshot_scope) as snapshot:
+                snapshot.update({str(EX.decision): ["unscrew"]})
+
+        and ``async with`` in a coroutine, as for :meth:`commit`. For new work for a resource that
+        realizes a Capability, use :meth:`request`: it creates the Operation with this method, and
+        then notifies the receiver.
+
+        - **Entry.** The IRI is minted, ``<class>_<12 hex>``, unless ``instance_iri`` is given,
+          and the body reads it as ``creation.iri``: a nested creation can be linked before
+          anything is written. A predefined scope checks its inputs here; wrong inputs raise
+          before the body runs and before any write. Nothing is read or written.
+        - **Body.** ``creation.update({property: [values]})`` sets the new instance's properties.
+          A value that is an IRI, such as the ``iri`` of a nested creation, is a reference.
+        - **Clean exit, alone.** One ``OGM.commit`` writes the ``Create`` of the instance, the
+          changes of its predefined scope, and the changes of every creation nested in it. A
+          refusal by the store raises its error, and nothing is written.
+        - **Clean exit, nested.** Inside the body of a :meth:`commit` or of another
+          :meth:`create` of this middleware whose write is still to come, the same changes join
+          that write instead: they are admitted or refused together with it, and an error in its
+          body drops them. A creation commits on its own inside a body whose commit has already
+          happened, such as that of :meth:`handover`, and inside a write of another middleware
+          (another OGM or another named graph), such as a planner's beside a resource's in one
+          process.
+        - **Error in the body.** Nothing is written or joined, and the error is raised again.
+          Nothing exists yet that could carry an error transition.
+
+        After the clean exit, ``creation.changes`` are the changes that the creation committed or
+        joined: its ``Create`` first, then those of its predefined scope and of its nested
+        creations.
+
+        ``scope`` is a ClassScope of the class, or a predefined scope, which brings the rules for
+        creating an instance of its class: a domain module gives it, and it may require inputs and
+        add changes to the same commit. The ``Create`` names every property that ``scope`` names
+        and every property that the body sets, so kapps_ogm drops none of them.
+
+        **kapps_ogm's rules apply.** An ``instance_iri`` that the store already holds is refused
+        with ``PreconditionFailedError`` at the commit, and nothing is written.
+
+        Raises:
+            ValueError: If a predefined scope's inputs are wrong (at entry), the body sets a
+                property that its predefined scope sets itself, or the data does not fit the
+                class (from kapps_ogm).
+            kapps_triplestore_interface.exceptions.TripleStoreInterfaceError: If the store
+                refuses the commit. A SHACL refusal is ``ShaclValidationError``, whose
+                ``report`` is the store's validation report, verbatim. An instance that the
+                store already holds is ``PreconditionFailedError``.
+            requests.exceptions.RequestException: If the store cannot be reached.
+        """
+        return _Creation(
+            self.ogm,
+            cls,
+            scope,
+            instance_iri=instance_iri,
+            named_graph=self.named_graph,
+            on_admitted=self._notify_issuers_of_write,
+        )
+
+    def fetch(
+        self,
+        instance_iri: str,
+        *,
+        class_scope: Any = None,
+        as_reference: bool = False,
+        materialize: bool = False,
+    ) -> Any:
+        """Read one instance from the graph through the OGM, as a plain call.
+
+        A read has nothing to guard, so this is no context manager. It is ``OGM.fetch`` with
+        this instance's OGM: ``class_scope`` selects the properties to load, ``as_reference``
+        loads only the IRI, and ``materialize`` builds the datamodel (``node.instance``). It
+        blocks while it reads, so asynchronous code calls it in a worker thread, as the
+        asynchronous form of :meth:`commit` does.
+
+        Returns:
+            The kapps_ogm ``Node`` of the instance.
+
+        Raises:
+            ValueError: If the store holds no class for the instance.
+            kapps_ogm.utils.errors.AnonymousNodeFetchError: If the IRI is a Skolem IRI of an
+                anonymous node, which only its parent carries.
+        """
+        return self.ogm.fetch(
+            instance_iri=IRI(instance_iri),
+            class_scope=class_scope,
+            as_reference=as_reference,
+            materialize=materialize,
+        )
 
     def workflow(
         self,
@@ -523,6 +1111,20 @@ class SemanticMiddleware(Middleware):
         REST endpoint via the base class, then schedules KG registration of the
         Workflow and Capability instances on startup (after the service is
         registered).
+
+        On an instance with a notification handler (:meth:`on_notification`), a notified
+        Operation that implements the Capability this workflow realizes runs it, with the
+        Operation as its one argument: a kapps_ogm ``Node``, read and materialized under the
+        intake's scope (``operation.instance``). A parameter typed ``kapps_ogm.Node`` registers as
+        any other does, because pydantic takes a ``Node`` as it is. Its REST route is mounted too,
+        but the framework takes a one-parameter workflow's argument as an optional query parameter
+        ``arg``, not as a body: a call passes ``None``, or a string from the query, and the
+        framework's type check (typeguard) refuses both, so a call over REST is answered with an
+        HTTP 500 and such a workflow is run by the intake::
+
+            @mw.workflow(capability_class=TRANSPORT_CAPABILITY, workflow_class=TRANSPORT_WORKFLOW)
+            def box_transport(transport: Node) -> None:
+                ...  # the work; it commits its own transitions with mw.commit()
 
         Raises:
             RuntimeError: If called outside resource mode.
@@ -555,6 +1157,9 @@ class SemanticMiddleware(Middleware):
             workflow_iri = mint_workflow_iri(self.service_iri, name)
             capability_iri = mint_capability_iri(self.resource_iri, name)
             endpoint = build_workflow_endpoint(self.address, name)
+            # The intake's match: a notified Operation that implements this Capability runs
+            # this function.
+            self._workflow_functions[capability_iri] = func
 
             async def register_workflow_callback() -> None:
                 """Register the Workflow and Capability instances in the knowledge graph.
@@ -691,11 +1296,12 @@ class SemanticMiddleware(Middleware):
         middleware = self
 
         async def event_trigger(payload: _EventTriggerPayload) -> Dict[str, str]:
-            """Handle POST /workflows/event_trigger/execute requests. Enqueue an Operation for execution.
+            """Handle POST /workflows/event_trigger/execute: a notification of an Operation.
 
             The handler extracts the Operation IRI from the request payload.
-            It delegates to _handle_event_trigger to fetch and queue the Operation.
-            The response contains the Operation IRI and its initial QUEUED status.
+            It delegates to _handle_event_trigger, which puts the Operation into the intake or
+            queues it. The response contains the Operation IRI, and its QUEUED status only when
+            it was queued.
             """
             return await middleware._handle_event_trigger(IRI(payload.operation_iri))
 
@@ -704,29 +1310,323 @@ class SemanticMiddleware(Middleware):
         Middleware.workflow(self)(event_trigger)
 
     async def _handle_event_trigger(self, operation_iri: IRI) -> Dict[str, str]:
-        """Receiver-side event-trigger intake.
+        """Receiver-side event trigger: take a notification of an Operation.
 
-        The trigger carries only the Operation IRI — its payload lives in the graph. We
-        ``ogm.fetch`` the Operation (confirming it exists) and enqueue it into this
-        instance's in-memory queue, leaving it ``queued`` and returning immediately with
-        no business result. A domain callback (``register_callback``) or a pull-and-run
-        (``claim_next``) runs the work
-        later. This slice only enqueues.
+        The trigger carries only the Operation IRI; its payload lives in the graph. The
+        Operation is read (a read that fails is raised, so the notifier learns that it was not
+        taken), and the trigger answers at once, with no business result. What happens next
+        depends on whether this instance registered a notification handler:
+
+        - **With one** (``on_notification``), the Operation goes into the **intake**. The read
+          is the intake's one read, under its scope. The Operation enters the instance's FIFO,
+          and one worker runs one Operation at a time, in arrival order: an Operation whose
+          Capability is one of this instance's own goes to the exposed workflow that realizes
+          it, any other to the handler, each with the Operation object. An Operation that waited
+          is read again before it runs. The middleware writes nothing. The answer names the
+          Operation and claims no status.
+        - **Without one**, the Operation enters this instance's in-memory queue and stays
+          ``queued``. A domain callback (``register_callback``) or a pull-and-run
+          (``claim_next``) runs the work later, with the dispatch lifecycle. The answer says
+          ``queued``. The read is one query, of the Operation's status and issuer.
+
+        **Feedback.** A notification of an Operation that this instance issued wakes its handle
+        (:class:`IssuedOperation`). It wakes it before the read, because the handle reads the
+        status itself: a read that fails here then does not leave a wait to its timeout. An
+        Operation that this resource issued and that is no longer ``queued`` never enters the
+        queue: the notification is the feedback of its claim or of its end, and the answer names
+        the Operation and claims no status. With a handler, the handler gets it, and never a
+        workflow.
         """
 
-        await anyio.to_thread.run_sync(
-            functools.partial(self.ogm.fetch, instance_iri=operation_iri)
+        self._wake_handle(operation_iri)
+        if self._notification_handler is not None:
+            read = await anyio.to_thread.run_sync(self._read_received, operation_iri)
+            self._take_in(operation_iri, read)
+            return {"operation": str(operation_iri)}
+        notified = await anyio.to_thread.run_sync(
+            functools.partial(_read_notified, self.ogm, operation_iri)
         )
+        if _issued_and_claimed(notified, self.resource_iri):
+            # The claim or the end of an Operation that this resource issued: no work here.
+            return {"operation": str(operation_iri)}
         self._operation_queue.append(operation_iri)
         if self._callback is not None:
             # Fire the domain callback in the background. The trigger returns
             # immediately (it does not block on the work). The pull-and-run runs
-            # off the event loop, so the blocking graph I/O never stalls the server. Keep a
-            # reference so the middleware does not garbage-collect the task before it finishes.
-            task = asyncio.create_task(self._run_callback())
-            self._callback_tasks.add(task)
-            task.add_done_callback(self._callback_tasks.discard)
+            # off the event loop, so the blocking graph I/O never stalls the server.
+            self._run_in_background(self._run_callback())
         return {"operation": str(operation_iri), "status": OperationStatus.QUEUED}
+
+    def _read_received(self, operation_iri: IRI) -> _ReadOperation:
+        """Read a received Operation for the intake, and find the Capabilities it implements.
+
+        One read: the Operation is fetched and materialized under the intake's scope, which is
+        the Capability that the Operation implements and the Workflow that realizes it, united
+        with the scope given to :meth:`on_notification`. The Capabilities come from that read,
+        so the intake's match needs no query of its own. It blocks while it reads.
+
+        Returns:
+            The Operation as a kapps_ogm ``Node``, and the IRIs of its Capabilities.
+        """
+        node = self.fetch(
+            operation_iri,
+            class_scope=_received_scope(self._notification_scope),
+            materialize=True,
+        )
+        return _ReadOperation(node, _implemented_capabilities(node))
+
+    def _take_in(self, operation_iri: IRI, read: Optional[_ReadOperation] = None) -> None:
+        """Put a received Operation into the intake's FIFO, and start the worker when it is idle.
+
+        An Operation that arrives while the worker is at work waits its turn, so its read is
+        dropped and it is read again before it runs. Without ``read``, it is read before it
+        runs, as after a restart. Runs on the event loop, so the FIFO needs no lock.
+        """
+        if self._intake_working:
+            read = None
+        self._intake.append(_Received(operation_iri, read))
+        if not self._intake_working:
+            self._intake_working = True
+            self._run_in_background(self._work_intake())
+
+    async def _work_intake(self) -> None:
+        """The intake's one worker: it runs the FIFO's Operations one at a time, in arrival
+        order, and ends when the FIFO is empty."""
+        try:
+            while self._intake:
+                await self._run_received(self._intake.popleft())
+        finally:
+            self._intake_working = False
+
+    async def _run_received(self, received: _Received) -> None:
+        """Run one Operation of the intake, and log any exception.
+
+        An Operation that waited is read again first. Then the Operation object goes to the
+        exposed workflow that realizes one of its Capabilities, matched in memory, or else to
+        the notification handler. A plain function runs in a worker thread, a coroutine
+        function on the event loop. The middleware writes nothing, also when the read or the
+        function raises: the exception is logged, and the worker goes on with the next one.
+        """
+        what = "The read before the run"
+        try:
+            read = received.read
+            if read is None:
+                read = await anyio.to_thread.run_sync(self._read_received, received.iri)
+            own = [c for c in read.capabilities if c in self._workflow_functions]
+            if own:
+                # A notification of an Operation that this resource issued, and that is no longer
+                # queued, tells of its claim or its end: the handler gets it, never the workflow.
+                # It is read from the graph, so it holds after a restart too.
+                what = "The read of the status and the issuer"
+                notified = await anyio.to_thread.run_sync(
+                    functools.partial(_read_notified, self.ogm, received.iri)
+                )
+                if _issued_and_claimed(notified, self.resource_iri):
+                    own = []
+            if own:
+                function: Callable[[Any], Any] = self._workflow_functions[own[0]]
+                what = f"The workflow {getattr(function, '__name__', function)}"
+            else:
+                what = "The intake"
+                if self._notification_handler is None:  # the intake runs only with a handler
+                    raise RuntimeError(
+                        f"{self.resource_iri} took an Operation into the intake without a "
+                        "notification handler"
+                    )
+                function = self._notification_handler
+                what = "The notification handler"
+            if inspect.iscoroutinefunction(function):
+                await function(read.node)
+            else:
+                await anyio.to_thread.run_sync(function, read.node)
+        except Exception:
+            logger.error(
+                "%s of %s raised for the Operation %s",
+                what,
+                self.resource_iri,
+                received.iri,
+                exc_info=True,
+            )
+
+    def _wake_handle(self, operation_iri: IRI) -> None:
+        """Wake the waits of the handle of ``operation_iri``, if this instance issued it and its
+        caller keeps the handle."""
+        handle = self._issued_handles.get(operation_iri)
+        if handle is not None:
+            handle._wake()
+
+    def _notify_issuers_of_write(
+        self, changes: Sequence[Change], issuers: Mapping[IRI, Optional[IRI]] = {}
+    ) -> None:
+        """After a write that the store admitted: notify the issuer of each Operation that the
+        write moved to ``running``, ``done`` or ``failed``.
+
+        The write's own changes show such a move: an ``Update`` that sets ``svc:operationStatus``
+        to one of the three. Its old value is not known without a read, so a write that sets the
+        status that the Operation already has notifies too. ``issuers`` holds what the caller has
+        already read: an Operation's issuer, or None for one without an issuer. The others are
+        read in one query.
+        """
+        moved = _moved_operations(changes)
+        if moved:
+            self._notify_issuers(moved, issuers)
+
+    def _notify_issuers(
+        self, moved: Mapping[IRI, str], issuers: Mapping[IRI, Optional[IRI]] = {}
+    ) -> None:
+        """Hand the notification of the issuer of each Operation in ``moved`` to this instance's
+        background worker, and return at once. ``moved`` maps an Operation to its new status.
+
+        The worker sends them in the order they were handed over. A slow or hanging issuer
+        delays only the worker, never the commit or the work after it.
+        """
+        self._notifier.submit(
+            functools.partial(self._send_to_issuers, dict(moved), dict(issuers))
+        )
+
+    def _send_to_issuers(
+        self, moved: Mapping[IRI, str], issuers: Mapping[IRI, Optional[IRI]]
+    ) -> None:
+        """In the background worker: notify the issuer of each Operation in ``moved``.
+
+        An issuer that the caller has not read is read here, in one query. An Operation without
+        an issuer notifies nobody. An issuer that cannot be notified (no live Service, more than
+        one, or a post that fails) is logged, one line at WARNING: the status is in the graph.
+        """
+        known = {op: issuers[op] for op in moved if op in issuers}
+        unread = [op for op in moved if op not in issuers]
+        if unread:
+            try:
+                known.update(_issuers(self.ogm, unread))
+            except Exception as error:
+                logger.warning(
+                    "The issuers of %s were not read, so none was notified: %r",
+                    ", ".join(map(str, unread)),
+                    error,
+                )
+        for op_iri, status in moved.items():
+            issuer = known.get(op_iri)
+            if issuer is None:
+                continue
+            try:
+                self._notify(op_iri, issuer)
+            except Exception as error:
+                logger.warning(
+                    "The issuer %s of %s was not notified that it is %s: %s",
+                    issuer,
+                    op_iri,
+                    status,
+                    error,
+                )
+
+    def _flush_notifications(self, timeout: Optional[float] = None) -> bool:
+        """Wait until the issuers' notifications handed over so far are sent: True, or False when
+        ``timeout`` seconds passed first. For a test that must see them."""
+        return self._notifier.flush(timeout)
+
+    async def _stop_notifications(self) -> None:
+        """At the stop of the instance: send what waits for up to one second, then drop the rest
+        with one WARNING line. The status of each Operation is in the graph either way."""
+        dropped = await anyio.to_thread.run_sync(
+            self._notifier.stop, _NOTIFICATIONS_STOP_SECONDS
+        )
+        if dropped:
+            logger.warning(
+                "%s stopped and dropped %d notification(s) of issuers that were still to send",
+                self.resource_iri or self.mode,
+                dropped,
+            )
+
+    def _run_in_background(self, coroutine: Any) -> None:
+        """Run ``coroutine`` as a task, and keep a reference until it ends.
+
+        Without the reference the event loop holds only a weak one, and the task can be
+        garbage-collected before it finishes.
+        """
+        task = asyncio.create_task(coroutine)
+        self._background_tasks.add(task)
+        task.add_done_callback(self._background_tasks.discard)
+
+    def notify(self, *, operation: Any, resource: Any, timeout: float = 10.0) -> None:
+        """Send a notification: tell `resource` to look at `operation` in the graph.
+
+        Usage::
+
+            mw.notify(operation=transport, resource=origin_module)
+
+        A notification is one-way. It names one Operation in the graph and carries nothing
+        else: no payload, and no result. It works in both directions: down, "an Operation for
+        you exists", and up, "this Operation ended or changed". The middleware writes nothing
+        to the graph for it. The resource's middleware takes it through its intake when it
+        registered an `on_notification` handler: the exposed workflow that realizes the
+        Operation's Capability runs it, or else the handler gets it. It queues it when it
+        registered no handler. A notification of an Operation that the resource issued and that
+        is no longer `queued` is feedback: it wakes the Operation's handle, the handler gets it,
+        and it is never queued and never runs a workflow.
+
+        The call finds the resource's live Service in the graph (one that carries an
+        `svc:address`), posts the IRI to that Service's event trigger, and returns when the
+        receiver confirms receipt, which it does at once. It raises
+        `NotificationUndelivered` when the resource has no live Service, when it has more
+        than one (the call does not choose between them), and when the post fails, is
+        refused, or takes longer than `timeout` seconds.
+
+        This is a plain blocking call. From a coroutine, run it off the event loop::
+
+            await anyio.to_thread.run_sync(
+                functools.partial(mw.notify, operation=op, resource=wms)
+            )
+        """
+
+        if self.mode != Mode.RESOURCE:
+            raise RuntimeError(
+                f"notify() is only valid in resource mode; current mode is {self.mode!r}"
+            )
+        self._notify(IRI(operation), IRI(resource), timeout)
+
+    def _notify(self, operation_iri: IRI, resource_iri: IRI, timeout: float = 10.0) -> None:
+        """:meth:`notify` without its check of the mode, so a watchdog tells an issuer too.
+
+        Raises:
+            NotificationUndelivered: As :meth:`notify` raises it.
+        """
+        reachable = reachable_service_addresses(self.ogm, resource_iri)
+        if not reachable:
+            raise NotificationUndelivered(
+                f"{resource_iri} has no live Service to notify of {operation_iri}"
+            )
+        if len(reachable) > 1:
+            listing = ", ".join(sorted(f"{service} at {address}" for service, address in reachable))
+            raise NotificationUndelivered(
+                f"{resource_iri} has more than one live Service ({listing}); notify() does not "
+                f"choose which one to notify of {operation_iri}"
+            )
+        self._deliver(operation_iri, resource_iri, reachable[0][1], timeout)
+
+    @staticmethod
+    def _deliver(operation_iri: IRI, recipient: IRI, address: str, timeout: float) -> None:
+        """The delivery of a notification, for :meth:`notify` and :meth:`request`: post the
+        Operation's IRI to the event trigger at `address`, and return when the receiver confirms
+        receipt. `recipient` names the receiver in the error.
+
+        Raises:
+            NotificationUndelivered: If the post fails: `address` is no valid URL, or the post
+                cannot connect, is refused, or takes longer than `timeout` seconds. Its cause is
+                the error of the post.
+        """
+        try:
+            httpx.post(
+                build_event_trigger_url(address),
+                json={"operation_iri": str(operation_iri)},
+                timeout=timeout,
+            ).raise_for_status()
+        # A malformed address is no HTTPError: httpx raises InvalidURL for it, and a host that the
+        # IDNA codec refuses, such as one with a label over 63 characters, raises UnicodeError.
+        except (httpx.HTTPError, httpx.InvalidURL, UnicodeError) as error:
+            raise NotificationUndelivered(
+                f"{recipient} at {address} did not take the notification of "
+                f"{operation_iri}: {error!r}"
+            ) from error
 
     @contextlib.contextmanager
     def request(
@@ -737,18 +1637,46 @@ class SemanticMiddleware(Middleware):
         operation_iri: Optional[str] = None,
         target_resource: Optional[str] = None,
     ):
-        """Caller-side dispatch as a transaction context manager.
+        """Issue an Operation: new work for a resource that realizes a Capability.
 
         Usage::
 
             with mw.request(capability_class=cap, operation_class=op_cls) as op:
-                ...  # populate op.data with the operation's domain fields (if any)
+                op.data[str(EX.hasScrew)] = [{"id": str(screw)}]  # its domain fields, if any
+            if await op.claimed(timeout=30):
+                status = await op.ended()  # "done" or "failed"
 
-        The body populates the yielded draft. On clean exit the middleware **atomically**
-        creates the Operation (status ``queued``, addressed to a reachable Service via its
-        Capability through discovery), and triggers that Service's event trigger over
-        REST. If the trigger delivery fails, the system reverts the created Operation
-        atomically. A body exception aborts before anything is written.
+        Use it for a new Operation. It is three steps, each the work of another part of the
+        middleware: discovery, then :meth:`create`, then the delivery of :meth:`notify`.
+
+        - **Discovery.** Before the block runs, a live Service is found that realizes a
+          Capability of ``capability_class`` (with ``target_resource``, one of that resource).
+          If there is none, ``OperationResolutionError`` is raised, and nothing is written.
+        - **The block.** It sets the Operation's domain properties in ``op.data``, as
+          ``{property IRI: [values]}``, and may read ``op.iri``. An error in the block writes
+          nothing.
+        - **Create.** At the end of the block, one :meth:`create` of the Operation writes it,
+          under the operation scope. It writes the type, the ``cfc:implementsCapability`` link
+          to the Capability that discovery found, the status ``queued`` and ``op.data``. It also
+          writes ``svc:issuedBy``, the issuer: this middleware's Resource, ``op.issuer``. The
+          store admits all of it or none of it. A refusal is raised, and nobody is notified. An
+          ``operation_iri`` that the store already holds is refused with
+          ``PreconditionFailedError``, and that Operation is not touched. If ``op.data`` sets
+          ``svc:issuedBy``, ``ValueError`` is raised before anything is written.
+        - **Notify.** With the Operation in the graph, the Service that discovery found is
+          notified, through its event trigger, and takes the Operation through its intake or
+          its queue (see :meth:`on_notification`). If the notification fails, the Operation
+          stays ``queued``, and ``NotificationUndelivered`` is raised. Nothing is undone: the
+          receiver takes up its ``queued`` Operations when it starts, and the issuer is
+          responsible for the Operation while it is ``queued``.
+
+        After the block, ``op`` is the :class:`IssuedOperation`: it waits until the Operation is
+        claimed and until it ends. The middleware that claims it, and the one that ends it,
+        notifies the issuer after its commit, and that notification wakes the waits.
+
+        The Operation commits on its own, also inside the block of another :meth:`commit` or
+        :meth:`create`, because the receiver reads it after the notification. A :meth:`create`
+        nested in this block joins the Operation's commit.
 
         This is the in-process caller face — not REST-exposed.
         """
@@ -759,51 +1687,39 @@ class SemanticMiddleware(Middleware):
             )
         capability_class_iri = IRI(capability_class)
         operation_class_iri = IRI(operation_class)
-        op_iri = (
-            IRI(operation_iri) if operation_iri else mint_operation_iri(operation_class_iri)
-        )
 
-        # __enter__ precondition, OUTSIDE the transaction: resolve a reachable
-        # receiver for the capability BEFORE the body runs, so an unroutable dispatch fails
-        # before any domain work rather than at commit.
-        capability_iri, _service_iri, address = resolve_dispatch_target(
+        # Discovery, before the block: an unroutable request fails before any domain work.
+        capability_iri, service_iri, address = resolve_dispatch_target(
             self.ogm,
             capability_class_iri,
             target_resource=IRI(target_resource) if target_resource else None,
             named_graph=self.named_graph,
         )
-        draft = _OperationDraft(op_iri)
 
-        # Body runs here. An exception occurs and the system writes nothing.
-        yield draft
-
-        # __exit__ (clean): atomically create the Operation and fire the event trigger.
-        create_operation(
-            self.ogm,
-            operation_iri=op_iri,
-            operation_class=operation_class_iri,
-            capability_iri=capability_iri,
-            status=OperationStatus.QUEUED,
-            data=draft.data or None,
-            named_graph=self.named_graph,
-        )
-        try:
-            with httpx.Client(timeout=30.0) as client:
-                response = client.post(
-                    build_event_trigger_url(address),
-                    json={"operation_iri": str(op_iri)},
+        # The receiver reads the Operation after it is notified, so the Operation commits on its
+        # own, also in the body of another commit, whose write would come too late. A creation
+        # nested in this block joins the Operation's commit. An error in the block writes nothing.
+        with _nothing_to_join(), self.create(
+            operation_class_iri,
+            operation(ClassScope(), capability=capability_iri),
+            instance_iri=operation_iri or None,
+        ) as created:
+            issued = IssuedOperation(self, created.iri, self.resource_iri)
+            yield issued
+            if any(_property(key) == SVC.issuedBy for key in issued.data):
+                raise ValueError(
+                    f"the data of {created.iri} sets {SVC.issuedBy}, which request() sets "
+                    f"itself, to {self.resource_iri}"
                 )
-                response.raise_for_status()
-        except Exception:
-            revert_operation(
-                self.ogm,
-                op_iri,
-                operation_class=operation_class_iri,
-                capability_iri=capability_iri,
-                data=draft.data or None,
-                named_graph=self.named_graph,
-            )
-            raise
+            created.update({str(SVC.operationStatus): [OperationStatus.QUEUED]})
+            created.update(issued.data)
+            created.update({str(SVC.issuedBy): [{"id": str(self.resource_iri)}]})
+
+        # The Operation is in the graph: its handle can wait, and only now is the receiver
+        # notified, through the delivery of notify().
+        issued._in_graph = True
+        self._issued_handles[issued.iri] = issued
+        self._deliver(issued.iri, service_iri, address, timeout=30.0)
 
     @contextlib.contextmanager
     def claim_next(self, scope: Any = None):
@@ -814,16 +1730,29 @@ class SemanticMiddleware(Middleware):
             with mw.claim_next(scope) as claimed:
                 claimed.result = do_the_work(claimed.operation)
 
-        `__enter__` pops the next `queued` Operation from this instance's in-memory queue
-        (FIFO order, raises `OperationQueueEmpty` if none). It marks the Operation `running`, and
-        re-fetches it under the domain-supplied `ClassScope`, so the body gets exactly the
-        object shape it needs. The body runs the work, and may set `claimed.result`. On
-        clean exit the CM **atomically** records `done` plus provenance
-        (`executedByWorkflow` / `executionTimestamp` / `executionResult`). On a body
-        exception it records `failed` plus the exception message, and re-raises. Provenance
-        is folded into the terminal transition. On failure the CM also dumps the
-        resource datamodel and stores it as the Operation's ``svc:failureState``, so the
-        state that produced the failure survives the exception.
+        It is a :meth:`commit` about the Operation it claims:
+
+        - **Entry.** `__enter__` takes the next `queued` Operation from this instance's
+          in-memory queue (FIFO order, raises `OperationQueueEmpty` if none), and commits the
+          claim, `queued` to `running`, before the body runs. If the store refuses the claim, its
+          error is raised and the body does not run; the Operation has left the in-memory queue,
+          and the graph keeps it as it was. Then the Operation is re-fetched under the
+          domain-supplied `ClassScope`, so the body gets exactly the object shape it needs.
+        - **Body.** It runs the work, and may set `claimed.result`.
+        - **Clean exit.** `done` plus provenance (`executedByWorkflow` / `executionTimestamp` /
+          `executionResult`) is one commit.
+        - **Error.** On a body exception, a fetch that fails after the claim, or a refused
+          `done`, `failed` plus provenance and the exception message is one commit, and the
+          exception is raised. Provenance is folded into the terminal transition. On failure the
+          CM also dumps the resource datamodel and stores it as the Operation's
+          ``svc:failureState`` in the same commit, so the state that produced the failure
+          survives the exception.
+        - **The issuer.** After the claim, and after `done` or `failed`, the Operation's issuer
+          (`svc:issuedBy`) is notified, as after any :meth:`commit` that moves an Operation.
+          The read before the claim finds the issuer, so the claim reads nothing more for it.
+
+        Two claimants of one Operation are not told apart yet: the claim of an Operation that is
+        already `running` changes nothing, and the store admits it.
 
         This is the in-process receiver face — not REST-exposed.
         """
@@ -839,74 +1768,160 @@ class SemanticMiddleware(Middleware):
         # Precondition, BEFORE any mutation: resolve the Workflow for provenance
         # without requiring a live endpoint, so `executedByWorkflow` is recorded even if the
         # workflow's `svc:endpoint` the system deregistered it mid-run. If this raises, the Operation
-        # stays queued (in the graph and this in-memory queue) for a later retry.
-        workflow_iri = resolve_operation_workflow(
-            self.ogm, op_iri, named_graph=self.named_graph
-        )
+        # stays queued (in the graph and this in-memory queue) for a later retry. The same read
+        # finds the Operation's issuer, whom the claim and the end notify.
+        read = _resolve_claim(self.ogm, op_iri, named_graph=self.named_graph)
+        workflow_iri = read.workflow
 
-        # Preconditions passed — claim it: dequeue, mark running, then re-fetch under scope.
+        # Preconditions passed: dequeue, then claim it in the commit's entry. A refused claim has
+        # therefore left the in-memory queue, as a failed `running` write always has.
         self._operation_queue.pop(0)
-        set_operation_status(
-            self.ogm,
-            operation_iri=op_iri,
-            status=OperationStatus.RUNNING,
-            named_graph=self.named_graph,
-        )
-        if scope is not None:
-            operation = self.ogm.fetch(
-                instance_iri=op_iri, class_scope=scope, materialize=True
-            )
-        else:
-            operation = self.ogm.fetch(instance_iri=op_iri, as_reference=True)
-        claimed = _ClaimedOperation(op_iri, operation)
+        claimed = _ClaimedOperation(op_iri, None)
 
-        try:
+        def done() -> List[Change]:
+            return [
+                _terminal_status_update(
+                    operation_iri=op_iri,
+                    workflow_iri=workflow_iri,
+                    status=OperationStatus.DONE,
+                    result=claimed.result,
+                )
+            ]
+
+        def failed(exc: BaseException) -> List[Change]:
+            return [
+                _terminal_status_update(
+                    operation_iri=op_iri,
+                    workflow_iri=workflow_iri,
+                    status=OperationStatus.FAILED,
+                    result=str(exc),
+                    failure_state=self._dump_resource_datamodel(),
+                )
+            ]
+
+        with self._transition(
+            op_iri,
+            class_scope=scope,
+            entry=[_operation_status_update(op_iri, OperationStatus.RUNNING)],
+            exit=done,
+            error=failed,
+            issuers={op_iri: read.issuer},
+        ) as transition:
+            claimed.operation = transition.node
             yield claimed
-        except Exception as exc:
-            record_terminal_status(
-                self.ogm,
-                operation_iri=op_iri,
-                workflow_iri=workflow_iri,
-                status=OperationStatus.FAILED,
-                result=str(exc),
-                failure_state=self._dump_resource_datamodel(),
-                named_graph=self.named_graph,
-            )
-            raise
-        else:
-            record_terminal_status(
-                self.ogm,
-                operation_iri=op_iri,
-                workflow_iri=workflow_iri,
-                status=OperationStatus.DONE,
-                result=claimed.result,
-                named_graph=self.named_graph,
-            )
 
     @contextlib.contextmanager
-    def handover(self, *, mode: Any, workpiece: Any, counterpart: Any):
-        """Change-of-possession primitive as a transaction context manager.
+    def handover(
+        self,
+        *,
+        mode: Any,
+        workpiece: Any,
+        counterpart: Any,
+        workpiece_update: Optional[Dict[str, List[Any]]] = None,
+        operation: Any = None,
+        entry: Optional[Sequence[Change]] = None,
+    ):
+        """Hand a workpiece to a counterpart: the possession changes first, then the body moves it.
 
         Usage::
 
-            with mw.handover(mode=MES.Pass, workpiece=wp, counterpart=other):
-                ...  # domain-owned physical transport / counterpart coordination
+            with mw.handover(mode=MES.Pass, workpiece=box, counterpart=next_module, operation=op):
+                conveyor.pass_box()  # the physical move, owned by the domain
 
-        `__enter__` runs exactly two precondition checks OUTSIDE the transaction. First, the
-        caller currently possesses the workpiece (a `cfc:PossessionState` the workpiece points
-        to, with this resource as possessor). Second, the counterpart carries the
-        `mes:hasHandoverAbility` COMPLEMENTARY to `mode`. There is deliberately no
-        destination-free, universal maxCount-1 check. Possession is not always single.
-        The body is domain-owned: physical transport, and any counterpart coordination, for
-        example through a `request(...)` dispatch. The Core never references the event
-        trigger. On clean exit, `__exit__` switches possession to the counterpart. The middleware appends
-        the counterpart's `cfc:hasPossessor` to a fresh PossessionState (an atomic insertion,
-        because a resource can possess several workpieces). The middleware then re-points the workpiece's
-        cardinality-1 `cfc:hasPossessedWorkpiece`, in a single OGM DELETE/INSERT along the update
-        path. The workpiece thus points to exactly one PossessionState throughout the process.
-        On an exception, the middleware aborts with no switch. Possession is Core's reified model
-        (`cfc:PossessionState`). The "possessed by exactly one" cardinality is Core's own
-        Workpiece restriction, the commit-time SHACL backstop.
+        and, with more changes that must be admitted together with the possession change, such as
+        a transport that the next module now executes::
+
+            moved_on = Update(
+                instance_iri=transport,
+                data={
+                    str(CFC.executedOn): [{"id": next_module}],
+                    str(CFC.implementsCapability): [{"id": next_capability}],
+                },
+            )
+            with mw.handover(
+                mode=MES.Pass, workpiece=box, counterpart=next_module, entry=[moved_on]
+            ):
+                conveyor.pass_box()
+
+        The entry checks two preconditions before anything is written: this resource currently
+        possesses the workpiece (the workpiece points at a `cfc:PossessionState` whose possessor
+        is this resource), and the counterpart carries the `mes:hasHandoverAbility` complementary
+        to `mode`. There is deliberately no check that the counterpart is free: a resource may
+        possess any number of workpieces unless a domain rule limits it.
+
+        Then the entry commits the possession change through :meth:`commit`, as one commit. The
+        workpiece's `cfc:hasPossessedWorkpiece` points at the counterpart's one possession state;
+        `workpiece_update` sets more properties of the workpiece that must change together with
+        its possessor, such as its transport state; `operation`, the Operation that this
+        handover completes, becomes `done`; and `entry`, the caller's own kapps_ogm changes, is
+        written too. When the counterpart has no state yet, the same commit creates
+        `<counterpart>_possession` and links the counterpart to it. Nothing writes the
+        `cfc:hasPossessor` link of this resource, or of a counterpart that has a state.
+
+        If the store refuses the commit, its error is raised (a SHACL refusal is
+        `ShaclValidationError`, with the store's validation report as its `report`), nothing is
+        written, neither the possession change nor a change of `entry`, and the body does not run.
+        The body is the move: the physical transport, and any coordination with the counterpart, for
+        example through a `request(...)`. A clean exit writes nothing more. An error in the body is
+        raised as it is and undoes nothing: the possession has already changed, so the caller
+        records what really happened.
+
+        Core says that a resource and a workpiece each have exactly one possession state. That is
+        OWL: it licenses inferences and refuses no write. What refuses a handover at commit is the
+        domain's SHACL shape, for example the one that allows one box on a conveyor module.
+
+        A first handover to a counterpart without a state can race another write that creates
+        that state. Two commits that truly coincide both write the same state triples, and one
+        state results. When the other write lands between this handover's read and its commit,
+        the store refuses the second creation of the state (`PreconditionFailedError`), and
+        writes nothing of it. The handover then checks both preconditions again and commits once
+        more, with the state that exists now; if a precondition no longer holds, for example
+        because the other write handed this same workpiece, it raises
+        `HandoverPreconditionError`, and the body does not run.
+
+        A second handover of the same workpiece at the same moment is refused only in part.
+        Both pass the preconditions before either commits. Inside its commit, kapps_ogm compares
+        the workpiece with a fresh read of it. If the other handover's commit landed between that
+        read and this commit's write, the store refuses this commit and writes nothing of it, and
+        the handover raises `PossessionSwitchConflict` before the body runs. Known limit: if the
+        other handover's commit landed before that read, this commit overwrites its possession
+        change, both succeed, and both bodies run.
+
+        Args:
+            mode: This resource's handover ability, such as `MES.Pass`. The counterpart must
+                carry the complementary one.
+            workpiece: The workpiece that this resource possesses.
+            counterpart: The resource that takes the workpiece over.
+            workpiece_update: More properties of the workpiece to set in the same commit, as
+                `{property IRI: [values]}`; each listed property is replaced. A value that is an
+                IRI (an `IRI` or an rdflib `URIRef`), or `{"id": iri}`, is a reference to that
+                object. Any other value goes to the OGM as it is: a plain `str` is a literal,
+                which the OGM refuses for an object property with `ValueError`, before any write.
+            operation: The Operation that this handover completes. Its `svc:operationStatus`
+                becomes `done` in the same commit.
+            entry: More kapps_ogm `Create` and `Update` changes, built by the caller, that the
+                store admits or refuses in the same commit as the possession change, before the
+                body. A change of the workpiece or of `operation` belongs in `workpiece_update` or
+                is made by `operation`: kapps_ogm refuses two changes of one instance in one
+                commit, with `ValueError`.
+
+        Raises:
+            RuntimeError: If this instance is not in resource mode.
+            HandoverPreconditionError: If a precondition fails. Nothing is written.
+            PossessionSwitchConflict: If the store found the precondition of the entry's
+                commit false (`PreconditionFailedError`, the cause). Usually another write
+                changed what the entry had read, such as a second handover of the workpiece.
+                The store does not say which part of the commit failed, so the same error
+                covers a change of `entry` that creates an instance that the store holds.
+                Nothing is written, and the body does not run.
+            ValueError: If `workpiece_update` names `cfc:hasPossessedWorkpiece`, which the
+                handover sets itself, or a value that does not fit its property, or a change of
+                `entry` does not fit its class or writes an instance that the commit already
+                writes, or the counterpart has more than one possession state. Nothing is
+                written.
+            kapps_triplestore_interface.exceptions.TripleStoreInterfaceError: If the store
+                refuses the possession change; a SHACL refusal is `ShaclValidationError`.
+                Nothing is written, and the body does not run.
         """
 
         if self.mode != Mode.RESOURCE:
@@ -917,7 +1932,59 @@ class SemanticMiddleware(Middleware):
         counterpart_iri = IRI(counterpart)
         mode_ability_iri = IRI(mode)
 
-        # __enter__ preconditions, OUTSIDE the transaction.
+        self._check_handover_preconditions(workpiece_iri, counterpart_iri, mode_ability_iri)
+
+        # What the commit carries beside the possession change: the Operation that the handover
+        # completes, and the caller's own changes.
+        alongside: List[Change] = []
+        if operation is not None:
+            done = {str(SVC.operationStatus): [OperationStatus.DONE]}
+            alongside.append(Update(instance_iri=IRI(operation), data=done))
+        alongside.extend(entry or ())
+
+        # The entry commits the possession change; the body is the move; the exit writes nothing.
+        change = possession_change(
+            self.ogm,
+            workpiece_iri=workpiece_iri,
+            possessor_iri=counterpart_iri,
+            workpiece_update=workpiece_update,
+        )
+        with contextlib.ExitStack() as admitted:
+            try:
+                admitted.enter_context(self.commit(entry=[*change.changes, *alongside]))
+            except PreconditionFailedError as refusal:
+                # The store wrote nothing of the entry. When the entry creates the counterpart's
+                # state, another write may have created that state after it was read: then the
+                # preconditions are checked again, and the entry is committed once more with
+                # that state. Any other refusal is a conflict.
+                again = None
+                if change.creates_state:
+                    again = possession_change(
+                        self.ogm,
+                        workpiece_iri=workpiece_iri,
+                        possessor_iri=counterpart_iri,
+                        workpiece_update=workpiece_update,
+                    )
+                if again is None or again.creates_state:
+                    raise _switch_conflict(workpiece_iri) from refusal
+                self._check_handover_preconditions(workpiece_iri, counterpart_iri, mode_ability_iri)
+                try:
+                    admitted.enter_context(self.commit(entry=[*again.changes, *alongside]))
+                except PreconditionFailedError as second_refusal:
+                    raise _switch_conflict(workpiece_iri) from second_refusal
+            # The commit has happened, so a creation in the body commits on its own.
+            admitted.enter_context(_nothing_to_join())
+            yield
+
+    def _check_handover_preconditions(
+        self, workpiece_iri: IRI, counterpart_iri: IRI, mode_ability_iri: IRI
+    ) -> None:
+        """The two preconditions of a handover, read before anything is written.
+
+        Raises:
+            HandoverPreconditionError: If this resource does not possess the workpiece, or the
+                counterpart lacks the handover ability complementary to the mode.
+        """
         current_ps = find_possession_state(
             self.ogm, workpiece_iri, self.resource_iri, named_graph=self.named_graph
         )
@@ -933,18 +2000,6 @@ class SemanticMiddleware(Middleware):
                 f"to {mode_ability_iri}"
             )
 
-        # Body runs here. An exception aborts before any possession switch.
-        yield
-
-        # __exit__ (clean): switch possession to the counterpart (append possessor link, then
-        # atomically re-point the workpiece's single possession).
-        switch_possession(
-            self.ogm,
-            workpiece_iri=workpiece_iri,
-            new_possessor_iri=counterpart_iri,
-            named_graph=self.named_graph,
-        )
-
     def register_callback(self, callback: Any, scope: Any = None) -> None:
         """Register a domain work callback fired on enqueue.
 
@@ -955,15 +2010,82 @@ class SemanticMiddleware(Middleware):
         handles status (`running`->`done`/`failed`) and provenance. The domain writes only
         the work. Opt-in: with no callback registered, an enqueued Operation stays `queued`
         for a manual `claim_next`. `scope` is the domain ClassScope used to re-fetch the
-        Operation.
+        Operation. An instance with a notification handler (`on_notification`) takes its
+        notifications through the intake, not the queue, so registering both raises
+        `RuntimeError`.
         """
 
         if self.mode != Mode.RESOURCE:
             raise RuntimeError(
                 f"register_callback() is only valid in resource mode; current mode is {self.mode!r}"
             )
+        if self._notification_handler is not None:
+            raise RuntimeError(
+                "register_callback() and on_notification() exclude each other: "
+                "this instance already takes its notifications through the intake"
+            )
         self._callback = callback
         self._callback_scope = scope
+
+    def on_notification(
+        self, handler: Callable[[Any], Any], class_scope: Any = None
+    ) -> None:
+        """Take this instance's notifications through the intake, with ``handler`` as fallback.
+
+        Usage::
+
+            def on_transport_ended(transport):
+                ...  # the Operation object; write through mw.commit()
+
+            mw.on_notification(on_transport_ended, class_scope=transport_scope)
+
+        A notification arrives at this resource's event trigger: from a peer's `notify`, from a
+        peer's `request()`, which notifies the resource it dispatched an Operation to, or from
+        the middleware that claimed or ended an Operation that this resource issued.
+        The trigger reads the Operation once and answers at once. The Operation then enters
+        this instance's FIFO, and one worker runs one Operation at a time, in arrival order:
+
+        - An Operation whose Capability is one of this instance's own (matched in memory, by
+          IRI) runs the exposed workflow that realizes it (:meth:`workflow`), with the
+          Operation object as its argument.
+        - Any other Operation goes to `handler(operation)`, the fallback, such as the up
+          direction: "this Operation ended". So does an Operation that this instance issued to
+          a Capability of its own, once it is no longer `queued`: that notification is the
+          feedback of its own claim or end, and the workflow does not run it again.
+
+        The Operation object is a kapps_ogm ``Node``, read and materialized under the scope:
+        the Capability that the Operation implements and the Workflow that realizes it, united
+        with `class_scope`, this subproject's own ClassScope of the Operation. An Operation that
+        waited behind another one is read again before it runs, so it is never stale. The
+        middleware writes no status and no provenance: the workflow or the handler commits its
+        own transitions with `mw.commit()`.
+
+        A function may be a plain function or a coroutine function. A plain one runs in a
+        worker thread, so it may block (graph I/O, a physical move) without stalling the
+        server. A coroutine function runs on the event loop and must not block. An exception is
+        logged, nothing is written for it, and the next Operation runs.
+
+        At startup, this instance's own `queued` Operations go into the FIFO again, and its own
+        orphaned `running` ones become `failed`, as crash recovery.
+
+        An instance takes its notifications either here or through the dispatch lifecycle
+        (`register_callback`, `claim_next`), not both: registering one when the other is
+        registered raises `RuntimeError`. One handler per instance: a second call replaces the
+        first. Register it before the instance starts.
+        """
+
+        if self.mode != Mode.RESOURCE:
+            raise RuntimeError(
+                "on_notification() is only valid in resource mode; "
+                f"current mode is {self.mode!r}"
+            )
+        if self._callback is not None:
+            raise RuntimeError(
+                "on_notification() and register_callback() exclude each other: "
+                "this instance already has a callback for the dispatch lifecycle"
+            )
+        self._notification_handler = handler
+        self._notification_scope = class_scope
 
     async def _run_callback(self) -> None:
         """Drive the domain callback's pull-and-run off the event loop.
@@ -995,28 +2117,23 @@ class SemanticMiddleware(Middleware):
             claimed.result = callback(claimed.operation)
 
     async def _reconstruct_queue(self) -> None:
-        """Reconstruct the operation queue from the graph on startup for durability.
+        """Take up again, at startup, the Operations addressed to this instance.
 
-        Own ``queued`` Operations are re-enqueued into the in-memory cache. Own orphaned
-        ``running`` Operations (this resource crashed mid-execution) transition to
-        ``failed``, and never auto-rerun, because a half-done physical action must not
-        silently replay. Both are found by ontology traversal (Operation -> Capability <-
-        resource), whose links persist across a restart. So this is a one-shot startup
-        query, rather than steady-state polling.
+        Both kinds are found by ontology traversal (Operation -> Capability <- resource), whose
+        links persist across a restart. So this is a one-shot startup query, rather than
+        steady-state polling.
+
+        Own orphaned ``running`` Operations (this resource crashed mid-execution) transition to
+        ``failed`` first, and never auto-rerun, because a half-done physical action must not
+        silently replay. The issuer of each is notified after that commit. That is crash
+        recovery, on every instance. Only then are the own
+        ``queued`` Operations taken up, so none that starts now can be taken for an orphan:
+
+        - **With a notification handler**, they go into the intake's FIFO, as notifications
+          do, and each is read before it runs.
+        - **Without one**, they are re-enqueued into the in-memory queue for the dispatch
+          lifecycle (``register_callback``, ``claim_next``).
         """
-
-        queued = await anyio.to_thread.run_sync(
-            functools.partial(
-                find_resource_operations,
-                self.ogm,
-                self.resource_iri,
-                [OperationStatus.QUEUED],
-                self.named_graph,
-            )
-        )
-        for op_iri in queued:
-            if op_iri not in self._operation_queue:
-                self._operation_queue.append(op_iri)
 
         orphaned = await anyio.to_thread.run_sync(
             functools.partial(
@@ -1037,6 +2154,31 @@ class SemanticMiddleware(Middleware):
                     self.named_graph,
                 )
             )
+            self._notify_issuers({op_iri: OperationStatus.FAILED})
+
+        queued = await anyio.to_thread.run_sync(
+            functools.partial(
+                find_resource_operations,
+                self.ogm,
+                self.resource_iri,
+                [OperationStatus.QUEUED],
+                self.named_graph,
+            )
+        )
+        if self._notification_handler is not None:
+            for op_iri in queued:
+                self._take_in(op_iri)
+            return
+        if self._callback is None:
+            logger.warning(
+                "%s has neither a notification handler (on_notification) nor a callback "
+                "(register_callback): the Operations it is notified of wait in its queue until "
+                "claim_next() takes them",
+                self.resource_iri,
+            )
+        for op_iri in queued:
+            if op_iri not in self._operation_queue:
+                self._operation_queue.append(op_iri)
 
     def _wire_semantic_connectors(self) -> None:
         """Recognize this resource's interface parameters, and connect what the wiring allows.

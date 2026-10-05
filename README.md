@@ -101,6 +101,10 @@ browser.
 kapps-transferunit-factory
 ```
 
+It serves a live status page on <http://127.0.0.1:8080/>. `--units N` sets how many TransferUnits
+run (two by default); `--force` clears the graph even when a live factory still holds a fresh
+heartbeat. Ctrl+C stops every process.
+
 ## Where to read what
 
 | | |
@@ -115,10 +119,43 @@ If you are writing code against this library, read `AGENTS.md` first. Several of
 constraints that **do not appear in any type signature** and fail by producing quietly wrong
 behaviour rather than an exception.
 
+## Questions
+
+**Can I install it with uv?** Yes. Run this *instead of* the `pip install` at the top, not after
+it:
+
+```bash
+uv add "kapps-semantic-middleware[examples]"
+```
+
+**`pip install` answers `externally-managed-environment`.** Debian and Ubuntu mark their system
+Python as externally managed, so `pip` refuses to write into it. Use a virtual environment:
+
+```bash
+python3 -m venv .venv
+. .venv/bin/activate
+pip install "kapps-semantic-middleware[examples]"
+```
+
+`uv` needs no such step — it creates and manages the environment itself.
+
+**Is `[examples]` really needed for the factory?** Yes, and leaving it out does not look like an
+error. `uvicorn` and `rdflib` reach you anyway, as dependencies of something else; `amqtt` — the
+in-process MQTT broker each unit brings up — does not. Without it the launcher seeds the graph, the
+first middleware starts and prints its address, and then the mock PLC repeats a line like
+
+```
+broker at 127.0.0.1:18831 not ready yet ([Errno 111] Connection refused), retrying in 5.0s
+```
+
+for as long as you let it run. No traceback appears, and neither does `Factory running`. If you see
+that line, the extra is what is missing.
+
 ## Status
 
-`0.1.0` is the first public release. It is usable — the scenarios and the factory demo run end to
-end — but the API may still move. See [`CHANGELOG.md`](CHANGELOG.md).
+Usable, and still on a `0.x` line: the scenarios and the factory demo run end to end, but the API
+may still move, and a minor bump may break you. [`CHANGELOG.md`](CHANGELOG.md) records what each
+release changed.
 
 ## Contributing
 

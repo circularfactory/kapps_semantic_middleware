@@ -7,7 +7,7 @@ Pure unit tests — NO GraphDB, NO network dependencies.
 
 import pytest
 
-from kapps_semantic_middleware.vocabulary import MES, MES_NS, SVC, OperationStatus
+from kapps_semantic_middleware.vocabulary import CFC, MES, MES_NS, SVC, OperationStatus
 
 
 class TestMESNamespace:
@@ -39,6 +39,15 @@ class TestMESTerms:
         """Each MES term IRI ends with MES#<term_name>."""
         term = getattr(MES, term_name)
         assert str(term).endswith("MES#" + term_name)
+
+
+class TestCFCOperationTerms:
+    """Core terms of an Operation that the documented caller patterns write."""
+
+    def test_executed_on_iri(self):
+        """CFC.executedOn is Core's cfc:executedOn: the Resource that executes an Operation, which
+        a transport's hop reassigns in a handover's entry."""
+        assert str(CFC.executedOn) == "https://w3id.org/circularfactory/Core#executedOn"
 
 
 class TestSVCOperationStatus:

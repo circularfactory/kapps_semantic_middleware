@@ -103,18 +103,24 @@ class TestTheModulesImportWithoutTheirStack:
         it was believed true with nothing pinning it, and writing the pin is what showed it
         is not true.
 
-        *"An instance with no REST stack installed still constructs."* It does not.
-        ``rest_binding``'s own guard is correct in isolation, but importing the module pulls
-        in ``transitional_sync_middleware.connect.connectors.aas_client_connector``, which does a bare
-        ``import httpx`` at module level. So with httpx absent the import fails several
-        frames before ``rest_binding``'s ``try`` is reached, and the ``# pragma: no cover``
-        on that guard is honest: the branch is unreachable while ``transitional_sync_middleware`` is a
-        dependency.
+        *"An instance with no REST stack installed still constructs."* It does not, and it
+        does not for two reasons, either of which is enough on its own. This library's
+        ``middleware.py`` does a bare ``import httpx`` at module level, for the
+        ``httpx.Client`` that invokes an Operation over HTTP, and importing any module of this
+        package reaches it. Behind that, ``transitional_sync_middleware`` does the same in
+        ``connect.connectors.aas_client_connector``. So with httpx absent the import fails
+        several frames before ``rest_binding``'s ``try`` is reached, and the ``# pragma: no
+        cover`` on that guard is honest: the branch is unreachable.
 
-        **That upstream import is eager and declared.** ``httpx`` is a dependency of
-        ``transitional_sync_middleware`` (0.1.0 declares it, see ``uv.lock``) and of this
-        library, and ``import transitional_sync_middleware`` reaches that module at import
-        time. Making the import lazy upstream would be a feature change there, not a fix here.
+        **Both imports are eager and declared.** ``httpx`` is a dependency of this library and
+        of ``transitional_sync_middleware`` (0.1.0 declares it, see ``uv.lock``). Making either
+        one lazy would be a feature change, not a fix here.
+
+        **The failing frame moved once already.** While ``__init__.py`` still re-exported the
+        upstream namespace, its first statement reached ``transitional_sync_middleware`` before
+        anything of ours, so the traceback named the upstream module. It names ``middleware.py``
+        now. The claim under test did not change; only the first eager import to run did, which
+        is why this assertion reads the frame rather than trusting the reason.
 
         This test pins the *actual* state, so that making httpx genuinely optional upstream
         turns this red and sends the reader back to the claim rather than leaving one
@@ -134,9 +140,9 @@ class TestTheModulesImportWithoutTheirStack:
         assert "import httpx" in result.stderr, (
             f"expected the failure to be a bare httpx import, got:\n{result.stderr}"
         )
-        assert "transitional_sync_middleware" in result.stderr, (
-            "the import no longer fails inside transitional_sync_middleware, so the reason recorded in "
-            f"this test's docstring has changed:\n{result.stderr}"
+        assert "kapps_semantic_middleware/middleware.py" in result.stderr.replace("\\", "/"), (
+            "the import no longer fails on this library's own eager `import httpx`, so the reason "
+            f"recorded in this test's docstring has changed:\n{result.stderr}"
         )
 
     def test_the_rest_failure_is_deferred_and_actionable(self, monkeypatch):

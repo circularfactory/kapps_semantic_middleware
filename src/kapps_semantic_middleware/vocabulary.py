@@ -66,9 +66,14 @@ in particular is asserted on everything the OGM writes. Anything starting with o
 is filtered out when the code asks the graph what an individual actually is.
 """
 
+OWL_NAMED_INDIVIDUAL = IRI("NamedIndividual", base=OWL_NS)
+"""``owl:NamedIndividual``, the type that kapps_ogm asserts on every instance it creates, beside
+the instance's class. Removing an instance that the OGM created means removing this type too."""
+
 
 class CFC:
-    """Terms from the Core ontology (`cfc:`) that the middleware references."""
+    """Terms from the Core ontology (`cfc:`) that the middleware references, and the Core terms
+    that its documented caller patterns write, such as a transport's hop (`executedOn`)."""
 
     # Classes
     Resource = IRI("Resource", base=CORE_NS)
@@ -84,6 +89,7 @@ class CFC:
 
     # Object properties
     implementsCapability = IRI("implementsCapability", base=CORE_NS)  # Operation -> Capability
+    executedOn = IRI("executedOn", base=CORE_NS)  # Operation -> Resource
     hasCapability = IRI("hasCapability", base=CORE_NS)  # Resource -> Capability
     hasPossessor = IRI("hasPossessor", base=CORE_NS)  # Resource -> PossessionState
     hasPossessedWorkpiece = IRI("hasPossessedWorkpiece", base=CORE_NS)  # Workpiece -> PossessionState
@@ -123,6 +129,11 @@ class SVC:
     executionTimestamp = IRI("executionTimestamp", base=SVC_NS)  # Operation -> xsd:dateTime
     executionResult = IRI("executionResult", base=SVC_NS)  # Operation -> xsd:string
     failureState = IRI("failureState", base=SVC_NS)  # Operation -> xsd:string (JSON resource-datamodel dump on failure)
+
+    # The issuer of an Operation: the Resource of the instance whose request() created it. It is
+    # responsible for the Operation while it is queued; the Resource that claims it is
+    # responsible from running on.
+    issuedBy = IRI("issuedBy", base=SVC_NS)  # Operation -> Resource
 
 
 class MES:

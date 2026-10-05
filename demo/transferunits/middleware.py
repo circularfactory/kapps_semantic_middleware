@@ -26,6 +26,7 @@ from kapps_semantic_middleware import Mode, SemanticMiddleware
 from kapps_semantic_middleware.credentials import DEMO_REPOSITORY, graphdb_for
 
 from . import seed
+from .launcher import GRACEFUL_SHUTDOWN_SECONDS
 
 BROKER_READY_TIMEOUT_SECONDS = 5.0
 
@@ -107,8 +108,14 @@ async def run_server(
     host: str, port: int, middleware: SemanticMiddleware, sock: socket.socket | None = None
 ) -> None:
     """Run the FastAPI server directly on this loop (uvicorn on the main thread)."""
+    # Bounded below the launcher's stop timeout, so that a connection which stays open cannot
+    # hold the stop open past the kill and cost the deregistration.
     config = __import__("uvicorn").Config(
-        app=middleware.app, host=host, port=port, log_level="warning"
+        app=middleware.app,
+        host=host,
+        port=port,
+        log_level="warning",
+        timeout_graceful_shutdown=GRACEFUL_SHUTDOWN_SECONDS,
     )
     server = __import__("uvicorn").Server(config=config)
     await server.serve(sockets=[sock] if sock is not None else None)

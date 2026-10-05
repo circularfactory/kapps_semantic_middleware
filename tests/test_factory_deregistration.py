@@ -49,6 +49,7 @@ from kapps_semantic_middleware.vocabulary import SVC  # noqa: E402
 # the same helpers because the failure they have to describe is the same one: a factory that
 # did not do something within a budget, quoting what the launcher said.
 from test_factory_smoke import _await, _url  # noqa: E402
+from _sse import hold  # noqa: E402
 
 pytestmark = [requires_graphdb, pytest.mark.live, pytest.mark.smoke]
 
@@ -139,6 +140,11 @@ def stopped_factory(demo_graphdb) -> Iterator[None]:
     Yields once the stop has returned. The test that follows reads the graph, so the point of
     this fixture is the *transition*: it asserts the unit was reachable first, which is what
     makes the absence afterwards mean something rather than being the state of an empty graph.
+
+    **The unit's activity feed is open during the stop**, as it is in an ordinary session: the
+    launcher's page links every feed. A response that stays open holds a stopping server open
+    before its deregistration, and the launcher then kills the unit past its stop timeout. The
+    feed is followed as a browser follows it, reconnecting at every end of a stream.
     """
     launcher_url = f"http://{LAUNCHER_HOST}:{LAUNCHER_PORT}/"
 
@@ -171,6 +177,7 @@ def stopped_factory(demo_graphdb) -> Iterator[None]:
     def _tail() -> str:
         return "\n".join(lines[-25:]) or "(the launcher said nothing)"
 
+    stopped = threading.Event()
     try:
         _await(
             lambda: _listening(LAUNCHER_HOST, LAUNCHER_PORT),
@@ -187,9 +194,22 @@ def stopped_factory(demo_graphdb) -> Iterator[None]:
             f"nothing. The launcher said:\n{_tail()}",
         )
 
+        [address] = _unit_service_addresses(demo_graphdb)
+        feed_open = threading.Event()
+        hold(_url(address, "activity/stream"), until=stopped.is_set, opened=feed_open)
+        assert feed_open.wait(READY_TIMEOUT_SECONDS), (
+            f"The unit's activity feed never opened at {address}. The launcher "
+            f"said:\n{_tail()}"
+        )
+
         httpx.post(_url(launcher_url, "api/stop"), timeout=STOP_TIMEOUT_SECONDS)
+        assert not any("Killed, past their timeout" in line for line in lines), (
+            f"The launcher killed a child that did not stop in time, so it skipped its "
+            f"deregistration. The launcher said:\n{_tail()}"
+        )
         yield
     finally:
+        stopped.set()
         _kill_factory(proc)
 
 

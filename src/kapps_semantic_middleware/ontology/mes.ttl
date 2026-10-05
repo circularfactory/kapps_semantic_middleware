@@ -31,11 +31,23 @@ mes: rdf:type owl:Ontology ;
 # Handover ability
 #
 # A tag on a Resource naming a handover role it can perform. The six roles form
-# three complementary pairs (Elfaham & Epple, at–Automatisierungstechnik 2020):
-# Put↔Receive (source active), Pick↔Release (destination active), Pass↔Retrieve
-# (both active). The handover primitive's precondition check verifies that the
-# counterpart carries the ability COMPLEMENTARY to the caller's mode; mes:complements
-# encodes those pairs so that mapping is ontology ground truth, not code-only.
+# three complementary pairs (Elfaham & Epple, at–Automatisierungstechnik 68(3) 2020,
+# section 3.3 and figure 2): Put↔Receive, Pick↔Release, Pass↔Retrieve. Each pair is
+# named for the procedure it realises — a put-procedure, a pick-procedure, a
+# pass-procedure — and the pair says which side gives and which side takes.
+#
+# A pair does NOT say which side is physically active. That is a property of the
+# resource in the role, not of the ability, and it is deliberately not modelled here.
+# Elfaham & Epple call an ability active when it needs control logic beyond the
+# physical means and passive when the physical means suffice (section 4), and the
+# same ability can be either: a shelf receives passively, while a sorting conveyor
+# must stop its drive to receive and so receives actively (Fischer et al., LDIC 2020,
+# section 4.3). Read a comment below as the role in the procedure, never as a claim
+# about actuation.
+#
+# The handover primitive's precondition check verifies that the counterpart carries
+# the ability COMPLEMENTARY to the caller's mode; mes:complements encodes those pairs
+# so that mapping is ontology ground truth, not code-only.
 #################################################################
 
 mes:HandoverAbility rdf:type owl:Class ;
@@ -61,30 +73,30 @@ mes:complements rdf:type owl:ObjectProperty , owl:SymmetricProperty ;
 
 mes:Put rdf:type mes:HandoverAbility ;
     rdfs:label "Put" ;
-    rdfs:comment "Source-active giving: the source places the product and asserts delivery. Complements Receive." ;
+    rdfs:comment "The giving side of a put-procedure: it hands the workpiece over to the taking side. Complements Receive." ;
     mes:complements mes:Receive .
 
 mes:Receive rdf:type mes:HandoverAbility ;
     rdfs:label "Receive" ;
-    rdfs:comment "Passive counterpart of Put: the destination takes possession of a product the source placed. Complements Put." ;
+    rdfs:comment "The taking side of a put-procedure: it takes possession of a workpiece the giving side hands over. Complements Put." ;
     mes:complements mes:Put .
 
 mes:Pick rdf:type mes:HandoverAbility ;
     rdfs:label "Pick" ;
-    rdfs:comment "Destination-active taking: the destination removes the product from the source. Complements Release." ;
+    rdfs:comment "The taking side of a pick-procedure: it takes the workpiece from the giving side itself. Complements Release." ;
     mes:complements mes:Release .
 
 mes:Release rdf:type mes:HandoverAbility ;
     rdfs:label "Release" ;
-    rdfs:comment "Passive counterpart of Pick: the source relinquishes a product the destination takes. Complements Pick." ;
+    rdfs:comment "The giving side of a pick-procedure: it relinquishes a workpiece that the taking side comes and takes. Complements Pick." ;
     mes:complements mes:Pick .
 
 mes:Pass rdf:type mes:HandoverAbility ;
     rdfs:label "Pass" ;
-    rdfs:comment "Both-active giving: source and destination act together in a direct hand-off. Complements Retrieve." ;
+    rdfs:comment "The giving side of a pass-procedure, a joint handover: it carries the workpiece to a point beyond its own extent but within reach of the taking side. Both sides act, so both need control logic. Complements Retrieve." ;
     mes:complements mes:Retrieve .
 
 mes:Retrieve rdf:type mes:HandoverAbility ;
     rdfs:label "Retrieve" ;
-    rdfs:comment "Both-active taking: the destination half of a direct, synchronized hand-off. Complements Pass." ;
+    rdfs:comment "The taking side of a pass-procedure, a joint handover: it performs the matching movement to retrieve the workpiece the giving side carried out to meet it. Complements Pass." ;
     mes:complements mes:Pass .

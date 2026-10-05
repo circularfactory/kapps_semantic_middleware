@@ -33,10 +33,11 @@ without forward references.
 | [`docs/mechanics/02-workflow-registration.md`](docs/mechanics/02-workflow-registration.md) | Declaring what a Service exposes, the ontology prerequisites, signature-derived shapes, address vs. endpoint |
 | [`docs/mechanics/03-state-and-parameters.md`](docs/mechanics/03-state-and-parameters.md) | Modelling resource state as Parameters, committed value vs. locator, where a parameter's shape comes from |
 | [`docs/mechanics/04-connector-binding.md`](docs/mechanics/04-connector-binding.md) | The recognition chain, adding a protocol the library does not ship, connector wiring, transports |
-| [`docs/mechanics/05-operation-coordination.md`](docs/mechanics/05-operation-coordination.md) | Dispatch, the event trigger, pull-and-run, the status lifecycle, handover, recovery |
+| [`docs/mechanics/05-operation-coordination.md`](docs/mechanics/05-operation-coordination.md) | Dispatch, the issuer and the Issued Operation, the event trigger, notifications and the intake, pull-and-run, the status lifecycle, handover, recovery |
 | [`docs/mechanics/06-views-and-projection.md`](docs/mechanics/06-views-and-projection.md) | Defining a ClassScope, what a view cannot select, what the northbound projection removes |
-| [`docs/mechanics/07-writing-to-the-graph-and-to-devices.md`](docs/mechanics/07-writing-to-the-graph-and-to-devices.md) | Every path that causes a write, naming the field that moved, northbound vs. southbound, IRI handling |
+| [`docs/mechanics/07-writing-to-the-graph-and-to-devices.md`](docs/mechanics/07-writing-to-the-graph-and-to-devices.md) | Every path that causes a write, creating an instance and the predefined scopes, naming the field that moved, northbound vs. southbound, IRI handling |
 | [`docs/mechanics/08-provisioning-and-seeding.md`](docs/mechanics/08-provisioning-and-seeding.md) | **Read first if `ogm=` is a mystery.** The bootstrap order, loading the shared ontologies, authoring the domain TBox, and seeding the instance data a Parameter needs |
+| [`docs/mechanics/09-the-state-dashboard.md`](docs/mechanics/09-the-state-dashboard.md) | The read-only page an instance serves about itself, the box registry a subproject extends, hiding a box, and posting to its own workflow |
 
 ### Where the reasoning lives
 
@@ -47,8 +48,9 @@ page behind it, that is a documentation bug worth reporting, not a missing file 
 
 ## Where the names come from
 
-This library re-exports much of its surface from its three dependencies, so the import you need is
-often *not* from `kapps_semantic_middleware`. Use this table rather than guessing.
+`kapps_semantic_middleware` exports two names, `SemanticMiddleware` and `Mode`, and re-exports
+nothing. Every other name you need comes from one of this package's own modules or from one of
+its three dependencies, by that dependency's own path. Use this table rather than guessing.
 
 | Name | Import from |
 |---|---|
@@ -60,7 +62,20 @@ often *not* from `kapps_semantic_middleware`. Use this table rather than guessin
 | `ConnectionInfo` | `transitional_sync_middleware.middleware.registries` |
 | `INF` (the interface vocabulary) | `kapps_semantic_middleware.vocabulary` |
 | `graphdb_for`, `credentials_for` | `kapps_semantic_middleware.credentials` |
-| `DataModel`, `Reference`, `Identifier` | `kapps_semantic_middleware` (re-exported from `transitional_sync_middleware`) |
+| `enable_dashboard`, `panel`, `kv_table`, `hint`, `escape` | `kapps_semantic_middleware.dashboard` |
+| `mw.commit()`, `mw.create()`, `mw.fetch()`, `mw.notify()`, `mw.on_notification()`, `mw.resource` (members of `SemanticMiddleware`, nothing more to import; `mw.create(cls, scope)` creates one new instance, `mw.resource` is the middleware's own Resource, `mw.notify(operation=op, resource=r)` sends a notification, an Operation's IRI with no payload and no write, and `mw.on_notification(handler, class_scope=...)` takes the notified Operations through the intake, one at a time, each as the Operation object, to the exposed workflow that realizes its Capability or else to the handler, with no lifecycle; the feedback of an Operation that the instance's Resource issued and that is no longer `queued` goes to the handler, also when a workflow of the instance realizes its Capability) | `kapps_semantic_middleware` |
+| `IssuedOperation` (what `mw.request()` yields: the draft of the new Operation in its block, and after it the handle with `op.iri` and `op.issuer`, which waits with `await op.claimed(timeout=30)` and `await op.ended(timeout=None)`, or with their blocking twins `op.wait_claimed(timeout)` and `op.wait_ended(timeout)`) | `kapps_semantic_middleware.middleware` |
+| `Create`, `Update` (the changes that a transition of `mw.commit()` is made of, and the `entry` of `mw.handover()`) | `kapps_ogm` |
+| `Node` (the Operation object that the intake passes to a workflow or a notification handler; type a workflow's parameter with it) | `kapps_ogm` |
+| `workpiece` (the scope of a new Workpiece for `mw.create()`: `workpiece(scope, possessor=mw.resource)`) | `kapps_semantic_middleware.possession` |
+| `operation` (the scope of a new Operation for `mw.create()`: `operation(scope, capability=cap)`) | `kapps_semantic_middleware.operation` |
+| `PredefinedScope`, `ScopeChanges` (the hook through which a domain module brings its rules to `mw.create()`, and what its `changes()` returns) | `kapps_semantic_middleware.commit` |
+| `SVC`, `OperationStatus` (the service vocabulary, and an Operation's status values) | `kapps_semantic_middleware.vocabulary` |
+| `MES` (the handover abilities, such as `MES.Pass`, that `mw.handover()` takes as its `mode`) | `kapps_semantic_middleware.vocabulary` |
+| `HandoverPreconditionError`, `PossessionSwitchConflict`, `OperationQueueEmpty`, `OperationResolutionError`, `OntologyGroundTruthError`, `NotificationUndelivered` | `kapps_semantic_middleware.errors` |
+| `ShaclValidationError` (the store refused a write by SHACL validation; `.report` is its validation report, verbatim), `GraphDbException` (any other error answer of the store; `ShaclValidationError` subclasses it), `PreconditionFailedError` (the store found the precondition of a write false and wrote nothing: a `Create` of an instance that it holds, or a value that a change replaces and that another write changed after the read), `TripleStoreInterfaceError` (any error of the interface) | `kapps_triplestore_interface.exceptions` |
+| `AnonymousNodeFetchError`, `AmbiguousNodeAlignmentError`, `UnresolvableNodeAddressError` (each a `ValueError`) | `kapps_ogm.utils.errors` |
+| `RequestException` (the store cannot be reached; `requests` is the store's HTTP client, reached through `kapps_triplestore_interface`, and not one of the three dependencies) | `requests.exceptions` |
 
 Binding internals, if you are adding a protocol, live under
 `kapps_semantic_middleware.connectors` — `semantic`, `mqtt_binding`, `rest_binding`,
@@ -68,6 +83,54 @@ Binding internals, if you are adding a protocol, live under
 
 > `kapps_semantic_middleware/ontology/` is **not** a Python module. It is the directory holding the
 > three vocabulary files (`core.ttl`, `mes.ttl`, `service.ttl`). Importing from it fails.
+
+## Generic and circular-factory-specific modules
+
+The generic core knows only `svc:` and standard RDF (`rdf:`, `rdfs:`, `owl:`, `xsd:`). Everything
+specific to the circular factory, which is Core's `cfc:` vocabulary, lives in small topic modules.
+Each topic module is built on the generic core: `mw.commit()`, `mw.create()`, `mw.fetch()` and
+kapps_ogm's changes. It never writes past them. A domain that is not modelled on Core uses the
+generic modules and none of the cfc-specific ones.
+
+Some generic modules still have cfc-specific parts inside. The table names those parts: the
+functions, methods, classes and module-level names where a `cfc:` term may appear. Nowhere else in
+such a module may one appear.
+
+`tests/test_generic_modules.py` reads this table. It fails when a generic module names a `cfc:`
+IRI or imports a cfc-specific module, when a module with cfc-specific parts speaks `cfc:` outside
+the parts named here, when a module of the package is not in the table, and when a module or a
+part listed with `cfc:` no longer has any.
+
+| Module | Kind | What is cfc-specific in it |
+|---|---|---|
+| `kapps_semantic_middleware` | generic | |
+| `kapps_semantic_middleware.activity` | generic | |
+| `kapps_semantic_middleware.commit` | generic | |
+| `kapps_semantic_middleware.connectors` | generic | |
+| `kapps_semantic_middleware.connectors.knowledge_graph_connector` | generic | |
+| `kapps_semantic_middleware.connectors.mqtt_binding` | generic | |
+| `kapps_semantic_middleware.connectors.rest_binding` | generic | |
+| `kapps_semantic_middleware.connectors.semantic` | generic | |
+| `kapps_semantic_middleware.connectors.wiring` | generic | |
+| `kapps_semantic_middleware.credentials` | generic | |
+| `kapps_semantic_middleware.dashboard` | generic | |
+| `kapps_semantic_middleware.dashboard_boxes` | generic | |
+| `kapps_semantic_middleware.errors` | generic | |
+| `kapps_semantic_middleware.examples_cli` | generic | |
+| `kapps_semantic_middleware.modes` | generic | |
+| `kapps_semantic_middleware.projection` | generic | |
+| `kapps_semantic_middleware.rest_router` | generic | |
+| `kapps_semantic_middleware.shacl_interop` | generic | |
+| `kapps_semantic_middleware.shacl_interop.shape_from_typehints` | generic | |
+| `kapps_semantic_middleware.possession` | cfc-specific | Possession: one possession state per Resource, the change of possession that `handover()` commits, and the `workpiece` scope |
+| `kapps_semantic_middleware.operation` | cfc-specific | The Operation: its link to the Capability that it implements, the `operation` scope, and the scope and the Capabilities of a received Operation |
+| `kapps_semantic_middleware.middleware` | generic, with cfc-specific parts | `SemanticMiddleware.handover`, `SemanticMiddleware.request`, `SemanticMiddleware._read_received`: the change of possession of a handover, the Operation of a request, created under the operation scope, and the intake's read of a received Operation with the Capabilities it implements |
+| `kapps_semantic_middleware.registration` | generic, with cfc-specific parts | `register_workflow`, `register_state_property`, `create_operation`, `_resolve_claim`, `find_resource_operations`, `find_possession_state`, `switch_possession`: the Capability links of registration and dispatch, the possession read of a handover's precondition, and the possession helpers that a seed uses |
+| `kapps_semantic_middleware.seeding` | generic, with cfc-specific parts | `CORE_GRAPH`: the graph into which the shared ontologies load Core |
+| `kapps_semantic_middleware.vocabulary` | generic, with cfc-specific parts | `CORE_NS`, `CORE_ONTOLOGY`, `CFC`: the one home of every IRI holds Core's terms too |
+
+The demonstration (`kapps_semantic_middleware.demonstrations`) is an illustration, not part of
+the package's API, and is not classified.
 
 ## Consumption rules
 
@@ -123,6 +186,21 @@ triple means *unknown*, never *false*.
 IRIs in their mangled form — REST path segments, datamodel field names, `svc:endpoint` triples. A
 consumer that parses a displayed IRI, or round-trips one back into a query, gets a wrong answer
 with no exception raised.
+
+**A connection that stays open holds a stop open, and the instance then never deregisters.**
+uvicorn runs the lifespan shutdown, where the instance removes its address, only after every open
+response has finished, and by default it waits without a limit. A supervisor that kills the
+process past its stop timeout skips the deregistration, and the address stays in the graph. The
+library's `/activity/stream` ends after 2 s for this reason; a client other than a browser must
+reconnect and send `Last-Event-ID`. A streaming route of your own must end by itself too, and
+where you run uvicorn, set `timeout_graceful_shutdown` below your supervisor's stop timeout.
+
+**A dashboard box that names a URL of its own instance with a leading slash breaks behind a path
+prefix.** A box is placed into the page at `/dashboard`, and a proxy may serve the process under a
+prefix, such as `/p/<process>/dashboard`. An absolute `hx-post="/workflows/<name>/execute"` then
+goes to the proxy's own root, and the form posts to nothing, with no error on the page. Write the
+path relative to the page, `workflows/<name>/execute`, as the library's own pages do. See
+[`docs/mechanics/09-the-state-dashboard.md`](docs/mechanics/09-the-state-dashboard.md).
 
 ### These fail loudly
 

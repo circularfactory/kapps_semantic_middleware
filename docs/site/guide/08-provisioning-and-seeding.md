@@ -55,6 +55,11 @@ load_shared_ontologies(db)  # loads the shared modules, left standing by clear_r
 `clear_repository(db)` empties the repository so a re-run starts clean. Because GraphDB reasons
 across graphs, a domain class in the default graph still resolves its shared superclass.
 
+If the store refuses to clear the default graph, `clear_repository(db)` raises. So the seed stops
+there and does not write over the old data. The error is a `GraphDbException` from
+`kapps_triplestore_interface.exceptions`, or a subclass of it. One cause is a loaded SHACL shape
+that makes the store fail on deletes.
+
 ## Getting the Domain Classes into the Ontology
 
 The middleware never creates ontology classes. Every {term}`Capability`, {term}`Workflow`,

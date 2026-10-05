@@ -40,8 +40,8 @@ The vocabulary of the project is layered across three modules:
 - **`cfc:` — Core** (`.../Core#`): published, external, superior — `Operation`/`Capability`/
   `Resource`/`Task`. The system imports and specializes it. The system does not modify it.
 - **`mes:` — MES** (`.../MES#`, `src/kapps_semantic_middleware/ontology/mes.ttl`): a
-  **domain** ontology that imports Core and details it out — possession + handover ability.
-  What domain experts touch.
+  **domain** ontology that imports Core and details it out with handover ability. Possession is
+  Core's own (`cfc:PossessionState`). What domain experts touch.
 - **`svc:` — Service** (`.../Service#`, `ontology/service.ttl`): middleware-to-middleware
   **reachability and coordination only**, domain code does not touch it. It holds Service, Workflow and
   StateProperty, the address, the endpoint and the heartbeat. It also holds the resolution chain,

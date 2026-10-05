@@ -1530,21 +1530,21 @@ wheels = [
 
 [[package]]
 name = "kapps-ogm"
-version = "0.2.0"
+version = "0.3.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "kapps-triplestore-interface" },
     { name = "pydantic" },
     { name = "rdflib" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/3f/fe/7b61b4aa70e21f23d8c4213ab3bac144255ef5447973106bc529b0b59555/kapps_ogm-0.2.0.tar.gz", hash = "sha256:d56aee045345d43bb9abadf7359c2af38f4f7c51eeabee1c575709765703854a", size = 88750, upload-time = "2026-08-12T17:36:10.057Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/9c/c1/3317504955e1f37c32ae5ed831737efaa3394800685f117eb79877944309/kapps_ogm-0.3.0.tar.gz", hash = "sha256:0877fa55be4a92340650d5485f0ac572a9bf9535fe867185a0b67402b65f50e9", size = 154724, upload-time = "2026-10-05T16:49:41.285Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/a4/82/58c1fa6351c8b99abc8766e6cbdab530f7dd2f213a9739a81689e3550916/kapps_ogm-0.2.0-py3-none-any.whl", hash = "sha256:232791f8a53f16f7d5ce03383fd9adb7dbc41a7df767633a8fc2c06de4b2f55a", size = 48019, upload-time = "2026-08-12T17:36:08.621Z" },
+    { url = "https://files.pythonhosted.org/packages/a8/68/3b7c04acbe2c1c6b1a6f518c9459f67de93def452e5194572fac5a7f0617/kapps_ogm-0.3.0-py3-none-any.whl", hash = "sha256:73238d65ebbb1cc4e4e6c139b3a995c59392e8b69c6c226b7541ddc3965cabeb", size = 53686, upload-time = "2026-10-05T16:49:40.057Z" },
 ]
 
 [[package]]
 name = "kapps-semantic-middleware"
-version = "0.1.1"
+version = "0.2.0"
 source = { editable = "." }
 dependencies = [
     { name = "aiomqtt" },
@@ -1589,12 +1589,12 @@ requires-dist = [
     { name = "httpx", specifier = ">=0.27.0" },
     { name = "jupyter", marker = "extra == 'notebooks'", specifier = ">=1.1.1" },
     { name = "jupytext", marker = "extra == 'notebooks'", specifier = ">=1.16.0" },
-    { name = "kapps-ogm", specifier = "~=0.2.0" },
-    { name = "kapps-triplestore-interface", specifier = "~=2.1.1" },
+    { name = "kapps-ogm", specifier = "~=0.3.0" },
+    { name = "kapps-triplestore-interface", specifier = "~=2.2.0" },
     { name = "nbconvert", marker = "extra == 'notebooks'", specifier = ">=7.16.0" },
     { name = "rdflib", marker = "extra == 'examples'", specifier = ">=7.1.3" },
     { name = "transitional-sync-middleware", specifier = "~=0.1.0" },
-    { name = "uvicorn", marker = "extra == 'examples'", specifier = ">=0.29.0" },
+    { name = "uvicorn", marker = "extra == 'examples'", specifier = ">=0.41.0" },
 ]
 provides-extras = ["examples", "notebooks"]
 
@@ -1614,7 +1614,7 @@ dev = [
 
 [[package]]
 name = "kapps-triplestore-interface"
-version = "2.1.1"
+version = "2.2.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "pydantic" },
@@ -1622,10 +1622,11 @@ dependencies = [
     { name = "rdflib" },
     { name = "regex" },
     { name = "requests" },
+    { name = "urllib3" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/8c/a2/0fe7b9f83abc7149fce2604a0def2a1a08cc0b02f1323e5fd2a7d5eae54a/kapps_triplestore_interface-2.1.1.tar.gz", hash = "sha256:dd6456f30f011f9340f0e577ff2868750fb8e1c03a5a04768488d6cd1ee32d6c", size = 93325, upload-time = "2026-09-17T11:50:45.2Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/65/9e/29f5b6782326e7fab759f709d8db1d6f7b773f502839e88b88332c67e8d8/kapps_triplestore_interface-2.2.0.tar.gz", hash = "sha256:0a1e09acf2e0b1393c340a19b69da2a8653bcf20d889ea0a2df88ae6b67bf9d6", size = 121719, upload-time = "2026-10-05T16:01:47.558Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/a8/ba/4dc18f7339db43bd55754f4b2cc2da053b848ec965dd4aff1698a2b0de8c/kapps_triplestore_interface-2.1.1-py3-none-any.whl", hash = "sha256:b4be16caded92e61d87421a48b28f8551af298d99a0574764a49fe919770cfe0", size = 37997, upload-time = "2026-09-17T11:50:43.839Z" },
+    { url = "https://files.pythonhosted.org/packages/96/bb/4254e7f3131f667167cb818b60eb3f6389060e04297384f70de98c03d502/kapps_triplestore_interface-2.2.0-py3-none-any.whl", hash = "sha256:05a53abd2900cf77ef615e598c384fd89c7882fa2df2828aba8b1eb3345357ff", size = 47490, upload-time = "2026-10-05T16:01:46.155Z" },
 ]
 
 [[package]]
@@ -3270,7 +3271,7 @@ wheels = [
 
 [[package]]
 name = "transitional-sync-middleware"
-version = "0.1.0"
+version = "0.1.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "aas-pydantic" },
@@ -3291,9 +3292,9 @@ dependencies = [
     { name = "typeguard" },
     { name = "uvicorn" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/30/f5/f85e18b00eb6ea56d181e04216bbb36f2ef7566578bb33da631ecab89b9e/transitional_sync_middleware-0.1.0.tar.gz", hash = "sha256:73e25687a33d9bbf70e261180ed44461059a4d86fd7d15f5089a5ffa8378dc33", size = 121205, upload-time = "2026-08-12T12:25:18.682Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/01/fc/0beeafae68d481279cfdd275641ef1837b325c37c1e79b38a76e9be02598/transitional_sync_middleware-0.1.1.tar.gz", hash = "sha256:2d12f0e8e23aa1bbf5db562d51af08c2726cfe2f4333144d0a5f7654d51c2c11", size = 121214, upload-time = "2026-09-24T12:04:37.041Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/4e/e6/deb582a8ca467c0e366807ecab38a2d3cd3acfb5a7c22af7b6f3f18d1829/transitional_sync_middleware-0.1.0-py3-none-any.whl", hash = "sha256:64fe6c1bea6333b78fc05609c515807828bf8e4a2116da7d8aebdfcc13822d0c", size = 148172, upload-time = "2026-08-12T12:25:17.308Z" },
+    { url = "https://files.pythonhosted.org/packages/ef/9c/97f93a1730eee65d5fcd7dc3018528fa300d0b2c80ff4e6ce93d207601e2/transitional_sync_middleware-0.1.1-py3-none-any.whl", hash = "sha256:fd299daa17bc5faaf19966dcfe8eb9d7a4289c4d78752cb1d81bd46cdc0423b0", size = 148170, upload-time = "2026-09-24T12:04:35.646Z" },
 ]
 
 [[package]]
@@ -3385,20 +3386,19 @@ wheels = [
 
 [[package]]
 name = "uvicorn"
-version = "0.29.0"
+version = "0.53.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "click" },
     { name = "h11" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/49/8d/5005d39cd79c9ae87baf7d7aafdcdfe0b13aa69d9a1e3b7f1c984a2ac6d2/uvicorn-0.29.0.tar.gz", hash = "sha256:6a69214c0b6a087462412670b3ef21224fa48cae0e452b5883e8e8bdfdd11dd0", size = 40894, upload-time = "2024-03-20T06:43:25.747Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/5d/ad/04bbb797c84fc1f26cb171f7394716f4865ffb8d8c5e1eef42565c2dfa6b/uvicorn-0.53.0.tar.gz", hash = "sha256:a9356f0cb89b3b8621529c5d5eebd69bfe154f4c3f68b4cf2de47e45fa855c2e", size = 110881, upload-time = "2026-09-14T07:44:23.815Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/73/f5/cbb16fcbe277c1e0b8b3ddd188f2df0e0947f545c49119b589643632d156/uvicorn-0.29.0-py3-none-any.whl", hash = "sha256:2c2aac7ff4f4365c206fd773a39bf4ebd1047c238f8b8268ad996829323473de", size = 60813, upload-time = "2024-03-20T06:43:21.841Z" },
+    { url = "https://files.pythonhosted.org/packages/76/18/0eea75741ee812e9f598b687619ce2454f6c3a1c5cd21ea990ec6bd26f45/uvicorn-0.53.0-py3-none-any.whl", hash = "sha256:e8dca71ec86dce5f04e333f0d56cdedf942446e6643b9cea1af0d6d3a02cb03e", size = 87081, upload-time = "2026-09-14T07:44:22.179Z" },
 ]
 
 [package.optional-dependencies]
 standard = [
-    { name = "colorama", marker = "sys_platform == 'win32'" },
     { name = "httptools" },
     { name = "python-dotenv" },
     { name = "pyyaml" },

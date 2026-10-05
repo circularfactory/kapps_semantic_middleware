@@ -4,11 +4,11 @@ Generated from the docstrings in `src/` by `sphinx.ext.autodoc`. 117 of the
 package's 127 public classes and functions carry one.
 
 :::{note}
-The reference documents **this project's modules**, not
-`kapps_semantic_middleware`'s top-level namespace. That namespace re-exports
-twelve names from `transitional_sync_middleware` (`Middleware`, `AasMiddleware`, `AAS`,
-`Submodel`, …), and documenting them here would present another project's API
-as ours — the same conflation the fork's naming decision was made to avoid.
+The reference documents **this project's modules**. The top-level
+`kapps_semantic_middleware` namespace holds two names, `SemanticMiddleware` and
+`Mode`, and both are documented under Core. It re-exports nothing from
+`transitional_sync_middleware`: presenting another project's API as ours is the
+conflation the fork's naming decision was made to avoid.
 :::
 
 ```{toctree}

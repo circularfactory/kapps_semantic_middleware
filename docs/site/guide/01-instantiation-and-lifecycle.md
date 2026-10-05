@@ -51,6 +51,8 @@ When a resource-mode instance starts, it writes:
 
 Both properties are removed on deregistration. Storing the endpoint directly on each Workflow/StateProperty allows any caller with just that IRI to invoke it without walking the graph to find the Service.
 
+Deregistration keeps everything else: the individuals, their types, and their structural links. An instance that restarts at the same address finds its earlier individuals in place and adopts them, so it writes only the address and the endpoints again. A Capability individual is named after the Resource and the workflow or state name, not after the address. An instance that restarts at another address therefore gets a new Service and new Workflows, and each Capability it registers is re-pointed to the new Workflow or StateProperty. For the same reason, when two instances on one Resource register a Workflow with the same name, the Capability points to the instance that registered last.
+
 ## Heartbeat and Staleness
 
 Every resource-mode instance runs an internal periodic {term}`Workflow` that refreshes `svc:lastHeartbeat` on its Service individual. Watchdog-mode instances query for Services whose {term}`heartbeat <Heartbeat>` has exceeded a staleness threshold and remove their `svc:address` and `svc:endpoint` triples.
@@ -77,4 +79,11 @@ The defaults suit most deployments; tune them against a real fleet's network lat
 
 On clean shutdown, a resource-mode instance removes its `svc:address` and its Workflows'/StateProperties' `svc:endpoint` triples while preserving the individuals themselves for provenance.
 
-If an instance stops heartbeating without shutting down cleanly, a watchdog-mode instance removes the same triples. Stranded Operations addressed to that Service's Resource are handled separately — the watchdog does not fail them automatically.
+A clean shutdown runs only once the server has closed every open connection. uvicorn closes its listeners, then waits for each open response to finish, and only then runs the lifespan shutdown where the deregistration happens. By default that wait has no limit. So a response that stays open holds the stop open, and a supervisor that kills the process past its stop timeout skips the deregistration: the address stays in the graph. Two things keep a stop clean:
+
+- **A streaming route must end by itself.** The library's own `/activity/stream` ends after 2 s. A browser's `EventSource` reconnects at once and resumes with `Last-Event-ID`. Any other client must reconnect when a stream ends and send that header itself. A streaming route of your own needs the same treatment.
+- **Bound the wait where you run uvicorn.** Set `timeout_graceful_shutdown` below your supervisor's stop timeout, and leave the deregistration a second or two. This covers every connection the library does not own.
+
+After the deregistration, the stop sends the notifications of issuers that still wait, for up to one second, and then drops the rest with one WARNING line. So count one second more for the stop.
+
+If an instance stops heartbeating without shutting down cleanly, a watchdog-mode instance removes the same triples. It also marks the `queued` and `running` Operations of that Service's Resource `failed`, and notifies the issuer of each one that has an issuer.

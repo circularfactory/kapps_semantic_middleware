@@ -19,6 +19,14 @@ thread-safe. It would require capture of the running loop. This breaks when no l
 The SSE endpoint polls that deque on a short sleep. This decouples the logging path
 (synchronous, multi-threaded) from the serving path (asynchronous, single-threaded). No loop
 introspection or ``call_soon_threadsafe`` is required.
+
+**Why a stream ends after two seconds:** uvicorn stops in three steps. It closes its listeners.
+It waits for every open connection to finish, with no limit by default. Only then it runs the
+lifespan shutdown, where the instance deregisters. A stream that never ends holds that wait open.
+The supervisor then kills the instance, and a kill skips the deregistration. So every stream ends
+after ``STREAM_LIFETIME_SECONDS``, and the client reconnects. Each event's SSE ``id`` names this
+feed and the record. A browser's ``EventSource`` sends it back as ``Last-Event-ID`` and resumes
+behind it, so nothing is lost or repeated.
 """
 
 from __future__ import annotations
@@ -29,11 +37,29 @@ import json
 import logging
 import threading
 import time
+import uuid
 from dataclasses import dataclass
-from typing import Any, AsyncIterator, List
+from typing import Annotated, Any, AsyncIterator, List, Optional
 
-from fastapi import APIRouter, Request
-from fastapi.responses import HTMLResponse, StreamingResponse
+from fastapi import APIRouter, Header, Request
+from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
+
+STREAM_LIFETIME_SECONDS = 2.0
+"""How long one ``/activity/stream`` response lasts before it ends by itself.
+
+Shorter than a supervisor's stop timeout, so that a stop always reaches the deregistration. The
+demo launcher allows 5 s.
+"""
+
+POLL_SECONDS = 0.25
+"""How often a stream looks for new records."""
+
+RECONNECT_MILLISECONDS = int(POLL_SECONDS * 1000)
+"""The SSE ``retry:`` value: how soon a browser reconnects after a stream ends.
+
+One poll period. A browser's own default is about 3 s, which would leave a gap in the view at
+every end of a stream.
+"""
 
 
 @dataclass(frozen=True)
@@ -137,6 +163,11 @@ class ActivityFeed:
             return self._deque[0].seq
 
 
+def _sse_event(event_id: str, data: dict[str, Any]) -> str:
+    """One server-sent event, with the ``id`` a client resumes behind."""
+    return f"id: {event_id}\ndata: {json.dumps(data)}\n\n"
+
+
 class _ActivityHandler(logging.Handler):
     """Logging handler that pushes records into an ``ActivityFeed``.
 
@@ -197,6 +228,10 @@ def enable_activity_feed(
     feed = ActivityFeed(capacity=capacity)
     handler = _ActivityHandler(feed, level=level)
 
+    # Every event id starts with this token. A new process on the same address numbers its
+    # records from 1 again, so the number alone cannot tell a browser's old id from a new one.
+    feed_token = uuid.uuid4().hex[:8]
+
     # Attach to the package-root logger. This catches every child logger with one attach.
     target_logger = logging.getLogger(logger_name)
     target_logger.addHandler(handler)
@@ -220,8 +255,11 @@ def enable_activity_feed(
     @router.get("/activity")
     async def get_activity_page() -> HTMLResponse:
         # Self-contained HTML. No external fetches, no external CSS/JS.
-        # The JS opens an EventSource to /activity/stream and appends lines to the log view.
+        # The JS opens an EventSource to activity/stream and appends lines to the log view.
         # Auto-scrolling is suppressed if the user scrolls up to read history.
+        # The stream's path is relative and starts with the page's own name: the page lives
+        # at `/activity`, without a trailing slash, so it resolves next to the page, at the
+        # process's root and behind a proxy that serves the process under a path prefix.
         html = """
 <!DOCTYPE html>
 <html lang="en">
@@ -282,7 +320,7 @@ def enable_activity_feed(
             isAtBottom = (log.scrollTop + log.clientHeight >= log.scrollHeight - 10);
         });
 
-        const source = new EventSource('/activity/stream');
+        const source = new EventSource('activity/stream');
         source.onmessage = (event) => {
             const record = JSON.parse(event.data);
             appendRecord(record);
@@ -297,76 +335,88 @@ def enable_activity_feed(
         """
         return HTMLResponse(html)
 
+    # The page is served at one form only, without the trailing slash, because its relative
+    # path resolves against its own address. The other form redirects to it by a relative
+    # path, which keeps any prefix that a proxy serves the process under, and keeps the
+    # query. Starlette's own redirect of a trailing slash names an absolute URL and drops
+    # that prefix.
+    @router.get("/activity/", include_in_schema=False)
+    async def redirect_to_the_activity_page(request: Request) -> RedirectResponse:
+        query = request.url.query
+        return RedirectResponse(f"../activity?{query}" if query else "../activity")
+
     @router.get("/activity/stream")
-    async def get_activity_stream(request: Request) -> StreamingResponse:
-        # SSE endpoint. Polls the feed rather than wait on a queue. The logging handler runs in
-        # worker threads. No asyncio loop is available there. Push from the handler would
-        # require call_soon_threadsafe and a captured loop. This breaks at construction time.
-        # Polling is cheap and robust.
+    async def get_activity_stream(
+        request: Request,
+        last_event_id: Annotated[Optional[str], Header()] = None,
+    ) -> StreamingResponse:
+        """Server-sent events, one per record. **A stream ends after two seconds.**
+
+        Reconnect when a stream ends, and send the ``id`` of the last event you read as the
+        ``Last-Event-ID`` header. The next stream then starts behind that event, so a client
+        loses nothing and receives nothing twice. A browser's ``EventSource`` does all of this
+        by itself. Without the header, a stream starts with every record still buffered.
+
+        The stream ends so that it never holds a stopping server open. The instance
+        deregisters only after its server has closed every open connection.
+        """
+        # Polls the feed rather than wait on a queue. The logging handler runs in worker
+        # threads. No asyncio loop is available there. Push from the handler would require
+        # call_soon_threadsafe and a captured loop. This breaks at construction time. Polling
+        # is cheap and robust.
         async def generate() -> AsyncIterator[str]:
-            last_yield = time.time()
-            client_seq = 0
+            ends_at = time.monotonic() + STREAM_LIFETIME_SECONDS
+            yield f"retry: {RECONNECT_MILLISECONDS}\n\n"
 
-            # Seed with existing records. A viewer that arrives mid-run does not see an empty
-            # page.
-            for record in feed.snapshot():
-                yield f"data: {json.dumps(record.__dict__)}\n\n"
-                client_seq = record.seq
-                last_yield = time.time()
+            # A resumed stream starts behind the last event its client read. A fresh one seeds
+            # with everything buffered, so a viewer that arrives mid-run does not see an empty
+            # page, and is not told of drops from before it arrived. An id from another feed,
+            # such as an earlier process on the same address, starts a fresh stream.
+            client_seq = max(feed.oldest_seq - 1, 0)
+            token, _, seq = (last_event_id or "").rpartition("-")
+            if token == feed_token and seq.isdigit():
+                client_seq = int(seq)
 
-            try:
-                while True:
-                    # Stop when the viewer goes away. uvicorn does cancel the task on
-                    # disconnect. Rely on that alone. This leaks a polling loop per disconnect
-                    # under any server that does not. This makes the endpoint untestable. A
-                    # client that stops reading otherwise hangs forever. It waits for a
-                    # generator that never ends.
-                    if await request.is_disconnected():
-                        return
+            while True:
+                # Stop when the viewer goes away. uvicorn does cancel the task on
+                # disconnect. Rely on that alone. This leaks a polling loop per disconnect
+                # under any server that does not.
+                if await request.is_disconnected():
+                    return
 
-                    # Report anything the ring buffer dropped before this client could be
-                    # handed it. Unreachable at demo rates. Measured at ~0.4 records/sec
-                    # against a 200-record window. A burst outruns the window. It would
-                    # otherwise take lines out of the feed with nothing to show for it. A
-                    # viewer cannot tell "nothing happened" from "I missed it".
-                    oldest = feed.oldest_seq
-                    if oldest > client_seq + 1:
-                        dropped = oldest - client_seq - 1
-                        yield (
-                            "data: "
-                            + json.dumps(
-                                {
-                                    "seq": oldest - 1,
-                                    "timestamp": time.time(),
-                                    "level": "WARNING",
-                                    "logger": __name__,
-                                    "message": (
-                                        f"{dropped} record(s) dropped -- the feed produced "
-                                        f"faster than this view could read it"
-                                    ),
-                                }
-                            )
-                            + "\n\n"
-                        )
-                        client_seq = oldest - 1
-                        last_yield = time.time()
+                # Report anything the ring buffer dropped before this client could be
+                # handed it. Unreachable at demo rates. Measured at ~0.4 records/sec
+                # against a 200-record window. A burst outruns the window, and so does a
+                # client that stays away between two streams. It would otherwise take lines
+                # out of the feed with nothing to show for it. A viewer cannot tell "nothing
+                # happened" from "I missed it".
+                oldest = feed.oldest_seq
+                if oldest > client_seq + 1:
+                    dropped = oldest - client_seq - 1
+                    client_seq = oldest - 1
+                    yield _sse_event(
+                        f"{feed_token}-{client_seq}",
+                        {
+                            "seq": client_seq,
+                            "timestamp": time.time(),
+                            "level": "WARNING",
+                            "logger": __name__,
+                            "message": (
+                                f"{dropped} record(s) dropped -- the feed produced "
+                                f"faster than this view could read it"
+                            ),
+                        },
+                    )
 
-                    # Poll for new records.
-                    new_records = feed.since(client_seq)
-                    for record in new_records:
-                        yield f"data: {json.dumps(record.__dict__)}\n\n"
-                        client_seq = record.seq
-                        last_yield = time.time()
+                for record in feed.since(client_seq):
+                    yield _sse_event(f"{feed_token}-{record.seq}", record.__dict__)
+                    client_seq = record.seq
 
-                    # Keepalive every 15s of silence. Proxies do not close the connection.
-                    if time.time() - last_yield > 15:
-                        yield ": keepalive\n\n"
-                        last_yield = time.time()
-
-                    await asyncio.sleep(0.25)
-            except asyncio.CancelledError:
-                # Clean termination when the client disconnects or the server shuts down.
-                raise
+                # No keepalive comment: a stream that ends every two seconds is never idle
+                # long enough for a proxy to close it.
+                if time.monotonic() >= ends_at:
+                    return
+                await asyncio.sleep(POLL_SECONDS)
 
         return StreamingResponse(
             generate(),
