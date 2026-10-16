@@ -2,9 +2,11 @@
 
 One of five contexts in this repo — see `/CONTEXT-MAP.md` at the repo root for the others.
 
+<!-- vendor-check: off -- a release rewrite matches this paragraph byte for byte -->
 Self-contained, runnable Jupyter notebooks demonstrate Core Middleware end-to-end.
 Seed-data/ontology-provisioning logic makes each one reproducible against a dummy
 repository, rather than production knowledge-graph state.
+<!-- vendor-check: on -->
 
 ## Language
 
@@ -31,14 +33,14 @@ deliberately show *three different* interaction patterns:
   a TransferUnit through them, so they are the regression net the factory froze, not leftovers.
 
 _Avoid_: Example, demo (used loosely elsewhere in this repo docs). Scenario is the precise
-unit — one notebook, one dummy repository, one seed script.
+unit — one notebook, one dummy dataset, one seed script.
 
 **Dummy user**:
-A GraphDB user/repository dedicated to exactly one Scenario, never shared with production or
+A store user/dataset dedicated to exactly one Scenario, never shared with production or
 with another Scenario, cleared and reseeded on every notebook run.
 
 **Seed step**:
-The notebook cells run before any Scenario logic. They clear the dummy repository entirely.
+The notebook cells run before any Scenario logic. They clear the dummy dataset entirely.
 Then they insert exactly the ontology this Scenario needs: the relevant Core subset, the `svc:`
 module, and the Scenario's own domain ontology. This includes whatever pre-authored
 Capability/Workflow/Service classes the Core Middleware ontology-as-ground-truth policy

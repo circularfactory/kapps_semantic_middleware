@@ -1,10 +1,15 @@
 """Guard tests holding the dashboard's contract: no write, no traffic, no deps.
 
-These tests inspect the source of dashboard.py and dashboard_boxes.py. They
-mirror tests/test_plc_guard.py and tests/test_station_board_guard.py: an AST
-walk for imports and names, a source-text scan for the rest. They enforce the
-module docstring's two rules (no write path, no traffic the page causes) and
-the public-API boundary that KSM's own boxes must walk the subproject path.
+These tests inspect the source of dashboard.py, dashboard_boxes.py and
+dashboard_logs.py. They mirror tests/test_plc_guard.py and
+tests/test_station_board_guard.py: an AST walk for imports and names, a
+source-text scan for the rest. They enforce the module docstring's two rules
+(no write path, no traffic the page causes) and the public-API boundary that
+KSM's own boxes must walk the subproject path.
+
+The Logs tab has the one route that changes anything: POST
+dashboard/logs/level sets a logger's level in the process. It lives in
+dashboard_logs.py, which may name that one write route and no other.
 """
 
 from __future__ import annotations
@@ -22,6 +27,9 @@ DASHBOARD_PATH = REPO_ROOT / "src" / "kapps_semantic_middleware" / "dashboard.py
 DASHBOARD_BOXES_PATH = (
     REPO_ROOT / "src" / "kapps_semantic_middleware" / "dashboard_boxes.py"
 )
+DASHBOARD_LOGS_PATH = REPO_ROOT / "src" / "kapps_semantic_middleware" / "dashboard_logs.py"
+#: Every module of the page, for the rules that hold in all of them.
+PAGE_MODULES = (DASHBOARD_PATH, DASHBOARD_BOXES_PATH, DASHBOARD_LOGS_PATH)
 
 _WRITE_VERBS = ("post", "put", "patch", "delete")
 
@@ -77,11 +85,42 @@ def _decorator_attr_calls(tree: ast.AST) -> list[tuple[str, int]]:
     return hits
 
 
-def test_no_route_decorator_names_a_write_verb() -> None:
-    """Neither module decorates a handler with post, put, patch, or delete.
+def _write_routes(tree: ast.AST) -> list[tuple[str, str]]:
+    """(verb, path) for every route decorator that names a write verb."""
+    routes: list[tuple[str, str]] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        for decorator in node.decorator_list:
+            if (
+                isinstance(decorator, ast.Call)
+                and isinstance(decorator.func, ast.Attribute)
+                and decorator.func.attr in _WRITE_VERBS
+            ):
+                first = decorator.args[0] if decorator.args else None
+                path = first.value if isinstance(first, ast.Constant) else repr(first)
+                routes.append((decorator.func.attr, str(path)))
+    return routes
 
-    The dashboard is read-only. A write verb on a route would violate the
-    module docstring's first rule. Report every offending file and line.
+
+def test_the_logs_module_names_one_write_route_the_level_route() -> None:
+    """The Logs tab's level route is the one write route of the page.
+
+    It sets a logger's level in the process and writes nothing to the graph or a device.
+    A second write route here would be a write path nobody decided on.
+    """
+    _skip_if_no_src()
+    tree = ast.parse(DASHBOARD_LOGS_PATH.read_text(encoding="utf-8"))
+    assert _write_routes(tree) == [("post", "/dashboard/logs/level")]
+
+
+def test_no_route_decorator_names_a_write_verb() -> None:
+    """dashboard.py and dashboard_boxes.py decorate no handler with post, put, patch or delete.
+
+    The page and its default boxes are read-only. A write verb on a route would
+    violate the module docstring's first rule. Report every offending file and
+    line. The page's one write route is the Logs tab's, in dashboard_logs.py,
+    which the test above holds to that one.
     """
     _skip_if_no_src()
     violations: list[str] = []
@@ -108,7 +147,7 @@ def _source_without_the_enable_time_read(path: Path) -> str:
 
 
 def test_no_traffic_imports_or_calls() -> None:
-    """Neither module imports an HTTP client or names a graph query.
+    """No module of the page imports an HTTP client or names a graph query.
 
     The module docstring's second rule is that rendering the page or a box reads
     what the instance already holds. An HTTP client import or a SPARQL call would
@@ -119,9 +158,9 @@ def test_no_traffic_imports_or_calls() -> None:
     _skip_if_no_src()
     forbidden_imports = {"httpx", "requests", "urllib", "aiomqtt"}
     # The rule is about traffic, so it forbids the *calls* that query or write, not the
-    # attribute path that reaches the client. `middleware.ogm.db.repository` is a plain
+    # attribute path that reaches the client. `middleware.ogm.db.dataset` is a plain
     # attribute read of a value the instance already holds, and the header box needs it to
-    # name the repository. Forbidding `ogm.db` outright would ban that read while banning
+    # name the dataset. Forbidding `ogm.db` outright would ban that read while banning
     # no traffic, because a query is always a call.
     forbidden_names = (
         "SPARQL",
@@ -134,7 +173,7 @@ def test_no_traffic_imports_or_calls() -> None:
         ".fetch(",
     )
 
-    for path in (DASHBOARD_PATH, DASHBOARD_BOXES_PATH):
+    for path in PAGE_MODULES:
         imports = _imported_module_names(path)
         violations = imports & forbidden_imports
         assert not violations, (
@@ -190,7 +229,7 @@ def test_the_one_read_runs_when_the_dashboard_is_enabled() -> None:
 
 
 def test_no_template_engine_and_no_static_mount() -> None:
-    """Neither module imports a template engine or static-files mount.
+    """No module of the page imports a template engine or static-files mount.
 
     The last is deliberate: the project mounts no StaticFiles, and one route
     serving one vendored file is smaller than a new mount.
@@ -206,7 +245,7 @@ def test_no_template_engine_and_no_static_mount() -> None:
         "fastapi.staticfiles",
     }
 
-    for path in (DASHBOARD_PATH, DASHBOARD_BOXES_PATH):
+    for path in PAGE_MODULES:
         tree = ast.parse(path.read_text(encoding="utf-8"))
         for node in ast.walk(tree):
             if isinstance(node, ast.Import):
@@ -239,14 +278,15 @@ def test_vendored_htmx_exists_and_is_pinned_version() -> None:
     assert 'version:"2.0.4"' in text
 
 
-def test_dashboard_boxes_uses_only_public_api() -> None:
-    """dashboard_boxes imports no underscored name from the dashboard module.
+@pytest.mark.parametrize("box_module", [DASHBOARD_BOXES_PATH, DASHBOARD_LOGS_PATH])
+def test_dashboard_boxes_uses_only_public_api(box_module: Path) -> None:
+    """KSM's box modules import no underscored name from the dashboard module.
 
     This is the acceptance claim that KSM's own boxes walk the subproject
     path: if the public API is awkward, it must be awkward for KSM first.
     """
     _skip_if_no_src()
-    tree = ast.parse(DASHBOARD_BOXES_PATH.read_text(encoding="utf-8"))
+    tree = ast.parse(box_module.read_text(encoding="utf-8"))
     violations: list[str] = []
     for node in ast.walk(tree):
         if (

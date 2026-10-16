@@ -8,3 +8,4 @@ sphinx>=9,<10
 pydata-sphinx-theme>=0.20,<1
 myst-nb>=1.4,<2
 sphinx-design>=0.6,<1
+sphinxcontrib-mermaid>=2,<3

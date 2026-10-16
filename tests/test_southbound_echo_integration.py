@@ -19,7 +19,7 @@ Two triggers reach that same wrong moment, and the fan-out
    belt's last observed speed. This is the demo algorithm's ordinary behaviour -- write one
    belt while another is mid-ramp.
 
-These tests spy on the real set topics with a real broker, a real GraphDB and a real
+These tests spy on the real set topics with a real broker, a real store and a real
 ``SemanticMiddleware`` in ``BIDIRECTIONAL`` mode. ``test_northbound_sync_integration.py``
 cannot catch this: it asserts each value *reaches* persistence and never that the belt
 *stays* there.
@@ -44,7 +44,7 @@ from kapps_ogm import OGM
 from kapps_semantic_middleware import Mode, SemanticMiddleware
 from kapps_semantic_middleware.vocabulary import INF
 
-from conftest import requires_graphdb  # noqa: E402
+from conftest import requires_store  # noqa: E402
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import examples.seed as seed  # noqa: E402
@@ -152,11 +152,11 @@ async def spying_on_set_topics(host: str, port: int):
 
 
 @pytest_asyncio.fixture
-async def running_unit(graphdb, mqtt_broker, unit_scope):
+async def running_unit(store, mqtt_broker, unit_scope):
     """A real bidirectional middleware over TransferUnit1, wired to the test broker."""
     host, port = mqtt_broker.split(":")
-    seed.seed_scenario3(graphdb, OGM(db=graphdb))
-    graphdb.query(
+    seed.seed_scenario3(store, OGM(db=store))
+    store.query(
         f"DELETE {{ ?n <{INF.hasMQTTBrokerIP}> ?old }} "
         f'INSERT {{ ?n <{INF.hasMQTTBrokerIP}> "{host}" ; '
         f'    <{INF.hasMQTTBrokerPort}> "{port}"^^<http://www.w3.org/2001/XMLSchema#integer> }} '
@@ -168,7 +168,7 @@ async def running_unit(graphdb, mqtt_broker, unit_scope):
         mode=Mode.RESOURCE,
         resource_iri=seed.TRANSFER_UNIT_1,
         service_class=f"{seed.TU_NS}TransferUnitService",
-        ogm=OGM(db=graphdb),
+        ogm=OGM(db=store),
         host="127.0.0.1",
         port=PORT,
         class_scope=unit_scope,
@@ -212,7 +212,7 @@ async def _wait_for_value(url, expected, timeout=10.0):
     return False
 
 
-@requires_graphdb
+@requires_store
 @pytest.mark.asyncio
 class TestADeviceReadNeverTravelsBackDown:
     """Trigger 1: a sibling's inbound publish must not command anything."""
@@ -286,7 +286,7 @@ class TestADeviceReadNeverTravelsBackDown:
                 await unit.set_throughput_simulation(False)
 
 
-@requires_graphdb
+@requires_store
 @pytest.mark.asyncio
 class TestAWriteToOneParameterLeavesItsSiblingsAlone:
     """Trigger 2: a PUT carries no origin, so the fan-out reaches every write leg.
@@ -330,7 +330,7 @@ class TestAWriteToOneParameterLeavesItsSiblingsAlone:
             )
 
 
-@requires_graphdb
+@requires_store
 @pytest.mark.asyncio
 class TestACommandStillReachesTheDevice:
     """The southbound path must not be simply switched off."""

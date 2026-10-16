@@ -11,8 +11,10 @@ from __future__ import annotations
 import asyncio
 import socket
 import threading
+import time
 
 import aiomqtt
+import pytest
 
 from demo.transferunits.middleware import _listening, ensure_transport
 
@@ -96,3 +98,51 @@ class TestEnsureTransport:
         ensure_transport("127.0.0.1", 18859)
 
         assert not called.is_set(), "a broker already listening must spawn no new thread"
+
+
+class TestEnsureTransportFailsLoudly:
+    """This class tests that ensure_transport raises when its broker does not come up.
+
+    Before, the hook threw away the answer of its readiness wait: a broker that never listened
+    let the middleware come up as if healthy, and the unit's PLC then retried a refused
+    connection forever. Each test stubs the broker's start and uses a free port that nobody
+    listens on, so neither depends on the broker package being absent or on a fixed port.
+    """
+
+    def test_a_broker_that_never_listens_raises_naming_address_and_timeout(self, monkeypatch):
+        import demo.transferunits.middleware as mw
+
+        async def never_listens(host: str, port: int, ready: threading.Event) -> None:
+            await asyncio.sleep(5.0)  # never sets ready
+
+        monkeypatch.setattr(mw, "_serve_broker", never_listens)
+        monkeypatch.setattr(mw, "BROKER_READY_TIMEOUT_SECONDS", 0.3)
+        port = _free_port()
+
+        with pytest.raises(RuntimeError) as raised:
+            ensure_transport("127.0.0.1", port)
+
+        assert f"127.0.0.1:{port}" in str(raised.value)
+        assert "0.3 s" in str(raised.value)
+        assert _listening("127.0.0.1", port) is False
+
+    def test_a_broker_whose_start_fails_raises_at_once_with_the_cause(self, monkeypatch):
+        """A start that raises -- as the missing broker package does -- ends the wait at once,
+        and the error carries the cause's own text, so its last line names the package."""
+        import demo.transferunits.middleware as mw
+
+        async def fails_to_import(host: str, port: int, ready: threading.Event) -> None:
+            raise ModuleNotFoundError("No module named 'amqtt'", name="amqtt")
+
+        monkeypatch.setattr(mw, "_serve_broker", fails_to_import)
+        monkeypatch.setattr(mw, "BROKER_READY_TIMEOUT_SECONDS", 30.0)
+        port = _free_port()
+
+        started = time.monotonic()
+        with pytest.raises(RuntimeError) as raised:
+            ensure_transport("127.0.0.1", port)
+
+        assert time.monotonic() - started < 5.0, "a failed start must not wait out the timeout"
+        assert f"127.0.0.1:{port}" in str(raised.value)
+        assert "No module named 'amqtt'" in str(raised.value)
+        assert isinstance(raised.value.__cause__, ModuleNotFoundError)

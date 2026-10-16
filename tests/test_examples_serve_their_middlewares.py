@@ -12,7 +12,7 @@ inside one scenario proves that scenario; parsing every example proves the patte
 back in a *new* one, which is what this test protects — it exists because the
 habit was about to be copied into scenario 3.
 
-No GraphDB, no network: this reads the source.
+No store, no network: this reads the source.
 """
 
 from __future__ import annotations

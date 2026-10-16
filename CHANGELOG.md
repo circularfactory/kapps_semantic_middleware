@@ -12,6 +12,223 @@ work lands, not at release time.
 finding exactly one of it, and prose naming it is a second occurrence — which stopped a release
 the first time this file was written.)
 
+## 0.2.1 — 2026-10-16
+
+### Added
+
+- **A wipe refuses a store that is not disposable.** `seeding.clear_dataset(store)` and
+  `seeding.load_shared_ontologies(store, reload=True)` raise `DeploymentValueError` before they
+  clear anything when the store's host is neither loopback (`localhost`, `127.0.0.1`, `::1`) nor a
+  bare container alias with no dot, unless `TRIPLESTORE_ALLOW_DESTRUCTIVE=1` is set. The message
+  names the dataset and the URL. `seeding.is_disposable_target(url)` is the predicate, with the
+  same name and rule as in `kapps_ogm` and `kapps_triplestore_interface`. Reading is never refused. A store that names no URL is refused too, and the old
+  `GRAPHDB_ALLOW_DESTRUCTIVE` is not read.
+  This guards the example scenarios and the factory demo as well as the tests, since every one of
+  them wipes through `seeding`.
+- **The middleware gets its store from the triple store interface's factory, and names no vendor.**
+  In `kapps_semantic_middleware.credentials`: `triplestore_for(dataset)` returns a connected
+  store, built with the interface's `connect()` from a `TripleStoreEndpoint` and a
+  `GDBTokenAuth`, so the identity logs in and the dataset is probed at once; `endpoint_for(dataset)`
+  returns the `TripleStoreEndpoint` of the dataset; `triplestore_env_present()` says whether the
+  environment can reach a store; `REQUIRED_TRIPLESTORE_ENV` names the three variables a store
+  needs, `TRIPLESTORE_URL`, `TRIPLESTORE_USERNAME` and `TRIPLESTORE_PASSWORD`; and `DEMO_DATASET`
+  is the dataset of the examples and the demo, `kapps-demo`. The caller still names the dataset,
+  and `TRIPLESTORE_DATASET` is not read. A missing variable raises `DeploymentValueError`, which
+  names it. In `kapps_semantic_middleware.seeding`: `clear_dataset(store)` clears the default
+  graph of the store's dataset. Each replaces an old name, which stays as a deprecated alias (see
+  *Deprecated*).
+- The middleware's own errors tell the action, by type. In `kapps_semantic_middleware.errors`:
+  `OperationReceiverUnavailableError` (Retry: a Workflow realizes the Capability, but no Service
+  of it is live now) and `CapabilityNotRealizedError` (Repair: no Workflow realizes the
+  Capability), both subtypes of `OperationResolutionError`; `NotificationReceiverUnavailableError`
+  (Retry: the resource has no live Service, or did not take the notification) and
+  `NotificationReceiverAmbiguousError` (Repair: the resource has more than one live Service), both
+  subtypes of `NotificationUndelivered`; and `DeploymentError`, the base of the middleware's own
+  Repair types, with `DeploymentValueError` (also a `ValueError`) and `DeploymentRuntimeError`
+  (also a `RuntimeError`). These two replace the bare built-in of a broken deployment: a store
+  variable that is not set, an unknown mode or a mode without the arguments that it requires, a
+  Resource with more than one possession state, an instance with no asserted domain type, the
+  bundled examples that cannot be found, and an Operation in the intake of an instance without a
+  notification handler. `CapabilityNotRealizedError` and `NotificationReceiverAmbiguousError` are
+  `DeploymentError`s too. Each type's docstring names its action. Every `except` written against
+  the older type or the built-in still catches the new one, and each message is unchanged; only
+  the class name in a traceback or a `repr` changes. Wrong use of the API keeps `ValueError`,
+  `TypeError` and `RuntimeError`. To tell Retry from Repair, `issue_operation()` reads the graph
+  once more when it finds no live receiver; a request that finds one reads as before. The error
+  page shows the middleware's errors as they are now.
+- The documentation has a page, *When a call fails*, with the error map of the stack. It names the
+  five actions that an error asks for (Repair, Retry, Refresh, Refused, Fix the call) and who acts
+  on each. It maps each error type of `kapps-triplestore-interface`, `kapps-ogm` and this package
+  to its action, lists where a type does not tell the action, and names the planned changes. The
+  navigation bar and the API reference link to it. The docs toolchain adds `sphinxcontrib-mermaid`
+  for the page's diagrams, which the browser draws with mermaid.js from a CDN.
+- A record whose message holds several lines shows its first line in its row and the rest behind
+  an expander, closed at first, on the activity page (`/activity`) and in the dashboard's Logs
+  tab. Opened, the expander shows the rest as text, with its line breaks and indentation kept; a
+  record of one line has no expander. In the Logs tab each expander has a stable id and is kept
+  across the box's refresh, as the box of refused writes keeps its own. A store's refusal report
+  and a traceback line now take one line until a reader opens them. The Logs tab's cut at 4000
+  characters is unchanged. No public name changes; the tests gain a browser tier
+  (`pytest-playwright`, marker `browser`), which skips where no browser is installed.
+- The "Refused writes" box, `mw.refused_writes` and the activity feed also record a refused error
+  transition: when the store's shapes refuse the write that ends a `commit` in error, the record's
+  verb is `commit` and its first line reads `commit (error transition) refused by ...`. The
+  caller still gets the body's error, with the note that the error transition was not committed.
+  No new public name: the record is still a `RefusedWrite`.
+- Every instance shows its refused writes readably. When the store's SHACL shapes refuse a write
+  of `mw.commit()`, `mw.create()` or `mw.handover()`, the caller still gets `ShaclValidationError`,
+  unchanged, and the instance keeps the refusal in memory: `mw.refused_writes`, the newest 50,
+  newest first, each a `RefusedWrite` with its time, its verb, the rules its report names, and the
+  report. Nothing of it is written to the graph, and a false precondition is not kept. The
+  dashboard has a new default box, "Refused writes" (`refused-writes`, tab System), which shows
+  each refused write as one visible line, what was refused and by which rules, with an expander
+  that holds a table of the report's results and the whole report, verbatim; every value is
+  escaped, and an opened expander stays open when the box refreshes. Each refusal is also logged as
+  one record at INFO on the logger `kapps_semantic_middleware.validation_report`: its first line
+  names the verb and the rules, and the following lines hold the readable results and the whole
+  report, so the activity page and the Logs tab show it too. The new module
+  `kapps_semantic_middleware.validation_report` reads a validation report as RDF:
+  `readable_results` for a person (message, severity, focus node, path, value, source shape and
+  source constraint component, each a `Term` with `short` and `full`), `validation_results` for
+  comparing (full IRIs, the path in SPARQL property path syntax), and `rule_names` for a log line;
+  `render_refused_write` renders one refused write as HTML for a page of your own.
+- The state dashboard has a tab "Logs", a default box with the id `logs`. It shows the newest 500
+  records of the whole process, every logger, newest first, with a level filter for the view.
+  `enable_dashboard` attaches one handler to the root logger for that, once per process; the
+  handler keeps the records in memory and changes no logger's level, and a render reads only that
+  memory. The tab's form sets a logger's level while the process runs, through
+  `POST dashboard/logs/level` with `{"logger": "<name>", "level": "<LEVEL>"}`, and the answer is
+  the level in force. The level is one of `NOTSET`, `DEBUG`, `INFO`, `WARNING`, `ERROR` and
+  `CRITICAL`; any other value is refused with 422. The tab also lists the loggers seen so far
+  with their levels. `/activity` is unchanged, and `register_default_boxes=False` still starts an
+  empty page.
+
+### Deprecated
+
+- **The old names of the middleware's store helpers.** Each still works, runs its successor and
+  emits one `DeprecationWarning` per use that names the successor. A later release removes them.
+
+  | Old | New |
+  |---|---|
+  | `credentials.graphdb_for(repository)` | `credentials.triplestore_for(dataset)` |
+  | `credentials.graphdb_env_present()` | `credentials.triplestore_env_present()` |
+  | `credentials.REQUIRED_GRAPHDB_ENV` | `credentials.REQUIRED_TRIPLESTORE_ENV` |
+  | `credentials.credentials_for(repository)` | `credentials.endpoint_for(dataset)` |
+  | `credentials.DEMO_REPOSITORY` | `credentials.DEMO_DATASET` |
+  | `seeding.clear_repository(db)` | `seeding.clear_dataset(store)` |
+
+  `graphdb_for` returns the store of `triplestore_for`, typed as before. `credentials_for` still
+  returns the interface's deprecated credentials, with the URL, the identity and the dataset, and
+  not an endpoint. `REQUIRED_GRAPHDB_ENV` and `DEMO_REPOSITORY` are their successors' values, so
+  `REQUIRED_GRAPHDB_ENV` now names the `TRIPLESTORE_*` variables.
+- **`GRAPHDB_URL`, `GRAPHDB_USERNAME` and `GRAPHDB_PASSWORD` are the deprecated fallback of the
+  `TRIPLESTORE_*` variables.** A store builds from them when its `TRIPLESTORE_*` variable is not
+  set, and each value read from one emits a `DeprecationWarning` that names the variable which
+  replaces it. A `TRIPLESTORE_*` variable wins over its fallback. A later release removes the
+  fallback.
+
+### Fixed
+
+- The heartbeat loop no longer beats in phase across participants. A resource-mode instance
+  refreshed its Service's heartbeat every interval from the moment it started, so participants
+  that started together beat together for life, and a grid's heartbeat writes landed in one burst
+  that filled the store's write queue. The loop still writes its first heartbeat at startup, so a
+  reader sees a fresh one right after registration; it then waits a random time, drawn uniformly
+  from zero up to the interval, before it enters its period. No two heartbeats of an instance are
+  further apart than one interval plus one write.
+- The dashboard marks the selected tab. The rule that was to give the selected tab's label the
+  accent (`.tab-radio:checked + .tab-label`) could never match, because the radios sit beside the
+  tab strip and not before each label, so the tabs switched and the highlight never showed, on
+  every module's tabs and on the WMS's. The shell now carries one rule per tab, generated with
+  the panel rule from the same slug, that reaches the label by its `for` from the checked radio.
+- The dashboard's Services box shows what each workflow and each state property does, from the
+  docstring of the function that was registered: its first line as the summary, and the whole
+  docstring as the description. Before, every workflow read "Execute" with no description, and
+  every state property "Get State" with the same text about the library's own handler. The
+  middleware sets the text on the routes that it mounts, so the instance's API description
+  (`/openapi.json`, and `/docs`) carries it too: on the routes that run a workflow,
+  `workflows/<name>/execute` and `workflows/<name>/execute_background`, the event trigger's among
+  them, and on a state property's route, `state/<name>`. A workflow's `description` and
+  `interrupt` routes keep their summaries, and a function without a docstring keeps the default
+  summary and gets no description. No route changes its behaviour or its status codes, and no
+  public name changes.
+- The dashboard's own routes, the page, its boxes and its static files, are no longer in the
+  instance's API description (`/openapi.json`), so `/docs` shows the instance's services and not
+  the dashboard. They answer at their addresses as before.
+- The dashboard's Instance box shows the sweep's interval and whether the sweep's task is alive
+  only on a watchdog-mode instance, the one mode that runs a sweep. A resource-mode instance no
+  longer shows "Sweep task alive: no", which read like a failure.
+- The HTTP example of the dashboard guide, which sets a logger's level, has the HTTP version in
+  its request line. Without it, the docs build with warnings as errors stopped at that example.
+- The factory demonstration fails, and says why, when a unit's broker does not come up. Before,
+  it hung. Without `[examples]` the broker package `amqtt` is missing, and a broker that took
+  longer than 5 s to listen left the same state: the first middleware came up as if healthy, its
+  PLC retried a refused connection forever, `Factory running` never printed, and the one
+  traceback stayed off the console. Now the unit's middleware exits with an error that names the
+  broker's address and either the 5 s timeout or the cause of the failed start, such as the
+  missing package. The launcher's wait for a PLC's panel ends when that unit's middleware ends,
+  or after 60 s at the latest. It fails with the PLC's last lines of output, and with the
+  middleware's too when the middleware still runs at the timeout. A child process that exits
+  with an error code while the launcher is not stopping it has its last lines echoed to the
+  console. A healthy run echoes the same address lines as before and waits no longer.
+- `mw.emit_heartbeat()` outside resource mode raises `RuntimeError` with the mode, as the other
+  resource-only methods do: "emit_heartbeat() is only valid in resource mode; current mode is
+  ...". A watchdog has no Service whose heartbeat it could refresh. Before, the call reached the
+  OGM's commit without an instance and failed there, with a `TypeError` that named no mode.
+
+### Changed
+
+- **The store comes from `connect()`, and the middleware speaks the store's contract.** The
+  middleware, its demo and its examples build their store with `triplestore_for(dataset)`, which
+  calls the interface's `connect()`. It logs in and probes the dataset when it is built, and a
+  dataset that the store does not have raises `InvalidDatasetError` there. They read the store's
+  URL and identity from `TRIPLESTORE_*`. Seeding clears and loads with the Graph Store verbs
+  `graph_clear` and `graph_add`, and a clear that returns `False` raises
+  `TripleStoreResponseError`, the same class as before under its new name. The middleware calls
+  no name that the interface deprecates, so it needs the interface release that brings
+  `connect()`, `TripleStore`, `graph_add`, `graph_clear`, `dataset` and `shapes_set`.
+- The dashboard's Instance box shows the store's dataset in a row named "Dataset", read from the
+  store's `dataset`. The row was "Repository".
+- The factory demo's middleware process takes `--dataset` in place of `--repository`. A PLC
+  process receives none of the store's variables, `TRIPLESTORE_*` or their deprecated fallback.
+- The examples, the docs and the copied examples' README say `TRIPLESTORE_*` and "dataset". Only
+  the texts that start the local Docker store name its product.
+- The live tests load and remove their SHACL shapes with the store's `shapes_set`, which replaces
+  every shape of the dataset. A live run therefore also removes the shapes that other code loaded
+  into the same dataset. The tests' dataset is still `Tests`, and the `store` fixture gives it.
+- The test suite turns each `DeprecationWarning` of the form `<old> is deprecated; use`, `set` or
+  `pass` `<successor>` into an error, so a use of a name that the interface or the middleware
+  deprecates fails its test.
+- The documentation site's landing page is the README, so the two can no longer say different
+  things. A link that the README writes relative to the repository points at the same file in
+  the public repository, at the release's tag. The old page's list of the components moves to
+  the Concepts page; the rest of it was already in the README, on a guide page, on the Concepts
+  page or in the navigation bar.
+- The example Docker repository (`examples/docker/graphdb-repo-config.ttl`) now runs the
+  `rdfsplus-optimized` ruleset, the one ruleset of the project's repositories, where it ran
+  `owl-max`.
+- The connector recognition queries of `plan_wiring()` and `class_of()` read asserted statements
+  only through the interface's `SPARQLQuery(..., include_implicit=False)`, not through a graph IRI
+  of GraphDB written into the query text. GraphDB gives the same results as before; another store
+  no longer reads the scope as an empty named graph and returns nothing. The module constant
+  `connectors.wiring.EXPLICIT_GRAPH` is gone.
+- `mw.request()` is renamed `mw.issue_operation()`: it issues an Operation, and the name says so.
+  Its signature, its return value, what it raises and what it does are unchanged. `request()` stays
+  for one release as a deprecated alias: it warns with a `DeprecationWarning` that names
+  `issue_operation()`, then calls it with the same arguments. The alias goes in the release after
+  next, so move callers to `issue_operation()`. The docs, the examples and the glossary use the new
+  name.
+- The constructor converts `named_graph` to an `IRI`, so `mw.named_graph` is an `IRI` or None.
+  A string is still accepted. A `named_graph` that is no IRI now raises `InvalidIRIError` at
+  construction, after the checks of the mode's arguments, so a missing argument is still the
+  first error. Before, the triple store interface raised the same error only at the first write
+  to the graph, and an instance that did not write did not raise it at all.
+- The library type-checks against the published types of `kapps-ogm` and
+  `kapps-triplestore-interface`. For a type checker, `mw.resource_iri`, `mw.service_class` and
+  `mw.service_iri` are now `IRI | None`, which is what they are: None outside resource mode.
+  Before, they read as `IRI`. A caller that passes one of them on where an `IRI` is required
+  checks for None first.
+
 ## 0.2.0 — 2026-10-05
 
 ### Added

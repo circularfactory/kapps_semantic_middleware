@@ -1,0 +1,21 @@
+_:84a87a1d504944d8a6a3c3a2ad43a4ca31150460 <http://www.w3.org/ns/shacl#conforms> "false"^^<http://www.w3.org/2001/XMLSchema#boolean> .
+_:84a87a1d504944d8a6a3c3a2ad43a4ca31150460 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/ns/shacl#ValidationReport> .
+_:84a87a1d504944d8a6a3c3a2ad43a4ca31150460 <http://rdf4j.org/schema/rdf4j#truncated> "false"^^<http://www.w3.org/2001/XMLSchema#boolean> .
+_:84a87a1d504944d8a6a3c3a2ad43a4ca31150460 <http://www.w3.org/ns/shacl#result> _:84a87a1d504944d8a6a3c3a2ad43a4ca31150461 .
+_:84a87a1d504944d8a6a3c3a2ad43a4ca31150461 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/ns/shacl#ValidationResult> .
+_:84a87a1d504944d8a6a3c3a2ad43a4ca31150461 <http://www.w3.org/ns/shacl#focusNode> <http://w3id.org/circularfactory/FlexConveyorInstances#Module3> .
+_:84a87a1d504944d8a6a3c3a2ad43a4ca31150461 <http://rdf4j.org/shacl-extensions#shapesGraph> <http://rdf4j.org/schema/rdf4j#SHACLShapeGraph> .
+_:00919162-fdbb-4b23-8f0f-6e0066568649-1 <http://www.w3.org/1999/02/22-rdf-syntax-ns#first> <https://w3id.org/circularfactory/Core#hasPossessor> .
+_:00919162-fdbb-4b23-8f0f-6e0066568649-1 <http://www.w3.org/1999/02/22-rdf-syntax-ns#rest> _:00919162-fdbb-4b23-8f0f-6e0066568649-110898c88-61a8-458b-b72d-b8887fc43ba70 .
+_:00919162-fdbb-4b23-8f0f-6e0066568649-110898c88-61a8-458b-b72d-b8887fc43ba70 <http://www.w3.org/1999/02/22-rdf-syntax-ns#first> _:8ea94270-95d5-48c0-81d7-86822b778d3e-3 .
+_:00919162-fdbb-4b23-8f0f-6e0066568649-110898c88-61a8-458b-b72d-b8887fc43ba70 <http://www.w3.org/1999/02/22-rdf-syntax-ns#rest> <http://www.w3.org/1999/02/22-rdf-syntax-ns#nil> .
+_:8ea94270-95d5-48c0-81d7-86822b778d3e-3 <http://www.w3.org/ns/shacl#inversePath> <https://w3id.org/circularfactory/Core#hasPossessedWorkpiece> .
+_:84a87a1d504944d8a6a3c3a2ad43a4ca31150461 <http://www.w3.org/ns/shacl#resultPath> _:00919162-fdbb-4b23-8f0f-6e0066568649-1 .
+_:84a87a1d504944d8a6a3c3a2ad43a4ca31150461 <http://www.w3.org/ns/shacl#sourceConstraintComponent> <http://www.w3.org/ns/shacl#MaxCountConstraintComponent> .
+_:84a87a1d504944d8a6a3c3a2ad43a4ca31150461 <http://www.w3.org/ns/shacl#resultSeverity> <http://www.w3.org/ns/shacl#Violation> .
+_:84a87a1d504944d8a6a3c3a2ad43a4ca31150461 <http://www.w3.org/ns/shacl#resultMessage> "A FlexConveyorModule may possess at most one Box at a time." .
+<http://w3id.org/circularfactory/FlexConveyor#FlexConveyorModulePossessionShape> <http://www.w3.org/ns/shacl#message> "A FlexConveyorModule may possess at most one Box at a time." .
+<http://w3id.org/circularfactory/FlexConveyor#FlexConveyorModulePossessionShape> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/ns/shacl#PropertyShape> .
+_:84a87a1d504944d8a6a3c3a2ad43a4ca31150461 <http://www.w3.org/ns/shacl#sourceShape> <http://w3id.org/circularfactory/FlexConveyor#FlexConveyorModulePossessionShape> .
+<http://w3id.org/circularfactory/FlexConveyor#FlexConveyorModulePossessionShape> <http://www.w3.org/ns/shacl#path> _:00919162-fdbb-4b23-8f0f-6e0066568649-1 .
+<http://w3id.org/circularfactory/FlexConveyor#FlexConveyorModulePossessionShape> <http://www.w3.org/ns/shacl#maxCount> "1"^^<http://www.w3.org/2001/XMLSchema#integer> .

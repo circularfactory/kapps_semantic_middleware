@@ -1,8 +1,8 @@
 """Shared pytest fixtures.
 
-Integration tests run against a real GraphDB (matching the convention of the
+Integration tests run against a real triple store (matching the convention of the
 sibling repos, which test against a live triple store rather than a mock). They
-are skipped automatically when the ``GRAPHDB_*`` environment variables are not
+are skipped automatically when the ``TRIPLESTORE_*`` environment variables are not
 set, so the pure-logic unit tests still run anywhere.
 """
 
@@ -11,35 +11,43 @@ from __future__ import annotations
 import asyncio
 import logging
 import subprocess
+from collections.abc import Callable, Iterator
 from pathlib import Path
 
 import pytest
 import pytest_asyncio
+from _browser import launch
+from playwright.sync_api import Browser
 
-from kapps_semantic_middleware.credentials import graphdb_env_present
+from kapps_semantic_middleware.credentials import triplestore_env_present
 
-# The suite wipes the repository it connects to, so it names that repository itself rather
-# than inheriting GRAPHDB_REPOSITORY, which may point at anything. Capitalised
-# to match the repository on the KIT server; tests do not ship, so this name is dev-only.
-TEST_REPOSITORY = "Tests"
+# The suite wipes the dataset it connects to, so it names that dataset itself rather
+# than inheriting TRIPLESTORE_DATASET, which may point at anything. Capitalised
+# to match the dataset on the KIT server; tests do not ship, so this name is dev-only.
+TEST_DATASET = "Tests"
 
 
-requires_graphdb = pytest.mark.skipif(
-    not graphdb_env_present(),
-    reason="GRAPHDB_* environment variables not set; skipping live-GraphDB integration test",
+requires_store = pytest.mark.skipif(
+    not triplestore_env_present(),
+    reason="TRIPLESTORE_* environment variables not set; skipping live-store integration test",
 )
 
 
 def pytest_collection_modifyitems(items):
-    """Mark every test that reaches the triple store as ``live``.
+    """Mark every test that reaches the triple store as ``live``, and run the browser tests last.
 
     Derived from the fixture graph rather than written on each test, so the marker cannot
     drift out of step with what a test actually needs. ``-m 'not live'`` then selects the
     tests that need no network at all.
     """
     for item in items:
-        if "graphdb" in item.fixturenames:
+        if "store" in item.fixturenames:
             item.add_marker("live")
+    # Playwright's sync API keeps an event loop running in the main thread from the first
+    # browser test to the end of the session, and an asyncio test that starts after it fails
+    # with "Runner.run() cannot be called from a running event loop". So the browser tests
+    # run last. The sort is stable: every other test keeps its order.
+    items.sort(key=lambda item: item.get_closest_marker("browser") is not None)
 
 
 def methods_at(app, path: str) -> set:
@@ -126,19 +134,19 @@ def isolate_connector_sync_manager():
 
 
 @pytest.fixture(scope="session")
-def graphdb():
-    """A live GraphDB client from the environment, or skip the test.
+def store():
+    """A live store from the environment, or skip the test.
 
-    Session-scoped: constructing a client costs a login round trip plus a repository
-    listing, and the client carries no per-test state — only a growing set of minted
-    blank-node ids, which is a collision guard that is happier the longer it lives.
-    Tests that need a clean *graph* re-seed it; that is separate from the client.
+    Session-scoped: connecting costs a login round trip plus a probe of the dataset, and
+    the store carries no per-test state — only a growing set of minted blank-node ids,
+    which is a collision guard that is happier the longer it lives.
+    Tests that need a clean *graph* re-seed it; that is separate from the store.
     """
-    if not graphdb_env_present():
-        pytest.skip("GRAPHDB_* environment variables not set")
-    from kapps_semantic_middleware.credentials import graphdb_for
+    if not triplestore_env_present():
+        pytest.skip("TRIPLESTORE_* environment variables not set")
+    from kapps_semantic_middleware.credentials import triplestore_for
 
-    db = graphdb_for(TEST_REPOSITORY)
+    db = triplestore_for(TEST_DATASET)
     yield db
     db.close()
 
@@ -213,3 +221,16 @@ async def mqtt_broker():
                 "mqtt_broker fixture: broker.shutdown() did not complete within 10s; "
                 "abandoning it rather than hanging the test run."
             )
+
+
+@pytest.fixture(scope="session")
+def browser(
+    launch_browser: Callable[..., Browser],
+    browser_name: str,
+    browser_channel: str | None,
+) -> Iterator[Browser]:
+    """The browser the pages' tests run in, in place of pytest-playwright's own fixture: see
+    `_browser.launch`. A test that needs one skips where none is installed."""
+    launched = launch(launch_browser, browser_name, browser_channel)
+    yield launched
+    launched.close()

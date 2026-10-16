@@ -28,14 +28,14 @@ from kapps_ogm.utils.class_scope import ClassScope
 
 from kapps_semantic_middleware import Mode, SemanticMiddleware
 
-from conftest import methods_at, requires_graphdb  # noqa: E402
+from conftest import methods_at, requires_store  # noqa: E402
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "examples"))
 import seed  # noqa: E402
 
 
 @pytest.fixture
-def scenario3_ogm(graphdb):
+def scenario3_ogm(store):
     """A seeded scenario 3 and a fresh OGM over it.
 
     Function-scoped. Load-bearing. Tempt the ~80 round trips a seed costs. Several
@@ -44,11 +44,11 @@ def scenario3_ogm(graphdb):
     An envelope path inserted by one test puts a later test formatter into envelope
     mode. It reads a raw scalar as an unobserved payload.
     """
-    seed.seed_scenario3(graphdb, OGM(db=graphdb))
+    seed.seed_scenario3(store, OGM(db=store))
     # A *fresh* OGM. Deliberately not the one that seeded. The seeding client carries
     # state from its own writes. A test plans a wiring. Read the graph the way a
     # cold middleware reads it.
-    return graphdb, OGM(db=graphdb)
+    return store, OGM(db=store)
 
 
 def _unit_view() -> ClassScope:
@@ -79,7 +79,7 @@ def _model_name(mw: SemanticMiddleware, ogm: OGM) -> str:
 
 
 
-@requires_graphdb
+@requires_store
 class TestParameterRoutes:
     """The deep parameter routes exist. Verbs are right per access mode."""
 
@@ -92,7 +92,7 @@ class TestParameterRoutes:
         speed property on a specific belt. This path does not exist. The recursive
         router failed to walk the materialized tree.
         """
-        graphdb, ogm = scenario3_ogm
+        store, ogm = scenario3_ogm
 
         mw = SemanticMiddleware(
             mode=Mode.RESOURCE,
@@ -129,7 +129,7 @@ class TestParameterRoutes:
         route does not exist. FastAPI handles that automatically. Assert the
         readwrite case.
         """
-        graphdb, ogm = scenario3_ogm
+        store, ogm = scenario3_ogm
 
         mw = SemanticMiddleware(
             mode=Mode.RESOURCE,
@@ -164,7 +164,7 @@ class TestParameterRoutes:
         generate a PUT handler for it. Guard against the regression. Access mode
         was ignored. Every parameter became writable.
         """
-        graphdb, ogm = scenario3_ogm
+        store, ogm = scenario3_ogm
 
         mw = SemanticMiddleware(
             mode=Mode.RESOURCE,
@@ -193,7 +193,7 @@ class TestParameterRoutes:
         assert "PUT" not in methods_at(mw.app, expected_path)
 
 
-@requires_graphdb
+@requires_store
 class TestRecursionTermination:
     """The walk stops at parameters. Do not descend further."""
 
@@ -208,7 +208,7 @@ class TestRecursionTermination:
         the blanknode dict as the atomic element. The id-less problem disappears. Assert
         that no route descends below a parameter.
         """
-        graphdb, ogm = scenario3_ogm
+        store, ogm = scenario3_ogm
 
         mw = SemanticMiddleware(
             mode=Mode.RESOURCE,
@@ -233,7 +233,7 @@ class TestRecursionTermination:
                     )
 
 
-@requires_graphdb
+@requires_store
 class TestCoverage:
     """The walk reaches everything recognition found."""
 
@@ -248,7 +248,7 @@ class TestCoverage:
         tree differs from what recognition expects. A parameter is recognised but
         unreachable via REST.
         """
-        graphdb, ogm = scenario3_ogm
+        store, ogm = scenario3_ogm
 
         mw = SemanticMiddleware(
             mode=Mode.RESOURCE,
@@ -281,7 +281,7 @@ class TestCoverage:
         recursive parameter routes. Do not break the existing top-level CRUD. Other
         consumers rely on it.
         """
-        graphdb, ogm = scenario3_ogm
+        store, ogm = scenario3_ogm
 
         mw = SemanticMiddleware(
             mode=Mode.RESOURCE,

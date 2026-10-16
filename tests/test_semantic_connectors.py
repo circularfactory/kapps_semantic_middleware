@@ -1,6 +1,6 @@
 """Unit tests for the semantic-connector seam.
 
-Pure logic. No GraphDB, no broker, no network. The seam exists so a binding
+Pure logic. No store, no broker, no network. The seam exists so a binding
 can be described and reasoned about without a running middleware. These tests
 are the first consumer of that property.
 """

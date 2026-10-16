@@ -118,7 +118,7 @@ SOURCES = {
     "process wrote it there itself, when it registered its Service.",
     "flag": "The Launcher chose this address, and it passed the address as a command-line "
     "flag.",
-    "env": "This address comes from the GRAPHDB environment variables.",
+    "env": "This address comes from the TRIPLESTORE environment variables.",
 }
 
 

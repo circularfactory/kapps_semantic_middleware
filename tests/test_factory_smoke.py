@@ -9,7 +9,7 @@ verified live, by hand, and recorded in a commit message:
    other unit's MQTT traffic untouched.
 4. The ``/activity`` feed shows real lines during a run -- at minimum an outbound setpoint.
 
-Nothing in the repository re-checked any of them. Every other test in this suite runs one
+Nothing in this codebase re-checked any of them. Every other test in this suite runs one
 process, and this map's real breakage has only ever been visible *between* processes: a broker
 that never came up, a feed switched off everywhere, a stop that took a sibling's transport with
 it. Those are facts about six processes and two sockets, and a test that builds a middleware
@@ -18,8 +18,8 @@ in-process cannot hold any of them down.
 So this file runs the factory the way the acceptance boxes are written -- ``--units 2``, the real
 launcher, the real graph, real brokers -- and asserts what a person would look for on screen.
 
-It is slow, it needs a reachable GraphDB, it **seeds the repository the ``GRAPHDB_*`` variables
-point at**, and it needs the launcher's fixed port free. Marked ``smoke`` and deselected by
+It is slow, it needs a reachable store, it **seeds the dataset ``kapps-demo`` of the store the
+``TRIPLESTORE_*`` variables point at**, and it needs the launcher's fixed port free. Marked ``smoke`` and deselected by
 default for exactly those reasons:
 
     python -m pytest tests/test_factory_smoke.py -m smoke
@@ -44,16 +44,16 @@ import httpx
 import pytest
 
 from _sse import follow
-from conftest import requires_graphdb
+from conftest import requires_store
 
 from demo.transferunits import seed
 from demo.transferunits.__main__ import LAUNCHER_HOST, LAUNCHER_PORT
 from demo.transferunits.middleware import _listening
 
 # `live` is stated here rather than inferred: conftest.py derives that marker from the
-# `graphdb` fixture, and this file needs the credentials -- which it hands to six child
+# `store` fixture, and this file needs the credentials -- which it hands to six child
 # processes -- without ever needing the client object itself.
-pytestmark = [requires_graphdb, pytest.mark.live, pytest.mark.smoke]
+pytestmark = [requires_store, pytest.mark.live, pytest.mark.smoke]
 
 UNITS = 2
 """The acceptance box's own command is ``--units 2``, so this is not a knob."""
@@ -84,9 +84,9 @@ the collision as a broker fault. A test that recomputed the port from the
 same function the seed uses would agree with any renumbering, including that one."""
 
 READY_TIMEOUT_SECONDS = 180.0
-"""How long the launcher gets to print its readiness line. It clears the repository, loads the
+"""How long the launcher gets to print its readiness line. It clears the dataset, loads the
 shared ontologies, seeds two units, and spawns five processes before it prints anything, and
-every one of those steps is a round trip to a GraphDB that may not be on this machine."""
+every one of those steps is a round trip to a store that may not be on this machine."""
 
 LIVE_TIMEOUT_SECONDS = 60.0
 """How long every participant then gets to reach ``live``. A middleware and the control station
@@ -287,7 +287,7 @@ def factory() -> Iterator[FactoryHandle]:
     The wait at the end of this fixture *is* claim 1: a factory that never comes up
     fails here, quoting what the launcher said, before any test body runs.
 
-    One boot for the file rather than one per test, because a boot costs a repository wipe and
+    One boot for the file rather than one per test, because a boot costs a dataset wipe and
     a re-seed. That makes the order of the tests below load-bearing, and the last class says so.
     """
     launcher_url = f"http://{LAUNCHER_HOST}:{LAUNCHER_PORT}/"

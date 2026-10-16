@@ -1,4 +1,4 @@
-"""Scenario 2 end-to-end integration test against a live GraphDB.
+"""Scenario 2 end-to-end integration test against a live store.
 
 A decentrally-controlled door and a minimal mobile robot. Demonstrate **direct invocation**
 of workflows and state. Contrast with scenario 1
@@ -8,7 +8,7 @@ workflow endpoints execute synchronously when invoked directly. The mobile robot
 is a minimal consumer. It discovers the door purely through the knowledge graph.
 A SPARQL query. It reads the door live state via the StateProperty GET endpoint.
 It finds it closed. Invoke the door open workflow directly. Hit the execute URL
-it found in the graph. This is NOT operation based. Skip when GRAPHDB_* env vars
+it found in the graph. This is NOT operation based. Skip when TRIPLESTORE_* env vars
 are absent (see conftest).
 """
 
@@ -26,7 +26,7 @@ from rdflib.namespace import RDF
 
 from kapps_ogm import OGM
 from kapps_semantic_middleware import SemanticMiddleware
-from kapps_semantic_middleware.credentials import graphdb_env_present, graphdb_for
+from kapps_semantic_middleware.credentials import triplestore_env_present, triplestore_for
 from kapps_semantic_middleware.registration import (
     mint_capability_iri,
     mint_state_property_iri,
@@ -34,9 +34,9 @@ from kapps_semantic_middleware.registration import (
 )
 from kapps_semantic_middleware.vocabulary import SVC
 
-requires_graphdb = pytest.mark.skipif(
-    not graphdb_env_present(),
-    reason="GRAPHDB_* environment variables not set; skipping live-GraphDB integration test",
+requires_store = pytest.mark.skipif(
+    not triplestore_env_present(),
+    reason="TRIPLESTORE_* environment variables not set; skipping live-store integration test",
 )
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "examples"))
@@ -115,9 +115,9 @@ def robot_pass_through_door(ogm, door_resource_iri) -> list[str]:
     return log
 
 
-@requires_graphdb
-def test_scenario2_door_direct_invocation_by_mobile_robot(graphdb):
-    db = graphdb
+@requires_store
+def test_scenario2_door_direct_invocation_by_mobile_robot(store):
+    db = store
     reset_door()
     seed.seed_scenario2(db)
 
@@ -127,7 +127,7 @@ def test_scenario2_door_direct_invocation_by_mobile_robot(graphdb):
         mode="resource",
         resource_iri=seed.DOOR_RESOURCE,
         service_class=seed.DOOR_SERVICE_CLASS,
-        ogm=OGM(db=graphdb_for(graphdb.repository)),
+        ogm=OGM(db=triplestore_for(store.dataset)),
         host="127.0.0.1",
         port=DOOR_PORT,
     )
@@ -171,7 +171,7 @@ def test_scenario2_door_direct_invocation_by_mobile_robot(graphdb):
             mode="resource",
             resource_iri=seed.MOBILE_ROBOT,
             service_class=seed.MOBILE_ROBOT_SERVICE_CLASS,
-            ogm=OGM(db=graphdb_for(graphdb.repository)),
+            ogm=OGM(db=triplestore_for(store.dataset)),
             host="127.0.0.1",
             port=ROBOT_PORT,
         )

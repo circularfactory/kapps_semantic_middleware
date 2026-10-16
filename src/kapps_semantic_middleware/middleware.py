@@ -18,8 +18,10 @@ import functools
 import inspect
 import json
 import logging
+import random
 import threading
 import time
+import warnings
 import weakref
 from typing import Any, Callable, Deque, Dict, List, Mapping, NamedTuple, Optional, Sequence
 
@@ -27,6 +29,7 @@ import anyio
 import httpx
 from fastapi import APIRouter
 from fastapi.responses import Response
+from fastapi.routing import APIRoute
 from kapps_ogm import Update
 from kapps_ogm.utils.class_scope import ClassScope
 from kapps_triplestore_interface import IRI
@@ -64,8 +67,11 @@ from kapps_semantic_middleware.operation import (
 from kapps_semantic_middleware.possession import _switch_conflict, possession_change
 from kapps_semantic_middleware.rest_router import generate_recursive_rest_api
 from kapps_semantic_middleware.errors import (
+    DeploymentRuntimeError,
+    DeploymentValueError,
     HandoverPreconditionError,
-    NotificationUndelivered,
+    NotificationReceiverAmbiguousError,
+    NotificationReceiverUnavailableError,
     OperationQueueEmpty,
     OperationResolutionError,
 )
@@ -96,9 +102,15 @@ from kapps_semantic_middleware.registration import (
     resolve_dispatch_target,
     update_heartbeat,
 )
+from kapps_semantic_middleware.validation_report import RefusedWrite, _RefusedWrites, _Verb
 from kapps_semantic_middleware.vocabulary import SVC, OperationStatus
 
 logger = logging.getLogger(__name__)
+
+# The heartbeat loop's wait and its random draw. A test replaces them here, not the event loop's
+# sleep, which the rest of the module also uses.
+_heartbeat_wait = asyncio.sleep
+_heartbeat_phase = random.uniform
 
 __all__ = ["SemanticMiddleware", "IssuedOperation", "OperationResolutionError", "Mode"]
 
@@ -140,9 +152,9 @@ class _Received(NamedTuple):
 
 
 class IssuedOperation:
-    """The Operation that ``request()`` issues: its draft in the block, its handle after it.
+    """The Operation that ``issue_operation()`` issues: its draft in the block, its handle after it.
 
-    ``request()`` makes it; a caller does not. In the block of ``with mw.request(...) as op:``,
+    ``issue_operation()`` makes it; a caller does not. In the block of ``with mw.issue_operation(...) as op:``,
     ``op.data`` takes the Operation's domain properties, as ``{property IRI: [values]}``.
     ``op.iri`` is the Operation's IRI. After the block, the Operation is in the graph, ``queued``.
     ``op.issuer`` is its issuer: the Resource of the middleware that issued it. ``svc:issuedBy``
@@ -168,7 +180,7 @@ class IssuedOperation:
         self.iri = iri
         #: The issuer: the Resource of the middleware that issued the Operation.
         self.issuer = issuer
-        #: The Operation's domain properties, set in the block of ``request()``.
+        #: The Operation's domain properties, set in the block of ``issue_operation()``.
         self.data: Dict[str, list] = {}
         self._middleware = middleware
         # Whether the Operation is in the graph: only then can a wait read its status.
@@ -221,12 +233,12 @@ class IssuedOperation:
         """The Operation's status, read from the graph, when it is one of ``wanted``; else None.
 
         Raises:
-            RuntimeError: If the Operation is not in the graph yet: the block of ``request()``
+            RuntimeError: If the Operation is not in the graph yet: the block of ``issue_operation()``
                 has not ended.
         """
         if not self._in_graph:
             raise RuntimeError(
-                f"{self.iri} is not issued yet: wait for it after the block of request()"
+                f"{self.iri} is not issued yet: wait for it after the block of issue_operation()"
             )
         found = sorted(_operation_statuses(self._middleware.ogm, self.iri) & wanted)
         return found[0] if found else None
@@ -426,6 +438,14 @@ def _stop_notifiers_at_exit() -> None:
 atexit.register(_stop_notifiers_at_exit)
 
 
+class _OwnIris(NamedTuple):
+    """The own identity of a resource-mode instance, which no other mode has."""
+
+    resource: IRI
+    service_class: IRI
+    service: IRI
+
+
 def _issued_and_claimed(notified: Any, resource_iri: Optional[IRI]) -> bool:
     """Whether a notified Operation is one that ``resource_iri`` issued and that is no longer
     ``queued``: then the notification tells of its claim or its end, and it is no work."""
@@ -445,6 +465,43 @@ def _moved_operations(changes: Sequence[Change]) -> Dict[IRI, str]:
             if _property(key) == SVC.operationStatus and moves:
                 moved[IRI(change.instance_iri)] = statuses.pop()
     return moved
+
+
+#: The last path segment of each route that runs a workflow: at once, and in the background.
+_RUN_ROUTES = frozenset({"execute", "execute_background"})
+
+
+def _routes_since(
+    app: Any, before: int, *, path_endings: Optional[frozenset[str]] = None
+) -> List[APIRoute]:
+    """The routes mounted on ``app`` since its list of routes held ``before`` entries.
+
+    FastAPI appends each route that it mounts to the end of the app's list, so the routes that
+    one registration mounted are those after the length the list had before it. With
+    ``path_endings``, only those whose path's last segment is one of them.
+    """
+    return [
+        route
+        for route in app.routes[before:]
+        if isinstance(route, APIRoute)
+        and (path_endings is None or route.path.rsplit("/", 1)[-1] in path_endings)
+    ]
+
+
+def _describe_routes(routes: Sequence[APIRoute], func: Callable[..., Any]) -> None:
+    """Describe each route with the docstring of ``func``, the function that it serves.
+
+    The first line of the docstring becomes the route's summary, and the whole docstring its
+    description. The instance's API description, which ``/docs`` renders and the dashboard's
+    Services box reads, then says what the function does, and not only the name that FastAPI
+    derives from the route's handler. A function without a docstring leaves the route's
+    summary as it was, and the route gets no description. Nothing else of the route changes.
+    """
+    doc = inspect.cleandoc(func.__doc__ or "")
+    for route in routes:
+        if doc:
+            route.summary = doc.splitlines()[0]
+        route.description = doc
 
 
 class SemanticMiddleware(Middleware):
@@ -531,6 +588,8 @@ class SemanticMiddleware(Middleware):
         The nested ``favicon`` function handles ``GET /favicon.ico`` requests. It returns
         an empty 204 response to suppress browser console errors.
         """
+        # The ignore is for a typed transitional_sync_middleware, whose property mypy reads
+        # off the class as its getter, which has no `fget`. Untyped, as today, it is unused.
         app = Middleware.app.fget(self)  # type: ignore[attr-defined]
         if not getattr(app, "_kapps_root_replaced", False):
             app._kapps_root_replaced = True
@@ -593,7 +652,9 @@ class SemanticMiddleware(Middleware):
             host: The HTTP server host address. Default is "127.0.0.1".
             port: The HTTP server port. Default is 8000.
             address: The full service address. Defaults to http://{host}:{port}.
-            named_graph: The target named graph in the knowledge graph.
+            named_graph: The target named graph in the knowledge graph, a string or an ``IRI``.
+                The constructor converts it to an ``IRI``; a string that is no IRI raises
+                ``InvalidIRIError`` here. None is the default graph.
             heartbeat_interval: Seconds between heartbeat updates (resource mode).
             staleness_threshold: Seconds before a service is considered stale (watchdog mode).
             sweep_interval: Seconds between staleness sweeps (watchdog mode).
@@ -608,21 +669,29 @@ class SemanticMiddleware(Middleware):
         Resource mode requires resource_iri, service_class, and ogm. Watchdog mode requires ogm.
         The constructor registers startup and shutdown callbacks for service lifecycle management.
         It also configures liveness monitoring, connector wiring, and optional activity feeds.
+
+        Raises:
+            DeploymentValueError: If ``mode`` is no mode, or the mode lacks an argument that it
+                requires (Repair). It is a ``ValueError``.
+            NotImplementedError: In server mode.
         """
         super().__init__()
         self._rebrand()
 
         if mode not in modes.ALL:
-            raise ValueError(
+            raise DeploymentValueError(
                 f"mode must be one of {', '.join(repr(str(m)) for m in modes.ALL)}; "
                 f"got {mode!r}"
             )
 
         self.mode = mode
         self.ogm = ogm
+        # The writes of this instance that the store's shapes refused, the newest of them, in
+        # memory only. `commit`, `create` and `handover` record each refusal where it reaches
+        # the caller, and `refused_writes` reads them.
+        self._refused_writes = _RefusedWrites()
         self.host = host
         self.port = port
-        self.named_graph = named_graph
         self.address = address or f"http://{host}:{port}"
 
         # Liveness.
@@ -633,19 +702,21 @@ class SemanticMiddleware(Middleware):
         self._sweep_task: Optional[asyncio.Task] = None
 
         if mode == Mode.RESOURCE:
-            missing = []
-            if resource_iri is None:
-                missing.append("resource_iri")
-            if service_class is None:
-                missing.append("service_class")
-            if ogm is None:
-                missing.append("ogm")
-            if missing:
-                raise ValueError(f"resource mode requires: {', '.join(missing)}")
+            # The test names each argument, so the type checker knows that none is None below.
+            if resource_iri is None or service_class is None or ogm is None:
+                arguments = (
+                    ("resource_iri", resource_iri),
+                    ("service_class", service_class),
+                    ("ogm", ogm),
+                )
+                missing = [name for name, value in arguments if value is None]
+                raise DeploymentValueError(f"resource mode requires: {', '.join(missing)}")
 
-            self.resource_iri = IRI(resource_iri)
-            self.service_class = IRI(service_class)
-            self.service_iri = mint_service_iri(self.resource_iri, self.address)
+            # This instance's own identity, which resource mode alone has: the other modes set
+            # all three to None. A resource-only path reads them through `_own_iris`.
+            self.resource_iri: Optional[IRI] = IRI(resource_iri)
+            self.service_class: Optional[IRI] = IRI(service_class)
+            self.service_iri: Optional[IRI] = mint_service_iri(self.resource_iri, self.address)
 
             # Connector wiring. The class_scope is the consumer's view,
             # rooted at this resource and configured in embedding code rather than in the
@@ -723,7 +794,7 @@ class SemanticMiddleware(Middleware):
 
         elif mode == Mode.WATCHDOG:
             if ogm is None:
-                raise ValueError("watchdog mode requires: ogm")
+                raise DeploymentValueError("watchdog mode requires: ogm")
             self.resource_iri = None
             self.service_class = None
             self.service_iri = None
@@ -735,6 +806,12 @@ class SemanticMiddleware(Middleware):
             self.service_class = None
             self.service_iri = None
             raise NotImplementedError("mode 'server' is not implemented yet")
+
+        # The named graph enters KSM here and is an `IRI` from here on, as every helper it
+        # reaches takes it: a string that is no IRI is refused now, not at the first write. It
+        # comes after the checks of the mode's arguments, so a missing argument is still the
+        # first error, and nothing above reads it.
+        self.named_graph: Optional[IRI] = IRI(named_graph) if named_graph is not None else None
 
         # The background worker that sends the notifications of issuers, and its stop, after
         # the deregistration so that a stop does not wait for it first.
@@ -754,13 +831,14 @@ class SemanticMiddleware(Middleware):
 
     async def _register_service(self) -> None:
         """Register the Service instance in the knowledge graph on startup."""
+        own = self._own_iris("the Service's registration is only valid in resource mode")
         await anyio.to_thread.run_sync(
             functools.partial(
                 register_service,
                 self.ogm,
-                resource_iri=self.resource_iri,
-                service_iri=self.service_iri,
-                service_class=self.service_class,
+                resource_iri=own.resource,
+                service_iri=own.service,
+                service_class=own.service_class,
                 address=self.address,
                 named_graph=self.named_graph,
             )
@@ -768,11 +846,12 @@ class SemanticMiddleware(Middleware):
 
     async def _deregister_service(self) -> None:
         """Deregister the Service instance (remove reachability) on shutdown."""
+        own = self._own_iris("the Service's deregistration is only valid in resource mode")
         await anyio.to_thread.run_sync(
             functools.partial(
                 deregister_service,
                 self.ogm,
-                self.service_iri,
+                own.service,
                 named_graph=self.named_graph,
             )
         )
@@ -784,20 +863,30 @@ class SemanticMiddleware(Middleware):
         self._heartbeat_task = asyncio.create_task(self._heartbeat_loop())
 
     async def _heartbeat_loop(self) -> None:
-        """Refresh svc:lastHeartbeat every ``heartbeat_interval`` seconds, until the system cancels it."""
+        """Refresh svc:lastHeartbeat once at startup, after a random phase, then every ``heartbeat_interval`` seconds, until the system cancels it."""
         # The loop is only started when a positive interval was configured.
         interval = self.heartbeat_interval or 30.0
-        try:
-            while True:
-                await anyio.to_thread.run_sync(
-                    functools.partial(
-                        update_heartbeat,
-                        self.ogm,
-                        self.service_iri,
-                        named_graph=self.named_graph,
-                    )
+        own = self._own_iris("the heartbeat is only valid in resource mode")
+
+        async def beat() -> None:
+            await anyio.to_thread.run_sync(
+                functools.partial(
+                    update_heartbeat,
+                    self.ogm,
+                    own.service,
+                    named_graph=self.named_graph,
                 )
-                await asyncio.sleep(interval)
+            )
+
+        try:
+            # The first beat is at startup, so a reader sees a fresh heartbeat right after
+            # registration. The random phase follows it: instances started together would
+            # otherwise beat together for life, and a grid's writes would land in one burst.
+            await beat()
+            await _heartbeat_wait(_heartbeat_phase(0.0, interval))
+            while True:
+                await beat()
+                await _heartbeat_wait(interval)
         except asyncio.CancelledError:
             pass
 
@@ -811,16 +900,19 @@ class SemanticMiddleware(Middleware):
                 pass
 
     async def emit_heartbeat(self) -> None:
-        """Refresh this service's heartbeat once (also useful for tests/manual pings)."""
+        """Refresh this service's heartbeat once (also useful for tests/manual pings).
+
+        Raises:
+            RuntimeError: If called outside resource mode, which has no Service.
+        """
+        own = self._own_iris("emit_heartbeat() is only valid in resource mode")
         await anyio.to_thread.run_sync(
-            functools.partial(
-                update_heartbeat, self.ogm, self.service_iri, named_graph=self.named_graph
-            )
+            functools.partial(update_heartbeat, self.ogm, own.service, named_graph=self.named_graph)
         )
         # One line per interval (30s by default), so this is a pulse rather than a flood --
         # and it is the only outward sign that an idle instance is still alive, which is
         # exactly what someone watching the activity feed wants to see.
-        logger.info("Heartbeat written for %s", self.service_iri)
+        logger.info("Heartbeat written for %s", own.service)
 
     # --- Liveness: centralized watchdog sweep (watchdog mode) -------------- #
 
@@ -983,10 +1075,12 @@ class SemanticMiddleware(Middleware):
         exit: ExitTransition = (),
         error: ErrorTransition = (),
         issuers: Optional[Mapping[IRI, Optional[IRI]]] = None,
+        verb: _Verb = "commit",
     ) -> _Commit:
         """The commit of :meth:`commit`, and of a special function that already read the issuers
         of the Operations that it moves: ``issuers`` maps such an Operation to its issuer, or to
-        None when it has none, so that it is not read again after the write."""
+        None when it has none, so that it is not read again after the write. ``verb`` names the
+        call that writes, for the record of a refusal: ``handover`` commits through here too."""
         return _Commit(
             self.ogm,
             instances=instances,
@@ -996,13 +1090,54 @@ class SemanticMiddleware(Middleware):
             error=error,
             named_graph=self.named_graph,
             on_admitted=functools.partial(self._notify_issuers_of_write, issuers=issuers or {}),
+            on_refused=functools.partial(self._refused_writes.record, verb),
         )
+
+    @property
+    def refused_writes(self) -> List[RefusedWrite]:
+        """The writes of this instance that the store's shapes refused, the newest first.
+
+        :meth:`commit`, :meth:`create` and :meth:`handover` record each such refusal when it
+        reaches the caller (``ShaclValidationError``), and raise the error unchanged. So does the
+        write of the error transition of :meth:`commit`, which the store's shapes may refuse
+        when the body failed: its record has the verb ``commit``, and its first line reads
+        ``commit (error transition) refused by ...``. The caller still gets the error of the
+        body, with a note that the error transition was not committed. The record holds the
+        time, the verb, the rules that the report names, and the report. The instance keeps the
+        newest 50 in memory, and nothing in the graph; an older one drops. A refusal that is no
+        refusal by the shapes, such as a false precondition, is not recorded.
+
+        Each recorded refusal is also logged, as one record at INFO on the logger
+        ``kapps_semantic_middleware.validation_report``. The dashboard's box "Refused writes"
+        shows them; ``validation_report.render_refused_write`` renders one.
+        """
+        return self._refused_writes.newest_first()
 
     @property
     def resource(self) -> Optional[IRI]:
         """This middleware's own Resource: the short form where a Resource is named, as in
         ``workpiece(scope, possessor=mw.resource)``. None in a mode without a Resource."""
         return self.resource_iri
+
+    def _own_iris(self, refusal: str) -> _OwnIris:
+        """This instance's Resource, Service class and Service, for a resource-only path.
+
+        Resource mode sets all three at construction, and the other modes set none, so this
+        check is the mode check of the path that reads them. ``refusal`` is the first half of
+        its error, which names the path.
+
+        Raises:
+            RuntimeError: ``"<refusal>; current mode is <mode>"``, outside resource mode.
+        """
+        # The tests for None only narrow the types: in resource mode none of the three is None.
+        if (
+            self.mode != Mode.RESOURCE
+            or self.resource_iri is None
+            or self.service_class is None
+            or self.service_iri is None
+        ):
+            raise RuntimeError(f"{refusal}; current mode is {self.mode!r}")
+        return _OwnIris(self.resource_iri, self.service_class, self.service_iri)
 
     def create(self, cls: str, scope: Any, instance_iri: Optional[str] = None) -> _Creation:
         """Create one new instance of the class ``cls``, built on :meth:`commit`.
@@ -1013,7 +1148,7 @@ class SemanticMiddleware(Middleware):
                 snapshot.update({str(EX.decision): ["unscrew"]})
 
         and ``async with`` in a coroutine, as for :meth:`commit`. For new work for a resource that
-        realizes a Capability, use :meth:`request`: it creates the Operation with this method, and
+        realizes a Capability, use :meth:`issue_operation`: it creates the Operation with this method, and
         then notifies the receiver.
 
         - **Entry.** The IRI is minted, ``<class>_<12 hex>``, unless ``instance_iri`` is given,
@@ -1064,6 +1199,7 @@ class SemanticMiddleware(Middleware):
             instance_iri=instance_iri,
             named_graph=self.named_graph,
             on_admitted=self._notify_issuers_of_write,
+            on_refused=functools.partial(self._refused_writes.record, "create"),
         )
 
     def fetch(
@@ -1112,6 +1248,11 @@ class SemanticMiddleware(Middleware):
         Workflow and Capability instances on startup (after the service is
         registered).
 
+        The function's docstring describes the routes that run it, ``execute`` and
+        ``execute_background``, in the instance's API description (``/docs``): its first line
+        is their summary, and the whole docstring their description. A function without one
+        keeps the framework's summary and gets no description.
+
         On an instance with a notification handler (:meth:`on_notification`), a notified
         Operation that implements the Capability this workflow realizes runs it, with the
         Operation as its one argument: a kapps_ogm ``Node``, read and materialized under the
@@ -1130,10 +1271,7 @@ class SemanticMiddleware(Middleware):
             RuntimeError: If called outside resource mode.
             ValueError: If capability_class or workflow_class is missing.
         """
-        if self.mode != Mode.RESOURCE:
-            raise RuntimeError(
-                f"@workflow decorator only valid in resource mode; current mode is {self.mode!r}"
-            )
+        own = self._own_iris("@workflow decorator only valid in resource mode")
         if capability_class is None:
             raise ValueError("capability_class is required in resource mode")
         if workflow_class is None:
@@ -1152,10 +1290,14 @@ class SemanticMiddleware(Middleware):
             The wrapped function becomes a REST endpoint via the base class decorator.
             Registration occurs during the on_start_up callback phase.
             """
+            before = len(self.app.routes)
             wrapped = base_decorator(func)
+            # Of the routes that the framework mounts for the workflow, those that run it say
+            # what it does. Its description and interrupt routes keep the framework's summaries.
+            _describe_routes(_routes_since(self.app, before, path_endings=_RUN_ROUTES), func)
             name = func.__name__
-            workflow_iri = mint_workflow_iri(self.service_iri, name)
-            capability_iri = mint_capability_iri(self.resource_iri, name)
+            workflow_iri = mint_workflow_iri(own.service, name)
+            capability_iri = mint_capability_iri(own.resource, name)
             endpoint = build_workflow_endpoint(self.address, name)
             # The intake's match: a notified Operation that implements this Capability runs
             # this function.
@@ -1172,8 +1314,8 @@ class SemanticMiddleware(Middleware):
                     functools.partial(
                         register_workflow,
                         self.ogm,
-                        resource_iri=self.resource_iri,
-                        service_iri=self.service_iri,
+                        resource_iri=own.resource,
+                        service_iri=own.service,
                         workflow_iri=workflow_iri,
                         workflow_class=workflow_class_iri,
                         capability_iri=capability_iri,
@@ -1205,14 +1347,15 @@ class SemanticMiddleware(Middleware):
         demand. The live value is NEVER written to the graph. Only the stable
         endpoint triple is written, at registration.
 
+        The getter's docstring describes the route in the instance's API description
+        (``/docs``): its first line is the summary, and the whole docstring the description. A
+        getter without one keeps the default summary and gets no description.
+
         Raises:
             RuntimeError: If called outside resource mode.
             ValueError: If capability_class or state_property_class is missing.
         """
-        if self.mode != Mode.RESOURCE:
-            raise RuntimeError(
-                f"@state decorator only valid in resource mode; current mode is {self.mode!r}"
-            )
+        own = self._own_iris("@state decorator only valid in resource mode")
         if capability_class is None:
             raise ValueError("capability_class is required in resource mode")
         if state_property_class is None:
@@ -1230,8 +1373,8 @@ class SemanticMiddleware(Middleware):
             Registration of the endpoint metadata occurs during the on_start_up callback.
             """
             state_name = name or func.__name__
-            state_property_iri = mint_state_property_iri(self.service_iri, state_name)
-            capability_iri = mint_capability_iri(self.resource_iri, state_name)
+            state_property_iri = mint_state_property_iri(own.service, state_name)
+            capability_iri = mint_capability_iri(own.resource, state_name)
             endpoint = build_state_endpoint(self.address, state_name)
 
             router = APIRouter(prefix=f"/state/{state_name}", tags=["state"])
@@ -1249,7 +1392,10 @@ class SemanticMiddleware(Middleware):
                     result = await result
                 return result
 
+            before = len(self.app.routes)
             self.app.include_router(router)
+            # The route says what the getter does, not what this handler does.
+            _describe_routes(_routes_since(self.app, before), func)
 
             async def register_state_property_callback() -> None:
                 """Register the StateProperty and Capability instances in the knowledge graph.
@@ -1262,8 +1408,8 @@ class SemanticMiddleware(Middleware):
                     functools.partial(
                         register_state_property,
                         self.ogm,
-                        resource_iri=self.resource_iri,
-                        service_iri=self.service_iri,
+                        resource_iri=own.resource,
+                        service_iri=own.service,
                         state_property_iri=state_property_iri,
                         state_property_class=state_property_class_iri,
                         capability_iri=capability_iri,
@@ -1296,18 +1442,24 @@ class SemanticMiddleware(Middleware):
         middleware = self
 
         async def event_trigger(payload: _EventTriggerPayload) -> Dict[str, str]:
-            """Handle POST /workflows/event_trigger/execute: a notification of an Operation.
+            """Take a notification: the IRI of an Operation for this instance to look at.
 
-            The handler extracts the Operation IRI from the request payload.
-            It delegates to _handle_event_trigger, which puts the Operation into the intake or
-            queues it. The response contains the Operation IRI, and its QUEUED status only when
-            it was queued.
+            A notification names one Operation in the graph and carries nothing else. It says
+            that an Operation for this instance exists, or that one this instance issued ended
+            or changed. The instance reads the Operation from the graph and answers at once,
+            with no business result. With a notification handler, the Operation goes into the
+            instance's intake. Without one, it goes into the instance's queue, unless it is the
+            feedback of an Operation that this instance issued. The answer names the Operation,
+            and says ``queued`` only when it was queued.
             """
             return await middleware._handle_event_trigger(IRI(payload.operation_iri))
 
         # Base decorator mounts the route without the KG registration the KAPPS
-        # ``self.workflow(...)`` override performs.
+        # ``self.workflow(...)`` override performs. The routes that run it say what it does,
+        # as those of a registered workflow do: the docstring above is what `/docs` shows.
+        before = len(self.app.routes)
         Middleware.workflow(self)(event_trigger)
+        _describe_routes(_routes_since(self.app, before, path_endings=_RUN_ROUTES), event_trigger)
 
     async def _handle_event_trigger(self, operation_iri: IRI) -> Dict[str, str]:
         """Receiver-side event trigger: take a notification of an Operation.
@@ -1429,7 +1581,7 @@ class SemanticMiddleware(Middleware):
             else:
                 what = "The intake"
                 if self._notification_handler is None:  # the intake runs only with a handler
-                    raise RuntimeError(
+                    raise DeploymentRuntimeError(
                         f"{self.resource_iri} took an Operation into the intake without a "
                         "notification handler"
                     )
@@ -1569,7 +1721,9 @@ class SemanticMiddleware(Middleware):
         receiver confirms receipt, which it does at once. It raises
         `NotificationUndelivered` when the resource has no live Service, when it has more
         than one (the call does not choose between them), and when the post fails, is
-        refused, or takes longer than `timeout` seconds.
+        refused, or takes longer than `timeout` seconds: its subclass
+        `NotificationReceiverAmbiguousError` (Repair) for more than one live Service, and
+        `NotificationReceiverUnavailableError` (Retry) for each other case.
 
         This is a plain blocking call. From a coroutine, run it off the event loop::
 
@@ -1588,16 +1742,19 @@ class SemanticMiddleware(Middleware):
         """:meth:`notify` without its check of the mode, so a watchdog tells an issuer too.
 
         Raises:
-            NotificationUndelivered: As :meth:`notify` raises it.
+            NotificationReceiverUnavailableError: If the resource has no live Service, or the
+                post fails (Retry).
+            NotificationReceiverAmbiguousError: If the resource has more than one live Service
+                (Repair).
         """
         reachable = reachable_service_addresses(self.ogm, resource_iri)
         if not reachable:
-            raise NotificationUndelivered(
+            raise NotificationReceiverUnavailableError(
                 f"{resource_iri} has no live Service to notify of {operation_iri}"
             )
         if len(reachable) > 1:
             listing = ", ".join(sorted(f"{service} at {address}" for service, address in reachable))
-            raise NotificationUndelivered(
+            raise NotificationReceiverAmbiguousError(
                 f"{resource_iri} has more than one live Service ({listing}); notify() does not "
                 f"choose which one to notify of {operation_iri}"
             )
@@ -1605,14 +1762,14 @@ class SemanticMiddleware(Middleware):
 
     @staticmethod
     def _deliver(operation_iri: IRI, recipient: IRI, address: str, timeout: float) -> None:
-        """The delivery of a notification, for :meth:`notify` and :meth:`request`: post the
+        """The delivery of a notification, for :meth:`notify` and :meth:`issue_operation`: post the
         Operation's IRI to the event trigger at `address`, and return when the receiver confirms
         receipt. `recipient` names the receiver in the error.
 
         Raises:
-            NotificationUndelivered: If the post fails: `address` is no valid URL, or the post
-                cannot connect, is refused, or takes longer than `timeout` seconds. Its cause is
-                the error of the post.
+            NotificationReceiverUnavailableError: If the post fails (Retry): `address` is no
+                valid URL, or the post cannot connect, is refused, or takes longer than
+                `timeout` seconds. Its cause is the error of the post.
         """
         try:
             httpx.post(
@@ -1623,13 +1780,13 @@ class SemanticMiddleware(Middleware):
         # A malformed address is no HTTPError: httpx raises InvalidURL for it, and a host that the
         # IDNA codec refuses, such as one with a label over 63 characters, raises UnicodeError.
         except (httpx.HTTPError, httpx.InvalidURL, UnicodeError) as error:
-            raise NotificationUndelivered(
+            raise NotificationReceiverUnavailableError(
                 f"{recipient} at {address} did not take the notification of "
                 f"{operation_iri}: {error!r}"
             ) from error
 
     @contextlib.contextmanager
-    def request(
+    def issue_operation(
         self,
         *,
         capability_class: Any,
@@ -1641,7 +1798,7 @@ class SemanticMiddleware(Middleware):
 
         Usage::
 
-            with mw.request(capability_class=cap, operation_class=op_cls) as op:
+            with mw.issue_operation(capability_class=cap, operation_class=op_cls) as op:
                 op.data[str(EX.hasScrew)] = [{"id": str(screw)}]  # its domain fields, if any
             if await op.claimed(timeout=30):
                 status = await op.ended()  # "done" or "failed"
@@ -1651,7 +1808,10 @@ class SemanticMiddleware(Middleware):
 
         - **Discovery.** Before the block runs, a live Service is found that realizes a
           Capability of ``capability_class`` (with ``target_resource``, one of that resource).
-          If there is none, ``OperationResolutionError`` is raised, and nothing is written.
+          If there is none, ``OperationResolutionError`` is raised, and nothing is written:
+          ``OperationReceiverUnavailableError`` (Retry) when a Workflow realizes the Capability
+          but no Service of it is live now, and ``CapabilityNotRealizedError`` (Repair) when no
+          Workflow realizes it.
         - **The block.** It sets the Operation's domain properties in ``op.data``, as
           ``{property IRI: [values]}``, and may read ``op.iri``. An error in the block writes
           nothing.
@@ -1666,7 +1826,8 @@ class SemanticMiddleware(Middleware):
         - **Notify.** With the Operation in the graph, the Service that discovery found is
           notified, through its event trigger, and takes the Operation through its intake or
           its queue (see :meth:`on_notification`). If the notification fails, the Operation
-          stays ``queued``, and ``NotificationUndelivered`` is raised. Nothing is undone: the
+          stays ``queued``, and ``NotificationReceiverUnavailableError`` (Retry), a
+          ``NotificationUndelivered``, is raised. Nothing is undone: the
           receiver takes up its ``queued`` Operations when it starts, and the issuer is
           responsible for the Operation while it is ``queued``.
 
@@ -1681,10 +1842,7 @@ class SemanticMiddleware(Middleware):
         This is the in-process caller face — not REST-exposed.
         """
 
-        if self.mode != Mode.RESOURCE:
-            raise RuntimeError(
-                f"request() is only valid in resource mode; current mode is {self.mode!r}"
-            )
+        own = self._own_iris("issue_operation() is only valid in resource mode")
         capability_class_iri = IRI(capability_class)
         operation_class_iri = IRI(operation_class)
 
@@ -1704,22 +1862,49 @@ class SemanticMiddleware(Middleware):
             operation(ClassScope(), capability=capability_iri),
             instance_iri=operation_iri or None,
         ) as created:
-            issued = IssuedOperation(self, created.iri, self.resource_iri)
+            issued = IssuedOperation(self, created.iri, own.resource)
             yield issued
             if any(_property(key) == SVC.issuedBy for key in issued.data):
                 raise ValueError(
-                    f"the data of {created.iri} sets {SVC.issuedBy}, which request() sets "
-                    f"itself, to {self.resource_iri}"
+                    f"the data of {created.iri} sets {SVC.issuedBy}, which issue_operation() sets "
+                    f"itself, to {own.resource}"
                 )
             created.update({str(SVC.operationStatus): [OperationStatus.QUEUED]})
             created.update(issued.data)
-            created.update({str(SVC.issuedBy): [{"id": str(self.resource_iri)}]})
+            created.update({str(SVC.issuedBy): [{"id": str(own.resource)}]})
 
         # The Operation is in the graph: its handle can wait, and only now is the receiver
         # notified, through the delivery of notify().
         issued._in_graph = True
         self._issued_handles[issued.iri] = issued
         self._deliver(issued.iri, service_iri, address, timeout=30.0)
+
+    def request(
+        self,
+        *,
+        capability_class: Any,
+        operation_class: Any,
+        operation_iri: Optional[str] = None,
+        target_resource: Optional[str] = None,
+    ):
+        """Deprecated alias of :meth:`issue_operation`; use ``issue_operation()``.
+
+        It warns with a ``DeprecationWarning``, then calls :meth:`issue_operation` with the same
+        arguments and returns its context manager. It goes in the release after next.
+        """
+
+        warnings.warn(
+            "SemanticMiddleware.request() is deprecated and will be removed in the release "
+            "after next; use issue_operation(), which takes the same arguments",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return self.issue_operation(
+            capability_class=capability_class,
+            operation_class=operation_class,
+            operation_iri=operation_iri,
+            target_resource=target_resource,
+        )
 
     @contextlib.contextmanager
     def claim_next(self, scope: Any = None):
@@ -1862,7 +2047,7 @@ class SemanticMiddleware(Middleware):
         `ShaclValidationError`, with the store's validation report as its `report`), nothing is
         written, neither the possession change nor a change of `entry`, and the body does not run.
         The body is the move: the physical transport, and any coordination with the counterpart, for
-        example through a `request(...)`. A clean exit writes nothing more. An error in the body is
+        example through an `issue_operation(...)`. A clean exit writes nothing more. An error in the body is
         raised as it is and undoes nothing: the possession has already changed, so the caller
         records what really happened.
 
@@ -1917,8 +2102,9 @@ class SemanticMiddleware(Middleware):
             ValueError: If `workpiece_update` names `cfc:hasPossessedWorkpiece`, which the
                 handover sets itself, or a value that does not fit its property, or a change of
                 `entry` does not fit its class or writes an instance that the commit already
-                writes, or the counterpart has more than one possession state. Nothing is
-                written.
+                writes. Nothing is written.
+            DeploymentValueError: If the counterpart has more than one possession state
+                (Repair). It is a ``ValueError``. Nothing is written.
             kapps_triplestore_interface.exceptions.TripleStoreInterfaceError: If the store
                 refuses the possession change; a SHACL refusal is `ShaclValidationError`.
                 Nothing is written, and the body does not run.
@@ -1951,7 +2137,9 @@ class SemanticMiddleware(Middleware):
         )
         with contextlib.ExitStack() as admitted:
             try:
-                admitted.enter_context(self.commit(entry=[*change.changes, *alongside]))
+                admitted.enter_context(
+                    self._transition(entry=[*change.changes, *alongside], verb="handover")
+                )
             except PreconditionFailedError as refusal:
                 # The store wrote nothing of the entry. When the entry creates the counterpart's
                 # state, another write may have created that state after it was read: then the
@@ -1969,7 +2157,9 @@ class SemanticMiddleware(Middleware):
                     raise _switch_conflict(workpiece_iri) from refusal
                 self._check_handover_preconditions(workpiece_iri, counterpart_iri, mode_ability_iri)
                 try:
-                    admitted.enter_context(self.commit(entry=[*again.changes, *alongside]))
+                    admitted.enter_context(
+                        self._transition(entry=[*again.changes, *alongside], verb="handover")
+                    )
                 except PreconditionFailedError as second_refusal:
                     raise _switch_conflict(workpiece_iri) from second_refusal
             # The commit has happened, so a creation in the body commits on its own.
@@ -1985,12 +2175,13 @@ class SemanticMiddleware(Middleware):
             HandoverPreconditionError: If this resource does not possess the workpiece, or the
                 counterpart lacks the handover ability complementary to the mode.
         """
+        resource_iri = self._own_iris("handover() is only valid in resource mode").resource
         current_ps = find_possession_state(
-            self.ogm, workpiece_iri, self.resource_iri, named_graph=self.named_graph
+            self.ogm, workpiece_iri, resource_iri, named_graph=self.named_graph
         )
         if current_ps is None:
             raise HandoverPreconditionError(
-                f"{self.resource_iri} does not currently possess {workpiece_iri}"
+                f"{resource_iri} does not currently possess {workpiece_iri}"
             )
         if not counterpart_has_complementary_ability(
             self.ogm, counterpart_iri, mode_ability_iri, named_graph=self.named_graph
@@ -2040,7 +2231,7 @@ class SemanticMiddleware(Middleware):
             mw.on_notification(on_transport_ended, class_scope=transport_scope)
 
         A notification arrives at this resource's event trigger: from a peer's `notify`, from a
-        peer's `request()`, which notifies the resource it dispatched an Operation to, or from
+        peer's `issue_operation()`, which notifies the resource it dispatched an Operation to, or from
         the middleware that claimed or ended an Operation that this resource issued.
         The trigger reads the Operation once and answers at once. The Operation then enters
         this instance's FIFO, and one worker runs one Operation at a time, in arrival order:
@@ -2135,11 +2326,13 @@ class SemanticMiddleware(Middleware):
           lifecycle (``register_callback``, ``claim_next``).
         """
 
+        own = self._own_iris("the queue's reconstruction is only valid in resource mode")
+        resource_iri = own.resource
         orphaned = await anyio.to_thread.run_sync(
             functools.partial(
                 find_resource_operations,
                 self.ogm,
-                self.resource_iri,
+                resource_iri,
                 [OperationStatus.RUNNING],
                 self.named_graph,
             )
@@ -2160,7 +2353,7 @@ class SemanticMiddleware(Middleware):
             functools.partial(
                 find_resource_operations,
                 self.ogm,
-                self.resource_iri,
+                resource_iri,
                 [OperationStatus.QUEUED],
                 self.named_graph,
             )
@@ -2174,7 +2367,7 @@ class SemanticMiddleware(Middleware):
                 "%s has neither a notification handler (on_notification) nor a callback "
                 "(register_callback): the Operations it is notified of wait in its queue until "
                 "claim_next() takes them",
-                self.resource_iri,
+                resource_iri,
             )
         for op_iri in queued:
             if op_iri not in self._operation_queue:
@@ -2204,9 +2397,10 @@ class SemanticMiddleware(Middleware):
         # the projection that keeps broker addresses off the wire never computed.
         # Failing construction is the honest outcome. A warning here would produce exactly
         # the silent half-alive resource the binding design is written to avoid.
+        resource_iri = self._own_iris("connector wiring is only valid in resource mode").resource
         self._wiring = plan_wiring(
             ogm=self.ogm,
-            resource_iri=self.resource_iri,
+            resource_iri=resource_iri,
             class_scope=self.class_scope,
             registry=self.connector_registry,
             flavour=self.connector_sync_direction,
@@ -2220,7 +2414,7 @@ class SemanticMiddleware(Middleware):
                 connector=registration.connector,
                 model_type=registration.model_type,
                 data_model_name="resource",
-                model_id=str(self.resource_iri),
+                model_id=str(resource_iri),
                 # The COMPLEX property is the deepest addressable thing: ConnectionInfo has
                 # three levels and field_id is a plain getattr, so inf:hasValue is out of
                 # reach. Same atomic unit the recursive router reaches from the routing side.
@@ -2236,7 +2430,7 @@ class SemanticMiddleware(Middleware):
                 "Wired %d connector(s) across %d parameter(s) on %s",
                 len(self._wiring.registrations),
                 len(self._wiring.bindings),
-                self.resource_iri,
+                resource_iri,
             )
 
     def _suppress_default_persistence_warning(self, data_model_name: str) -> None:

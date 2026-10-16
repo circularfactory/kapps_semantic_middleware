@@ -3,7 +3,7 @@
 Builds the initial situation (seeds the graph) and spawns every participant
 process: one PLC and panel, and one middleware, per unit, plus one control
 station. Credentials go only to graph-side children. A PLC process never
-receives GRAPHDB_*. Teardown is ordered: middleware and the
+receives the store's variables. Teardown is ordered: middleware and the
 control station first, so each deregisters while its PLC still answers,
 then the PLCs.
 
@@ -23,10 +23,10 @@ import threading
 import time
 from collections import deque
 from dataclasses import dataclass, field
-from typing import Deque, List, Optional
+from typing import Deque, List, NoReturn, Optional, Tuple
 
-from kapps_triplestore_interface import GraphDB
-from kapps_semantic_middleware.credentials import DEMO_REPOSITORY, graphdb_for
+from kapps_triplestore_interface import TripleStore
+from kapps_semantic_middleware.credentials import DEMO_DATASET, endpoint_for, triplestore_for
 from kapps_semantic_middleware.vocabulary import SVC
 
 from . import seed
@@ -40,6 +40,19 @@ _PACKAGE = __package__ or "demo.transferunits"
 
 SLOW_AFTER_SECONDS = 30.0
 WATCH_INTERVAL_SECONDS = 1.0
+
+PANEL_TIMEOUT_SECONDS = 60.0
+"""How long the launcher waits for a PLC's panel line before it fails the factory.
+
+The panel comes up only once the PLC reaches its unit's broker, and that broker comes up only
+once the unit's middleware has imported, read its interface from the graph and wired its
+connectors. Generous for that reason: it bounds a stall, and it must not fail a healthy factory
+on a slow store. The usual failures do not wait for it: a broker that does not start ends its
+middleware within seconds, and the wait ends with it."""
+
+PANEL_POLL_SECONDS = 0.1
+"""How often the PLC spawn wait looks at its unit's middleware. The panel line itself ends the
+wait at once."""
 
 STOP_TIMEOUT_SECONDS = 5.0
 """How long a child gets to stop gracefully before the launcher kills it. A kill skips the
@@ -74,11 +87,21 @@ class ChildHandle:
     started_at: float = field(default_factory=time.time)
     stopping: bool = False
     output: Deque[str] = field(default_factory=lambda: deque(maxlen=20))
+    ended: threading.Event = field(default_factory=threading.Event)
+    """Set once the child's output is drained to its end and, if it failed, echoed."""
 
 
-def _strip_graphdb_env(env: dict) -> dict:
-    """Return a copy of env without GRAPHDB_* variables."""
-    return {k: v for k, v in env.items() if not k.startswith("GRAPHDB_")}
+# vendor-check: off -- the deprecated variables, until they go.
+_DEPRECATED_STORE_ENV_PREFIXES = ("GRAPHDB_",)
+# vendor-check: on
+
+# The prefixes of the store's variables: TRIPLESTORE_*, and their deprecated fallbacks.
+_STORE_ENV_PREFIXES = ("TRIPLESTORE_", *_DEPRECATED_STORE_ENV_PREFIXES)
+
+
+def _strip_store_env(env: dict) -> dict:
+    """Return a copy of env without the store's variables, the deprecated ones included."""
+    return {k: v for k, v in env.items() if not k.startswith(_STORE_ENV_PREFIXES)}
 
 
 _PANEL_PORT_RE = re.compile(r":(\d+)/?\s*$")
@@ -104,10 +127,52 @@ def _echo_address_line(child: ChildHandle, line: str) -> None:
     print(f"  {_child_identity(child):<{_IDENTITY_COLUMN_WIDTH}}{line}", flush=True)
 
 
-def _spawn_plc(unit_index: int) -> ChildHandle:
+def _buffered_output(child: ChildHandle) -> Tuple[str, List[str]]:
+    """A child's buffered lines, and the line that introduces them, for the console or an error."""
+    identity = _child_identity(child)
+    lines = list(child.output)
+    if not lines:
+        return f"{identity} printed nothing.", []
+    return f"{identity}'s last {len(lines)} line(s) of output:", lines
+
+
+def _echo_buffered_output(child: ChildHandle, reason: str) -> None:
+    """Echo every buffered line of a failed child to the launcher's own stdout.
+
+    The failure path around ``_echo_address_line``'s filter: that rule stays for a healthy run,
+    but a child that fails has its last lines on the console, a traceback among them, and not
+    only on the index page.
+    """
+    identity = _child_identity(child)
+    header, lines = _buffered_output(child)
+    print(f"  {identity} {reason}. {header}", flush=True)
+    for line in lines:
+        print(f"  {identity:<{_IDENTITY_COLUMN_WIDTH}}{line}", flush=True)
+
+
+def _finish_drain(child: ChildHandle) -> None:
+    """Close a child's drain at the end of its output: echo it if the child failed.
+
+    A failure is an exit with a non-zero code while the launcher was not stopping the child. A
+    child the launcher stops echoes nothing more, and neither does a child that Ctrl+C ended:
+    on POSIX the terminal sends it to every child, and a child still starting up then ends by
+    the signal (code ``-SIGINT``) rather than cleanly. That is the user's stop, not a failure.
+    """
+    returncode = child.proc.wait()
+    if returncode not in (0, -signal.SIGINT) and not child.stopping:
+        _echo_buffered_output(child, f"exited with code {returncode}")
+    child.ended.set()
+
+
+def _spawn_plc(
+    unit_index: int,
+    *,
+    timeout: float = PANEL_TIMEOUT_SECONDS,
+    middleware: Optional[ChildHandle] = None,
+) -> ChildHandle:
     """Spawn a PLC and panel process for one unit.
 
-    Its environment carries no GRAPHDB_* variable — enforced by construction,
+    Its environment carries no store variable — enforced by construction,
     not by discipline. Its panel address arrives as one line on
     stdout, since a PLC holds no graph credentials to register one itself.
     Blocks until that line arrives or the process exits, so the returned
@@ -122,6 +187,12 @@ def _spawn_plc(unit_index: int) -> ChildHandle:
     block this PLC the same way while this function waits for its panel line.
     This is also why the child is not handed to ``_drain_output`` again later:
     this thread already keeps draining it for the whole process lifetime.
+
+    The wait is bounded. The panel comes up only once the PLC reaches its broker, and a
+    broker that never listens would otherwise hold the launcher here forever. So the wait
+    fails, with the PLC's buffered output, after ``timeout`` seconds, and at once when
+    ``middleware``, the unit's middleware whose process runs that broker, has ended, since
+    the broker has ended with it. Either way the PLC is stopped before the error is raised.
 
     Its own broker is this unit's alone: the port is
     ``seed.broker_port(unit_index)``, the same pure function of the index the seed writes
@@ -143,7 +214,7 @@ def _spawn_plc(unit_index: int) -> ChildHandle:
     cmdline_str = " ".join(cmdline)
     print(cmdline_str, flush=True)
 
-    env = _strip_graphdb_env(os.environ.copy())
+    env = _strip_store_env(os.environ.copy())
     proc = subprocess.Popen(
         cmdline,
         stdout=subprocess.PIPE,
@@ -160,6 +231,7 @@ def _spawn_plc(unit_index: int) -> ChildHandle:
     panel_seen = threading.Event()
 
     def _drain_until_panel() -> None:
+        # The assert above does not narrow `proc.stdout` inside this nested function.
         for line in proc.stdout:  # type: ignore[union-attr]
             stripped = line.rstrip("\n")
             handle.output.append(stripped)
@@ -171,10 +243,27 @@ def _spawn_plc(unit_index: int) -> ChildHandle:
                     handle.source = "pipe"
                     handle.state = "live"
                 panel_seen.set()
+        _finish_drain(handle)
         panel_seen.set()  # the process exited without ever printing the panel line
 
     threading.Thread(target=_drain_until_panel, daemon=True).start()
-    panel_seen.wait()
+
+    deadline = time.monotonic() + timeout
+    while not panel_seen.wait(PANEL_POLL_SECONDS):
+        if middleware is not None and middleware.ended.is_set():
+            last = middleware.output[-1] if middleware.output else "(none)"
+            _fail_plc_wait(
+                handle,
+                f"{_child_identity(handle)} cannot reach its broker: "
+                f"{_child_identity(middleware)}, whose process runs that broker, exited with "
+                f"code {middleware.proc.poll()} before the panel came up. Its last line: {last}",
+            )
+        if time.monotonic() >= deadline:
+            _fail_plc_wait(
+                handle,
+                f"{_child_identity(handle)} did not announce its panel within {timeout:g} s.",
+                stalled=middleware,
+            )
 
     if handle.state != "live" and proc.poll() is not None:
         handle.state = "failed"
@@ -182,8 +271,36 @@ def _spawn_plc(unit_index: int) -> ChildHandle:
     return handle
 
 
+def _fail_plc_wait(
+    handle: ChildHandle, reason: str, stalled: Optional[ChildHandle] = None
+) -> NoReturn:
+    """End a PLC spawn wait that will not succeed: stop the PLC, then fail with its output.
+
+    The PLC is stopped first because a caller that gets the error never gets the handle, so
+    nothing else would ever stop it, and it would retry its broker for as long as it lives.
+
+    ``stalled`` is the unit's middleware when the wait timed out while it still runs. Its
+    output joins the error, because the stall is likely its own -- a broker it never reached --
+    and the launcher's stop that follows would end it without a word on the console.
+    """
+    handle.stopping = True
+    _terminate_and_wait([handle], STOP_TIMEOUT_SECONDS)
+    handle.ended.wait(STOP_TIMEOUT_SECONDS)
+    handle.state = "failed"
+    header, lines = _buffered_output(handle)
+    message = [reason, header, *lines]
+    if stalled is not None and not stalled.ended.is_set():
+        stalled_header, stalled_lines = _buffered_output(stalled)
+        message += [
+            f"{_child_identity(stalled)}, whose process runs this unit's broker, is still running.",
+            stalled_header,
+            *stalled_lines,
+        ]
+    raise RuntimeError("\n".join(message))
+
+
 def _spawn_middleware(unit_index: int) -> ChildHandle:
-    """Spawn a middleware process for one unit, inheriting GRAPHDB_* from the launcher."""
+    """Spawn a middleware process for one unit, inheriting the store's variables from the launcher."""
     cmdline = [
         sys.executable,
         "-m",
@@ -192,11 +309,11 @@ def _spawn_middleware(unit_index: int) -> ChildHandle:
         str(unit_index),
         "--port",
         "0",
-        # Named, not inherited: the child ignores GRAPHDB_REPOSITORY, so a
+        # Named, not inherited: the child ignores TRIPLESTORE_DATASET, so a
         # shared default is the only other thing that could keep parent and child in one
         # graph -- and a default is exactly what drifts when one side changes.
-        "--repository",
-        DEMO_REPOSITORY,
+        "--dataset",
+        DEMO_DATASET,
     ]
     cmdline_str = " ".join(cmdline)
     print(cmdline_str, flush=True)
@@ -215,7 +332,7 @@ def _spawn_middleware(unit_index: int) -> ChildHandle:
 
 
 def _spawn_controller() -> ChildHandle:
-    """Spawn the control station process, inheriting GRAPHDB_* from the launcher."""
+    """Spawn the control station process, inheriting the store's variables from the launcher."""
     cmdline = [sys.executable, "-m", f"{_PACKAGE}.control_station", "--port", "0"]
     cmdline_str = " ".join(cmdline)
     print(cmdline_str, flush=True)
@@ -233,7 +350,7 @@ def _spawn_controller() -> ChildHandle:
     return ChildHandle(proc=proc, pid=proc.pid, kind="controller", unit_index=None, cmdline=cmdline_str)
 
 
-def _check_service_address(db: GraphDB, resource_iri: str) -> Optional[str]:
+def _check_service_address(db: TripleStore, resource_iri: str) -> Optional[str]:
     """One-shot check of the graph for the svc:address of a resource. No wait, no loop."""
     sparql = f"""
     SELECT ?addr WHERE {{
@@ -256,7 +373,7 @@ def probe_and_seed(units: int, force: bool = False) -> None:
     Raises:
         RuntimeError: A live factory exists, and force is False.
     """
-    db = graphdb_for(DEMO_REPOSITORY)
+    db = triplestore_for(DEMO_DATASET)
     live_services = seed.factory_is_live(db)
 
     if live_services and not force:
@@ -351,7 +468,9 @@ class Factory:
 
     def __init__(self) -> None:
         self.children: List[ChildHandle] = []
-        self._db = graphdb_for(DEMO_REPOSITORY)
+        self._db = triplestore_for(DEMO_DATASET)
+        # The store's URL, for the index page. The endpoint holds no secret.
+        self._store_url = endpoint_for(DEMO_DATASET).url
 
     def start(self, units: int, force: bool = False) -> None:
         """Seed the graph and spawn every participant. Blocking; call once at startup.
@@ -366,6 +485,10 @@ class Factory:
         announces itself only once the PLC's own retrying connection attempt succeeds --
         does its own spawn and read. Spawning the PLC first would have the launcher block on
         a connection to a broker that nothing has even been asked to bring up yet.
+
+        Raises ``RuntimeError`` when a PLC's wait fails: its broker never listened, because
+        the unit's middleware ended or the wait timed out. The children spawned so far stay in
+        ``children``, so the caller's ``stop_all`` stops them.
         """
         probe_and_seed(units, force=force)
 
@@ -373,7 +496,7 @@ class Factory:
             middleware = _spawn_middleware(n)
             self.children.append(middleware)
             threading.Thread(target=self._drain_output, args=(middleware,), daemon=True).start()
-            self.children.append(_spawn_plc(n))
+            self.children.append(_spawn_plc(n, middleware=middleware))
         self.children.append(_spawn_controller())
 
         for child in self.children:
@@ -390,12 +513,16 @@ class Factory:
         the way a PLC's panel line does in _spawn_plc. Never called for a PLC: it drains
         its own pipe on its own thread, for the same reason middleware and controller
         need it here -- so nothing is reading the same stream from two places at once.
+
+        At the end of the output, a child that failed has its whole buffer echoed
+        (``_finish_drain``), so its traceback is on the console too.
         """
         assert child.proc.stdout is not None
         for line in child.proc.stdout:
             stripped = line.rstrip("\n")
             child.output.append(stripped)
             _echo_address_line(child, stripped)
+        _finish_drain(child)
 
     def _resource_iri(self, child: ChildHandle) -> Optional[str]:
         if child.kind == "middleware" and child.unit_index is not None:
@@ -508,7 +635,7 @@ class Factory:
             }
 
         return {
-            "graph": {"state": "live", "address": os.environ.get("GRAPHDB_URL", ""), "source": "env"},
+            "graph": {"state": "live", "address": self._store_url, "source": "env"},
             "launcher": {"state": "live", "address": launcher_address, "source": "flag"},
             "controller": controller_entry
             or {"state": "starting", "address": None, "source": None, "pid": None},

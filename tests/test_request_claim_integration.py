@@ -1,9 +1,11 @@
-"""`request()` and `claim_next()`, against a live GraphDB: the Operation that a request issues,
+"""`issue_operation()` and `claim_next()`, against a live store: the Operation that a request issues,
 the feedback that its issuer gets after the claim and after the end, and the claim's commits.
 
 The OGM is the real one, subclassed only to record each write it makes, so "one commit" is
 counted at the seam that `mw.commit()` writes through. A claim is refused by the store's own SHACL
-engine. Skipped when the GRAPHDB_* variables are absent (see conftest).
+engine. Skipped when the TRIPLESTORE_* variables are absent (see conftest).
+A test that needs a shape sets it with the store's `shapes_set`, which replaces every shape
+of the dataset, and removes every shape again at its end.
 """
 
 from __future__ import annotations
@@ -28,8 +30,9 @@ from kapps_triplestore_interface.exceptions import (
 )
 from rdflib.namespace import RDF
 
+from _explicit import explicit_select
 from kapps_semantic_middleware import SemanticMiddleware
-from kapps_semantic_middleware.credentials import graphdb_for
+from kapps_semantic_middleware.credentials import triplestore_for
 from kapps_semantic_middleware.errors import NotificationUndelivered
 from kapps_semantic_middleware.registration import (
     create_operation,
@@ -55,9 +58,6 @@ _TORQUE_LIMIT_DECLARATION = f"""
     rdfs:domain <{CFC.Operation}> ;
     rdfs:range xsd:string .
 """
-
-# The graph a GraphDB SHACL repository reads its shapes from.
-_SHAPES_GRAPH = IRI("http://rdf4j.org/schema/rdf4j#SHACLShapeGraph")
 
 
 def _status_shape(*allowed: str) -> str:
@@ -102,13 +102,13 @@ def _free_port() -> int:
         return probe.getsockname()[1]
 
 
-def _hello_resource(graphdb, port: int) -> SemanticMiddleware:
+def _hello_resource(store, port: int) -> SemanticMiddleware:
     """The hello resource: the receiver, with its workflow and the built-in event trigger."""
     mw = SemanticMiddleware(
         mode="resource",
         resource_iri=seed.HELLO_RESOURCE,
         service_class=seed.HELLO_SERVICE_CLASS,
-        ogm=_RecordingOGM(graphdb_for(graphdb.repository)),
+        ogm=_RecordingOGM(triplestore_for(store.dataset)),
         host="127.0.0.1",
         port=port,
         heartbeat_interval=None,
@@ -120,13 +120,13 @@ def _hello_resource(graphdb, port: int) -> SemanticMiddleware:
     return mw
 
 
-def _planner(graphdb) -> SemanticMiddleware:
+def _planner(store) -> SemanticMiddleware:
     """The planner: the caller that dispatches. A test serves it only to hear of its Operations."""
     return SemanticMiddleware(
         mode="resource",
         resource_iri=seed.PLANNER_RESOURCE,
         service_class=seed.PLANNER_SERVICE_CLASS,
-        ogm=_RecordingOGM(graphdb_for(graphdb.repository)),
+        ogm=_RecordingOGM(triplestore_for(store.dataset)),
         host="127.0.0.1",
         port=_free_port(),
         heartbeat_interval=None,
@@ -151,14 +151,14 @@ def _served(mw: SemanticMiddleware) -> Iterator[None]:
         thread.join(timeout=20)
 
 
-def _seed(graphdb) -> None:
-    seed.seed_scenario1(graphdb)
-    graphdb.import_statements(_TORQUE_LIMIT_DECLARATION, content_type="application/x-turtle")
+def _seed(store) -> None:
+    seed.seed_scenario1(store)
+    store.graph_add(_TORQUE_LIMIT_DECLARATION, content_type="application/x-turtle")
 
 
-def _register_receiver_at(graphdb, address: str) -> None:
+def _register_receiver_at(store, address: str) -> None:
     """The hello resource's Service and Workflow at ``address``, as if it had started there."""
-    ogm = OGM(db=graphdb)
+    ogm = OGM(db=store)
     service = mint_service_iri(seed.HELLO_RESOURCE, address)
     register_service(
         ogm,
@@ -186,23 +186,23 @@ def _values(db, subject: IRI, predicate: IRI) -> list[str]:
 def _explicit_statements(db) -> set:
     """Every explicit statement of the default graph, to compare before and after."""
     result = db.query(
-        "SELECT ?s ?p ?o FROM <http://www.ontotext.com/explicit> WHERE { ?s ?p ?o }",
+        explicit_select(["?s", "?p", "?o"], "?s ?p ?o"),
         convert_bindings=True,
     )
     return {(str(b["s"]), str(b["p"]), str(b["o"])) for b in result["results"]["bindings"]}
 
 
 # --------------------------------------------------------------------------- #
-# request()
+# issue_operation()
 # --------------------------------------------------------------------------- #
 
 
-def test_a_dispatch_creates_its_operation_in_one_commit_and_its_receiver_queues_it(graphdb):
-    _seed(graphdb)
-    receiver = _hello_resource(graphdb, _free_port())
+def test_a_dispatch_creates_its_operation_in_one_commit_and_its_receiver_queues_it(store):
+    _seed(store)
+    receiver = _hello_resource(store, _free_port())
     with _served(receiver):
-        planner = _planner(graphdb)
-        with planner.request(
+        planner = _planner(store)
+        with planner.issue_operation(
             capability_class=seed.HELLO_CAPABILITY_CLASS, operation_class=str(CFC.Operation)
         ) as op:
             op.data[str(TORQUE_LIMIT)] = ["4.2 Nm"]
@@ -213,28 +213,28 @@ def test_a_dispatch_creates_its_operation_in_one_commit_and_its_receiver_queues_
         assert isinstance(creation, Create) and creation.instance_iri == op.iri
         assert op.iri in receiver._operation_queue
 
-    assert graphdb.triple_exists((op.iri, RDF.type, CFC.Operation))
-    assert graphdb.triple_exists(
+    assert store.triple_exists((op.iri, RDF.type, CFC.Operation))
+    assert store.triple_exists(
         (op.iri, CFC.implementsCapability, mint_capability_iri(seed.HELLO_RESOURCE, "hello_world"))
     )
-    assert _values(graphdb, op.iri, SVC.operationStatus) == [OperationStatus.QUEUED]
-    assert _values(graphdb, op.iri, TORQUE_LIMIT) == ["4.2 Nm"]
+    assert _values(store, op.iri, SVC.operationStatus) == [OperationStatus.QUEUED]
+    assert _values(store, op.iri, TORQUE_LIMIT) == ["4.2 Nm"]
     # The issuer, the planner's Resource, written in the same commit.
     assert op.issuer == IRI(seed.PLANNER_RESOURCE)
-    assert _values(graphdb, op.iri, SVC.issuedBy) == [str(seed.PLANNER_RESOURCE)]
+    assert _values(store, op.iri, SVC.issuedBy) == [str(seed.PLANNER_RESOURCE)]
 
 
 def test_a_failed_notification_leaves_the_operation_queued_and_raises_notification_undelivered(
-    graphdb,
+    store,
 ):
-    _seed(graphdb)
+    _seed(store)
     # A reachable-looking receiver: its address is a port where nothing listens.
-    _register_receiver_at(graphdb, f"http://127.0.0.1:{_free_port()}")
-    planner = _planner(graphdb)
-    before = _explicit_statements(graphdb)
+    _register_receiver_at(store, f"http://127.0.0.1:{_free_port()}")
+    planner = _planner(store)
+    before = _explicit_statements(store)
 
     with pytest.raises(NotificationUndelivered) as raised:
-        with planner.request(
+        with planner.issue_operation(
             capability_class=seed.HELLO_CAPABILITY_CLASS, operation_class=str(CFC.Operation)
         ) as op:
             op.data[str(TORQUE_LIMIT)] = ["4.2 Nm"]
@@ -242,38 +242,38 @@ def test_a_failed_notification_leaves_the_operation_queued_and_raises_notificati
     assert isinstance(raised.value.__cause__, httpx.ConnectError)
     # The request's one commit, and nothing undone: the Operation stays, queued, the issuer's.
     assert [kind for kind, _ in planner.ogm.writes] == ["commit"]
-    assert _values(graphdb, op.iri, SVC.operationStatus) == [OperationStatus.QUEUED]
-    assert _values(graphdb, op.iri, SVC.issuedBy) == [str(seed.PLANNER_RESOURCE)]
-    assert _values(graphdb, op.iri, TORQUE_LIMIT) == ["4.2 Nm"]
-    added = _explicit_statements(graphdb) - before
+    assert _values(store, op.iri, SVC.operationStatus) == [OperationStatus.QUEUED]
+    assert _values(store, op.iri, SVC.issuedBy) == [str(seed.PLANNER_RESOURCE)]
+    assert _values(store, op.iri, TORQUE_LIMIT) == ["4.2 Nm"]
+    added = _explicit_statements(store) - before
     assert added and all(subject == str(op.iri) for subject, _, _ in added)
-    assert before <= _explicit_statements(graphdb)
+    assert before <= _explicit_statements(store)
 
 
-def test_a_dispatch_that_names_an_existing_operation_is_refused_and_leaves_it_untouched(graphdb):
+def test_a_dispatch_that_names_an_existing_operation_is_refused_and_leaves_it_untouched(store):
     """A refused creation notifies nobody and writes nothing: the Operation that the store
     already holds stays as it was."""
-    _seed(graphdb)
-    _register_receiver_at(graphdb, f"http://127.0.0.1:{_free_port()}")
+    _seed(store)
+    _register_receiver_at(store, f"http://127.0.0.1:{_free_port()}")
     existing = mint_operation_iri(CFC.Operation)
     create_operation(
-        OGM(db=graphdb),
+        OGM(db=store),
         operation_iri=existing,
         operation_class=CFC.Operation,
         capability_iri=mint_capability_iri(seed.HELLO_RESOURCE, "hello_world"),
         data={str(TORQUE_LIMIT): ["1.0 Nm"]},
     )
-    before = _explicit_statements(graphdb)
+    before = _explicit_statements(store)
 
     with pytest.raises(PreconditionFailedError):
-        with _planner(graphdb).request(
+        with _planner(store).issue_operation(
             capability_class=seed.HELLO_CAPABILITY_CLASS,
             operation_class=str(CFC.Operation),
             operation_iri=str(existing),
         ) as op:
             op.data[str(TORQUE_LIMIT)] = ["4.2 Nm"]
 
-    assert _explicit_statements(graphdb) == before
+    assert _explicit_statements(store) == before
 
 
 def _claim_with_commit(mw: SemanticMiddleware, operation: IRI) -> None:
@@ -294,15 +294,15 @@ def _claim_with_claim_next(mw: SemanticMiddleware, operation: IRI) -> None:
 
 
 @pytest.mark.parametrize("claim", [_claim_with_claim_next, _claim_with_commit])
-def test_the_issuer_hears_of_the_claim_and_of_the_end_and_its_handle_wakes(graphdb, claim):
+def test_the_issuer_hears_of_the_claim_and_of_the_end_and_its_handle_wakes(store, claim):
     """The planner is served, without a notification handler. The receiver claims the Operation
     and ends it, and its middleware notifies the planner after each commit. The planner's handle
     wakes, and the feedback is no work for the planner: its queue stays empty."""
-    _seed(graphdb)
-    receiver = _hello_resource(graphdb, _free_port())
-    planner = _planner(graphdb)
+    _seed(store)
+    receiver = _hello_resource(store, _free_port())
+    planner = _planner(store)
     with _served(receiver), _served(planner):
-        with planner.request(
+        with planner.issue_operation(
             capability_class=seed.HELLO_CAPABILITY_CLASS, operation_class=str(CFC.Operation)
         ) as op:
             pass
@@ -315,7 +315,7 @@ def test_the_issuer_hears_of_the_claim_and_of_the_end_and_its_handle_wakes(graph
         assert time.monotonic() - started < 25  # woken, not timed out
 
         assert planner._operation_queue == []
-    assert _values(graphdb, op.iri, SVC.operationStatus) == [OperationStatus.DONE]
+    assert _values(store, op.iri, SVC.operationStatus) == [OperationStatus.DONE]
 
 
 # --------------------------------------------------------------------------- #
@@ -323,93 +323,87 @@ def test_the_issuer_hears_of_the_claim_and_of_the_end_and_its_handle_wakes(graph
 # --------------------------------------------------------------------------- #
 
 
-def _queued_operation(graphdb) -> tuple[SemanticMiddleware, IRI]:
+def _queued_operation(store) -> tuple[SemanticMiddleware, IRI]:
     """The hello resource registered at its address, and one queued Operation in its queue."""
-    _seed(graphdb)
+    _seed(store)
     port = _free_port()
-    _register_receiver_at(graphdb, f"http://127.0.0.1:{port}")
+    _register_receiver_at(store, f"http://127.0.0.1:{port}")
     operation = mint_operation_iri(CFC.Operation)
     create_operation(
-        OGM(db=graphdb),
+        OGM(db=store),
         operation_iri=operation,
         operation_class=CFC.Operation,
         capability_iri=mint_capability_iri(seed.HELLO_RESOURCE, "hello_world"),
     )
-    mw = _hello_resource(graphdb, port)
+    mw = _hello_resource(store, port)
     mw._operation_queue.append(operation)  # as its event trigger does
     return mw, operation
 
 
-def test_a_claim_is_one_commit_and_done_with_its_provenance_is_one_more(graphdb):
-    mw, operation = _queued_operation(graphdb)
+def test_a_claim_is_one_commit_and_done_with_its_provenance_is_one_more(store):
+    mw, operation = _queued_operation(store)
     with mw.claim_next() as claimed:
-        assert _values(graphdb, operation, SVC.operationStatus) == [OperationStatus.RUNNING]
+        assert _values(store, operation, SVC.operationStatus) == [OperationStatus.RUNNING]
         claimed.result = hello_world()
 
     assert [kind for kind, _ in mw.ogm.writes] == ["commit", "commit"]
-    assert _values(graphdb, operation, SVC.operationStatus) == [OperationStatus.DONE]
+    assert _values(store, operation, SVC.operationStatus) == [OperationStatus.DONE]
     workflow = mint_workflow_iri(mw.service_iri, "hello_world")
-    assert graphdb.triple_exists((operation, SVC.executedByWorkflow, workflow))
-    assert graphdb.triples_get(sub=operation, pred=SVC.executionTimestamp)
-    assert _values(graphdb, operation, SVC.executionResult) == ["hello world"]
-    assert _values(graphdb, operation, SVC.failureState) == []
+    assert store.triple_exists((operation, SVC.executedByWorkflow, workflow))
+    assert store.triples_get(sub=operation, pred=SVC.executionTimestamp)
+    assert _values(store, operation, SVC.executionResult) == ["hello world"]
+    assert _values(store, operation, SVC.failureState) == []
 
 
-def test_a_failed_body_is_one_commit_of_failed_with_its_provenance_and_the_datamodel(graphdb):
-    mw, operation = _queued_operation(graphdb)
+def test_a_failed_body_is_one_commit_of_failed_with_its_provenance_and_the_datamodel(store):
+    mw, operation = _queued_operation(store)
     with pytest.raises(RuntimeError, match="boom"):
         with mw.claim_next():
             raise RuntimeError("boom")
 
     assert [kind for kind, _ in mw.ogm.writes] == ["commit", "commit"]
-    assert _values(graphdb, operation, SVC.operationStatus) == [OperationStatus.FAILED]
+    assert _values(store, operation, SVC.operationStatus) == [OperationStatus.FAILED]
     workflow = mint_workflow_iri(mw.service_iri, "hello_world")
-    assert graphdb.triple_exists((operation, SVC.executedByWorkflow, workflow))
-    assert _values(graphdb, operation, SVC.executionResult) == ["boom"]
-    (failure_state,) = _values(graphdb, operation, SVC.failureState)
+    assert store.triple_exists((operation, SVC.executedByWorkflow, workflow))
+    assert _values(store, operation, SVC.executionResult) == ["boom"]
+    (failure_state,) = _values(store, operation, SVC.failureState)
     assert json.loads(failure_state)["id"] == str(seed.HELLO_RESOURCE)
 
 
-def test_a_claim_that_the_store_refuses_runs_no_body(graphdb):
-    mw, operation = _queued_operation(graphdb)
+def test_a_claim_that_the_store_refuses_runs_no_body(store):
+    mw, operation = _queued_operation(store)
     ran = []
-    graphdb.import_statements(
-        _status_shape("queued", "done", "failed"),  # every status but running
-        graph_iri=_SHAPES_GRAPH,
-        content_type="application/x-turtle",
-    )
+    # The shape admits every status but running.
+    store.shapes_set(_status_shape("queued", "done", "failed"), "text/turtle")
     try:
         with pytest.raises(TripleStoreInterfaceError, match="ValidationReport"):
             with mw.claim_next():
                 ran.append(True)
     finally:
-        graphdb.clear_graph(_SHAPES_GRAPH)
+        store.shapes_set("", "text/turtle")
 
     assert ran == []
     assert mw.ogm.writes == []
-    assert _values(graphdb, operation, SVC.operationStatus) == [OperationStatus.QUEUED]
+    assert _values(store, operation, SVC.operationStatus) == [OperationStatus.QUEUED]
 
 
-def test_a_done_that_the_store_refuses_records_failed_with_its_provenance_and_raises(graphdb):
-    mw, operation = _queued_operation(graphdb)
-    graphdb.import_statements(
-        _status_shape("queued", "running", "failed"),  # every status but done
-        graph_iri=_SHAPES_GRAPH,
-        content_type="application/x-turtle",
-    )
+def test_a_done_that_the_store_refuses_records_failed_with_its_provenance_and_raises(store):
+    mw, operation = _queued_operation(store)
+    # The shape admits every status but done.
+    store.shapes_set(_status_shape("queued", "running", "failed"), "text/turtle")
     try:
         with pytest.raises(TripleStoreInterfaceError, match="ValidationReport") as refused:
             with mw.claim_next() as claimed:
                 claimed.result = hello_world()
     finally:
-        graphdb.clear_graph(_SHAPES_GRAPH)
+        store.shapes_set("", "text/turtle")
 
     # Two writes reached the store: the claim, and failed in place of the refused done.
     assert [kind for kind, _ in mw.ogm.writes] == ["commit", "commit"]
-    assert _values(graphdb, operation, SVC.operationStatus) == [OperationStatus.FAILED]
+    assert _values(store, operation, SVC.operationStatus) == [OperationStatus.FAILED]
     workflow = mint_workflow_iri(mw.service_iri, "hello_world")
-    assert graphdb.triple_exists((operation, SVC.executedByWorkflow, workflow))
-    assert graphdb.triples_get(sub=operation, pred=SVC.executionTimestamp)
-    assert _values(graphdb, operation, SVC.executionResult) == [str(refused.value)]
-    (failure_state,) = _values(graphdb, operation, SVC.failureState)
+    assert store.triple_exists((operation, SVC.executedByWorkflow, workflow))
+    assert store.triples_get(sub=operation, pred=SVC.executionTimestamp)
+    assert _values(store, operation, SVC.executionResult) == [str(refused.value)]
+    (failure_state,) = _values(store, operation, SVC.failureState)
     assert json.loads(failure_state)["id"] == str(seed.HELLO_RESOURCE)

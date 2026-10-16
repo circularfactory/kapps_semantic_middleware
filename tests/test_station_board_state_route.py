@@ -41,17 +41,17 @@ from fastapi.testclient import TestClient
 from kapps_ogm import OGM
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from conftest import requires_graphdb  # noqa: E402
+from conftest import requires_store  # noqa: E402
 from demo.transferunits import algorithm, seed, station_board  # noqa: E402
 from demo.transferunits.controller import Controller  # noqa: E402
 from kapps_semantic_middleware.vocabulary import SVC  # noqa: E402
 
 
-def _publish_service(graphdb, resource_iri, address: str) -> None:
+def _publish_service(store, resource_iri, address: str) -> None:
     """Give ``resource_iri`` a live Service by hand -- mirrors ``test_controller_view.py``'s
     own helper of the same name."""
     service_iri = f"{resource_iri}Service"
-    graphdb.query(
+    store.query(
         f"""
         INSERT DATA {{
           <{service_iri}> a <{SVC.Service}> ;
@@ -63,12 +63,12 @@ def _publish_service(graphdb, resource_iri, address: str) -> None:
     )
 
 
-def _unpublish_service(graphdb, resource_iri) -> None:
+def _unpublish_service(store, resource_iri) -> None:
     """Take ``resource_iri`` offline: delete its Service triples entirely, the graph state
     a clean deregistration leaves behind -- the live clause then binds nothing
     for it."""
     service_iri = f"{resource_iri}Service"
-    graphdb.query(f"DELETE WHERE {{ <{service_iri}> ?p ?o }}", update=True)
+    store.query(f"DELETE WHERE {{ <{service_iri}> ?p ?o }}", update=True)
 
 
 def _query_selecting(*indices: int) -> str:
@@ -101,11 +101,11 @@ MALFORMED_QUERY = "SELECT ?resource WHERE { this is not sparql"
 
 
 @pytest.fixture
-def ogm(graphdb):
-    return OGM(db=graphdb)
+def ogm(store):
+    return OGM(db=store)
 
 
-async def _board(graphdb, ogm, unit_scope, *, name: str, live: tuple, query: str):
+async def _board(store, ogm, unit_scope, *, name: str, live: tuple, query: str):
     """Seed two units, publish a Service for each index in ``live``, wire a controller to
     ``query`` and graft the board onto a bare app.
 
@@ -113,10 +113,10 @@ async def _board(graphdb, ogm, unit_scope, *, name: str, live: tuple, query: str
     and the algorithm is always paused: this file tests the board's own routes, and the
     board disables every set control while the algorithm runs.
     """
-    seed.seed_factory(graphdb, ogm, units=2)
+    seed.seed_factory(store, ogm, units=2)
     for index in live:
         _publish_service(
-            graphdb, seed._mint_transfer_unit_iri(index), f"http://127.0.0.1:{index}"
+            store, seed._mint_transfer_unit_iri(index), f"http://127.0.0.1:{index}"
         )
 
     controller = Controller(resource_iri=f"http://example.org/{name}", ogm=ogm, port=0)
@@ -143,15 +143,15 @@ def _unit_iris(body) -> set:
     return {unit["resource_iri"] for unit in body["units"]}
 
 
-@requires_graphdb
+@requires_store
 @pytest.mark.asyncio
 class TestTheBackendNeverCollapses:
-    async def test_the_payload_carries_every_row_on_every_poll(self, graphdb, ogm, unit_scope):
+    async def test_the_payload_carries_every_row_on_every_poll(self, store, ogm, unit_scope):
         """Collapsing is display-only, so a shut card's values must already be in hand
         when it reopens -- no refetch, no gap. The backend cannot know a card is shut,
         which is what makes that guarantee free."""
         client, _ = await _board(
-            graphdb, ogm, unit_scope, name="CS-collapse1", live=(1,), query=_query_selecting(1)
+            store, ogm, unit_scope, name="CS-collapse1", live=(1,), query=_query_selecting(1)
         )
 
         for poll in (1, 2):
@@ -162,11 +162,11 @@ class TestTheBackendNeverCollapses:
                 for row in unit["parameters"]:
                     assert "value" in row, f"poll {poll}: a row arrived with no value key"
 
-    async def test_the_row_set_is_identical_across_polls(self, graphdb, ogm, unit_scope):
+    async def test_the_row_set_is_identical_across_polls(self, store, ogm, unit_scope):
         """The payload is the same shape every time. If the backend ever did learn about
         collapsing, this is where the missing rows would show up."""
         client, _ = await _board(
-            graphdb, ogm, unit_scope, name="CS-collapse2", live=(1,), query=_query_selecting(1)
+            store, ogm, unit_scope, name="CS-collapse2", live=(1,), query=_query_selecting(1)
         )
 
         first = {(r["holder_iri"], r["field_id"]) for r in _rows(client.get("/api/state").json())}
@@ -175,7 +175,7 @@ class TestTheBackendNeverCollapses:
         assert first == second
         assert first, "the fixture wired no parameters, so this proves nothing"
 
-    async def test_the_server_holds_no_per_card_visibility_state(self, graphdb, ogm, unit_scope):
+    async def test_the_server_holds_no_per_card_visibility_state(self, store, ogm, unit_scope):
         """The structural half of the same rule: ``_BoardState`` is the board's entire
         server-side memory, and it holds the heuristic text and nothing else. Which cards
         are open lives in the page, in ``expandedCards``.
@@ -185,7 +185,7 @@ class TestTheBackendNeverCollapses:
         where it is required to warn a reader who knows the monitor design.
         """
         client, _ = await _board(
-            graphdb, ogm, unit_scope, name="CS-collapse3", live=(1,), query=_query_selecting(1)
+            store, ogm, unit_scope, name="CS-collapse3", live=(1,), query=_query_selecting(1)
         )
 
         assert set(station_board._BoardState.__dataclass_fields__) == {"current_query"}
@@ -195,17 +195,17 @@ class TestTheBackendNeverCollapses:
             assert "expanded" not in unit
 
 
-@requires_graphdb
+@requires_store
 @pytest.mark.asyncio
 class TestTheExpertToggle:
     """"One toggle, three jobs". The toggle is client-side; that all three payloads
     are present per parameter is what a test can hold."""
 
-    async def test_every_row_carries_its_full_iri(self, graphdb, ogm, unit_scope):
+    async def test_every_row_carries_its_full_iri(self, store, ogm, unit_scope):
         """Job one: the mangled IRI made visible. The operator sees a label, the expert sees the
         IRI it stands for, so the row must carry both."""
         client, _ = await _board(
-            graphdb, ogm, unit_scope, name="CS-toggle1", live=(1,), query=_query_selecting(1)
+            store, ogm, unit_scope, name="CS-toggle1", live=(1,), query=_query_selecting(1)
         )
 
         rows = _rows(client.get("/api/state").json())
@@ -217,12 +217,12 @@ class TestTheExpertToggle:
             )
 
     async def test_every_row_carries_its_real_assignment_expression(
-        self, graphdb, ogm, unit_scope
+        self, store, ogm, unit_scope
     ):
         """Job two: the REST binding accepted the skolemized parameter's awkward shape as-is, and this makes that
         shape inspectable without making the default page a code demo."""
         client, _ = await _board(
-            graphdb, ogm, unit_scope, name="CS-toggle2", live=(1,), query=_query_selecting(1)
+            store, ogm, unit_scope, name="CS-toggle2", live=(1,), query=_query_selecting(1)
         )
 
         rows = _rows(client.get("/api/state").json())
@@ -235,12 +235,12 @@ class TestTheExpertToggle:
             )
             assert row["field_id"] in expression
 
-    async def test_a_speed_row_reports_what_pruning_stripped(self, graphdb, ogm, unit_scope):
+    async def test_a_speed_row_reports_what_pruning_stripped(self, store, ogm, unit_scope):
         """Job three, and the pruning answer: the northbound boundary is the thing this demo
         exists to teach, so what ``prune_southbound`` removed is shown at the parameter it
         applies to -- per parameter, which a per-unit aggregate could not satisfy."""
         client, _ = await _board(
-            graphdb, ogm, unit_scope, name="CS-toggle3", live=(1,), query=_query_selecting(1)
+            store, ogm, unit_scope, name="CS-toggle3", live=(1,), query=_query_selecting(1)
         )
 
         speed_field = seed.TU_HAS_CONVEYOR_SPEED.lined
@@ -254,7 +254,7 @@ class TestTheExpertToggle:
             )
 
     async def test_the_payload_never_carries_what_it_reports_as_pruned(
-        self, graphdb, ogm, unit_scope
+        self, store, ogm, unit_scope
     ):
         """A row that lists a marker under ``pruned`` must not ship its value.
 
@@ -272,7 +272,7 @@ class TestTheExpertToggle:
         other key should fail here rather than pass by renaming itself.
         """
         client, _ = await _board(
-            graphdb, ogm, unit_scope, name="CS-noleak", live=(1,), query=_query_selecting(1)
+            store, ogm, unit_scope, name="CS-noleak", live=(1,), query=_query_selecting(1)
         )
 
         body = client.get("/api/state").json()
@@ -297,7 +297,7 @@ class TestTheExpertToggle:
         )
 
 
-@requires_graphdb
+@requires_store
 @pytest.mark.asyncio
 class TestTheViewTracksTheGraphUnattended:
     """The view re-runs on every poll, so ``GET /api/state`` alone moves the card set.
@@ -305,13 +305,13 @@ class TestTheViewTracksTheGraphUnattended:
     restart and no configuration."""
 
     async def test_a_unit_registered_while_the_page_is_open_appears_within_one_poll(
-        self, graphdb, ogm, unit_scope
+        self, store, ogm, unit_scope
     ):
         """The heuristic already selects both indices; unit 2 is simply not live yet.
         Registering it is the *only* thing that happens between the two polls -- no
         rebuild call, no page interaction."""
         client, _ = await _board(
-            graphdb, ogm, unit_scope, name="CS-arrive1", live=(1,), query=_query_selecting(1, 2)
+            store, ogm, unit_scope, name="CS-arrive1", live=(1,), query=_query_selecting(1, 2)
         )
         unit1 = str(seed._mint_transfer_unit_iri(1))
         unit2 = str(seed._mint_transfer_unit_iri(2))
@@ -319,17 +319,17 @@ class TestTheViewTracksTheGraphUnattended:
         before = _unit_iris(client.get("/api/state").json())
         assert before == {unit1}, f"expected only the live unit up front, got {before}"
 
-        _publish_service(graphdb, seed._mint_transfer_unit_iri(2), "http://127.0.0.1:2")
+        _publish_service(store, seed._mint_transfer_unit_iri(2), "http://127.0.0.1:2")
 
         after = _unit_iris(client.get("/api/state").json())
         assert after == {unit1, unit2}, f"unit 2 did not join within one poll: {after}"
 
-    async def test_a_cleanly_stopped_unit_leaves_within_one_poll(self, graphdb, ogm, unit_scope):
+    async def test_a_cleanly_stopped_unit_leaves_within_one_poll(self, store, ogm, unit_scope):
         """The launcher SIGTERMs the middleware first, so a clean stop takes
         the unit's ``svc:address`` out of the graph. It then stops matching the live
         clause and its card leaves -- the "cleanly stopped" half of the two deaths."""
         client, _ = await _board(
-            graphdb, ogm, unit_scope, name="CS-leave1", live=(1, 2), query=_query_selecting(1, 2)
+            store, ogm, unit_scope, name="CS-leave1", live=(1, 2), query=_query_selecting(1, 2)
         )
         unit1 = str(seed._mint_transfer_unit_iri(1))
         unit2 = str(seed._mint_transfer_unit_iri(2))
@@ -337,13 +337,13 @@ class TestTheViewTracksTheGraphUnattended:
         before = _unit_iris(client.get("/api/state").json())
         assert before == {unit1, unit2}
 
-        _unpublish_service(graphdb, seed._mint_transfer_unit_iri(2))
+        _unpublish_service(store, seed._mint_transfer_unit_iri(2))
 
         after = _unit_iris(client.get("/api/state").json())
         assert after == {unit1}, f"the stopped unit did not leave within one poll: {after}"
 
 
-@requires_graphdb
+@requires_store
 @pytest.mark.asyncio
 class TestABadHeuristicIsReportedInPlace:
     """The frame guarantees the ``?resource`` binding and the class, so the failure modes
@@ -351,10 +351,10 @@ class TestABadHeuristicIsReportedInPlace:
     page; neither may 500 it."""
 
     async def test_a_malformed_heuristic_reports_its_error_without_500ing(
-        self, graphdb, ogm, unit_scope
+        self, store, ogm, unit_scope
     ):
         client, _ = await _board(
-            graphdb, ogm, unit_scope, name="CS-bad1", live=(1,), query=_query_selecting(1)
+            store, ogm, unit_scope, name="CS-bad1", live=(1,), query=_query_selecting(1)
         )
 
         response = client.post("/api/view/run", json={"query": MALFORMED_QUERY})
@@ -365,12 +365,12 @@ class TestABadHeuristicIsReportedInPlace:
         assert body["error"], "a rejected heuristic must say what was wrong with it"
 
     async def test_a_malformed_heuristic_leaves_the_running_cards_alone(
-        self, graphdb, ogm, unit_scope
+        self, store, ogm, unit_scope
     ):
         """A typo must cost nothing: the units already wired keep running, with their
         connectors up, exactly as they were."""
         client, _ = await _board(
-            graphdb, ogm, unit_scope, name="CS-bad2", live=(1,), query=_query_selecting(1)
+            store, ogm, unit_scope, name="CS-bad2", live=(1,), query=_query_selecting(1)
         )
         before = _unit_iris(client.get("/api/state").json())
 
@@ -381,13 +381,13 @@ class TestABadHeuristicIsReportedInPlace:
         assert _unit_iris(response.json()) == before
 
     async def test_the_poll_keeps_reporting_a_malformed_heuristic_in_place(
-        self, graphdb, ogm, unit_scope
+        self, store, ogm, unit_scope
     ):
         """The board keeps the bad text as its current heuristic -- so the Control Expert
         can see and fix it -- which means every following poll re-runs it. Each one has to
         report the failure in the payload rather than raise."""
         client, _ = await _board(
-            graphdb, ogm, unit_scope, name="CS-bad3", live=(1,), query=_query_selecting(1)
+            store, ogm, unit_scope, name="CS-bad3", live=(1,), query=_query_selecting(1)
         )
 
         client.post("/api/view/run", json={"query": MALFORMED_QUERY})
@@ -398,12 +398,12 @@ class TestABadHeuristicIsReportedInPlace:
             assert response.json()["view_error"], "the poll dropped the error silently"
 
     async def test_a_zero_hit_heuristic_is_reported_but_is_not_an_error(
-        self, graphdb, ogm, unit_scope
+        self, store, ogm, unit_scope
     ):
         """Selecting nothing is a legitimate answer, not a failure -- an empty board with
         no error message, distinct from the malformed case above."""
         client, _ = await _board(
-            graphdb, ogm, unit_scope, name="CS-bad4", live=(1,), query=_query_selecting(1)
+            store, ogm, unit_scope, name="CS-bad4", live=(1,), query=_query_selecting(1)
         )
 
         response = client.post("/api/view/run", json={"query": _query_selecting()})
@@ -417,13 +417,13 @@ class TestABadHeuristicIsReportedInPlace:
         assert body["view_error"] is None, "an empty view is not an error"
 
     async def test_reset_restores_the_default_heuristic_and_its_cards(
-        self, graphdb, ogm, unit_scope
+        self, store, ogm, unit_scope
     ):
         """``reset`` is the way back from any edit, including one that emptied the board:
         the default heuristic runs again and its units rejoin as a normal rebuild."""
         default_query = _query_selecting(1)
         client, _ = await _board(
-            graphdb, ogm, unit_scope, name="CS-bad5", live=(1,), query=default_query
+            store, ogm, unit_scope, name="CS-bad5", live=(1,), query=default_query
         )
         unit1 = str(seed._mint_transfer_unit_iri(1))
         client.post("/api/view/run", json={"query": _query_selecting()})
@@ -437,7 +437,7 @@ class TestABadHeuristicIsReportedInPlace:
         assert _unit_iris(body) == {unit1}, "reset did not bring the default's units back"
 
 
-@requires_graphdb
+@requires_store
 @pytest.mark.asyncio
 class TestAWriteStatusReachesTheBoard:
     """The classifier itself is unit-tested in ``test_write_status.py``; what matters here
@@ -445,13 +445,13 @@ class TestAWriteStatusReachesTheBoard:
     makes ``rejected`` visible on screen and distinct from ``diverged``."""
 
     async def test_a_rejected_write_shows_as_rejected_on_the_next_poll(
-        self, graphdb, ogm, unit_scope
+        self, store, ogm, unit_scope
     ):
         """Nothing listens on the unit's address, so the PUT genuinely fails -- the "unit
         down" case. The reason is recorded on the controller rather than in the page, so
         it survives a reload and is visible here."""
         client, controller = await _board(
-            graphdb, ogm, unit_scope, name="CS-reject1", live=(1,), query=_query_selecting(1)
+            store, ogm, unit_scope, name="CS-reject1", live=(1,), query=_query_selecting(1)
         )
         unit1 = str(seed._mint_transfer_unit_iri(1))
         speed_field = seed.TU_HAS_CONVEYOR_SPEED.lined
@@ -479,7 +479,7 @@ class TestAWriteStatusReachesTheBoard:
         assert rows[0]["status_error"], "a rejected row must carry the reason on screen"
 
 
-def _set_heartbeat(graphdb, resource_iri, *, seconds_ago: float) -> None:
+def _set_heartbeat(store, resource_iri, *, seconds_ago: float) -> None:
     """Give ``resource_iri``'s Service a ``svc:lastHeartbeat`` that many seconds in the
     past -- the one thing a ``kill -9``'d unit stops doing.
 
@@ -487,12 +487,12 @@ def _set_heartbeat(graphdb, resource_iri, *, seconds_ago: float) -> None:
     kill it without minting a second Service.
     """
     service_iri = f"{resource_iri}Service"
-    graphdb.query(
+    store.query(
         f"DELETE WHERE {{ <{service_iri}> <{SVC.lastHeartbeat}> ?o }}",
         update=True,
     )
     heartbeat_at = datetime.now(timezone.utc) - timedelta(seconds=seconds_ago)
-    graphdb.query(
+    store.query(
         f"""
         INSERT DATA {{
           <{service_iri}> <{SVC.lastHeartbeat}>
@@ -511,7 +511,7 @@ def _find_unit(body, resource_iri: str):
     return None
 
 
-@requires_graphdb
+@requires_store
 @pytest.mark.asyncio
 class TestAKilledUnitStaysAndReadsUnreachable:
     """The second death. A ``kill -9``'d unit never gets to deregister, so its
@@ -526,12 +526,12 @@ class TestAKilledUnitStaysAndReadsUnreachable:
     """
 
     async def test_a_unit_that_never_reported_a_heartbeat_reads_unreachable(
-        self, graphdb, ogm, unit_scope
+        self, store, ogm, unit_scope
     ):
         """Nothing has ever reported in, so there is no age to show -- distinct from a
         unit that reported and then stopped, which has one."""
         client, _ = await _board(
-            graphdb, ogm, unit_scope, name="CS-kill1", live=(1,), query=_query_selecting(1)
+            store, ogm, unit_scope, name="CS-kill1", live=(1,), query=_query_selecting(1)
         )
         unit1 = str(seed._mint_transfer_unit_iri(1))
 
@@ -541,14 +541,14 @@ class TestAKilledUnitStaysAndReadsUnreachable:
         assert unit["unreachable"] is True
         assert unit["age_seconds"] is None, "no heartbeat means no age to display"
 
-    async def test_a_fresh_heartbeat_reads_reachable(self, graphdb, ogm, unit_scope):
+    async def test_a_fresh_heartbeat_reads_reachable(self, store, ogm, unit_scope):
         """The control. Without it, every assertion below would pass just as well against
         a liveness check that was simply broken and always said "unreachable"."""
         client, _ = await _board(
-            graphdb, ogm, unit_scope, name="CS-kill2", live=(1,), query=_query_selecting(1)
+            store, ogm, unit_scope, name="CS-kill2", live=(1,), query=_query_selecting(1)
         )
         unit1 = str(seed._mint_transfer_unit_iri(1))
-        _set_heartbeat(graphdb, seed._mint_transfer_unit_iri(1), seconds_ago=0)
+        _set_heartbeat(store, seed._mint_transfer_unit_iri(1), seconds_ago=0)
 
         unit = _find_unit(client.get("/api/state").json(), unit1)
 
@@ -557,7 +557,7 @@ class TestAKilledUnitStaysAndReadsUnreachable:
         assert 0 <= unit["age_seconds"] < 60, f"expected a fresh age, got {unit['age_seconds']}"
 
     async def test_a_heartbeat_older_than_the_staleness_threshold_reads_unreachable(
-        self, graphdb, ogm, unit_scope
+        self, store, ogm, unit_scope
     ):
         """The ``kill -9`` itself: nothing refreshed the heartbeat, and the board works
         that out on its own. Nobody tells it the process died -- there is no one left to.
@@ -566,10 +566,10 @@ class TestAKilledUnitStaysAndReadsUnreachable:
         cannot fail on a slow machine.
         """
         client, _ = await _board(
-            graphdb, ogm, unit_scope, name="CS-kill3", live=(1,), query=_query_selecting(1)
+            store, ogm, unit_scope, name="CS-kill3", live=(1,), query=_query_selecting(1)
         )
         unit1 = str(seed._mint_transfer_unit_iri(1))
-        _set_heartbeat(graphdb, seed._mint_transfer_unit_iri(1), seconds_ago=600)
+        _set_heartbeat(store, seed._mint_transfer_unit_iri(1), seconds_ago=600)
 
         unit = _find_unit(client.get("/api/state").json(), unit1)
 
@@ -578,16 +578,16 @@ class TestAKilledUnitStaysAndReadsUnreachable:
         assert unit["age_seconds"] >= 600, f"expected the written age, got {unit['age_seconds']}"
 
     async def test_a_killed_unit_keeps_its_card_and_its_last_known_values(
-        self, graphdb, ogm, unit_scope
+        self, store, ogm, unit_scope
     ):
         """The board shows last-known values *greyed*, not gone -- so the payload has to
         still carry them. Greying is the page's job; the backend's job is not to drop the
         last thing the unit managed to say."""
         client, _ = await _board(
-            graphdb, ogm, unit_scope, name="CS-kill4", live=(1,), query=_query_selecting(1)
+            store, ogm, unit_scope, name="CS-kill4", live=(1,), query=_query_selecting(1)
         )
         unit1 = str(seed._mint_transfer_unit_iri(1))
-        _set_heartbeat(graphdb, seed._mint_transfer_unit_iri(1), seconds_ago=600)
+        _set_heartbeat(store, seed._mint_transfer_unit_iri(1), seconds_ago=600)
 
         body = client.get("/api/state").json()
         unit = _find_unit(body, unit1)
@@ -597,7 +597,7 @@ class TestAKilledUnitStaysAndReadsUnreachable:
         for row in unit["parameters"]:
             assert "value" in row
 
-    async def test_the_two_deaths_look_different(self, graphdb, ogm, unit_scope):
+    async def test_the_two_deaths_look_different(self, store, ogm, unit_scope):
         """The heart of the liveness design, and the reason the two are not unified: a
         unit that deregistered (the clean stop) said goodbye and its card leaves; a
         unit that was killed never got the chance, so its card stays and says so.
@@ -606,12 +606,12 @@ class TestAKilledUnitStaysAndReadsUnreachable:
         simply taking longer to show up.
         """
         client, _ = await _board(
-            graphdb, ogm, unit_scope, name="CS-kill5", live=(1, 2), query=_query_selecting(1, 2)
+            store, ogm, unit_scope, name="CS-kill5", live=(1, 2), query=_query_selecting(1, 2)
         )
         unit1 = str(seed._mint_transfer_unit_iri(1))
         unit2 = str(seed._mint_transfer_unit_iri(2))
-        _set_heartbeat(graphdb, seed._mint_transfer_unit_iri(1), seconds_ago=0)
-        _set_heartbeat(graphdb, seed._mint_transfer_unit_iri(2), seconds_ago=0)
+        _set_heartbeat(store, seed._mint_transfer_unit_iri(1), seconds_ago=0)
+        _set_heartbeat(store, seed._mint_transfer_unit_iri(2), seconds_ago=0)
 
         before = client.get("/api/state").json()
         assert _unit_iris(before) == {unit1, unit2}
@@ -619,8 +619,8 @@ class TestAKilledUnitStaysAndReadsUnreachable:
             "both units must start alive, or the comparison below proves nothing"
         )
 
-        _set_heartbeat(graphdb, seed._mint_transfer_unit_iri(1), seconds_ago=600)  # kill -9
-        _unpublish_service(graphdb, seed._mint_transfer_unit_iri(2))  # clean stop
+        _set_heartbeat(store, seed._mint_transfer_unit_iri(1), seconds_ago=600)  # kill -9
+        _unpublish_service(store, seed._mint_transfer_unit_iri(2))  # clean stop
 
         after = client.get("/api/state").json()
 

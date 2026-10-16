@@ -7,8 +7,8 @@ wiring at that seam -- the keyword arguments each runner's ``main()`` passes to
 ``SemanticMiddleware``/``Controller`` -- so a future refactor cannot silently regress
 it again the way the first demo wiring did.
 
-No GraphDB, no broker, no network: every collaborator ``main()`` touches
-(``graphdb_for``, ``OGM``, ``ClassScope``/``Controller``, ``run_server``,
+No store, no broker, no network: every collaborator ``main()`` touches
+(``triplestore_for``, ``OGM``, ``ClassScope``/``Controller``, ``run_server``,
 ``bind_free_socket``) is replaced with a stand-in.
 """
 
@@ -44,7 +44,7 @@ def test_transferunit_middleware_enables_the_activity_feed(monkeypatch):
     semantic_middleware_cls = MagicMock(return_value=MagicMock())
 
     monkeypatch.setattr(mw_runner, "SemanticMiddleware", semantic_middleware_cls)
-    monkeypatch.setattr(mw_runner, "graphdb_for", MagicMock())
+    monkeypatch.setattr(mw_runner, "triplestore_for", MagicMock())
     monkeypatch.setattr(mw_runner, "OGM", MagicMock())
     monkeypatch.setattr(mw_runner, "ClassScope", MagicMock())
     monkeypatch.setattr(mw_runner, "run_server", _noop_run_server)
@@ -65,7 +65,7 @@ def test_transferunit_middleware_passes_its_own_ensure_transport(monkeypatch):
     semantic_middleware_cls = MagicMock(return_value=MagicMock())
 
     monkeypatch.setattr(mw_runner, "SemanticMiddleware", semantic_middleware_cls)
-    monkeypatch.setattr(mw_runner, "graphdb_for", MagicMock())
+    monkeypatch.setattr(mw_runner, "triplestore_for", MagicMock())
     monkeypatch.setattr(mw_runner, "OGM", MagicMock())
     monkeypatch.setattr(mw_runner, "ClassScope", MagicMock())
     monkeypatch.setattr(mw_runner, "run_server", _noop_run_server)
@@ -89,7 +89,7 @@ def test_control_station_enables_the_activity_feed(monkeypatch):
     controller_cls = MagicMock(return_value=MagicMock())
 
     monkeypatch.setattr(cs_runner, "Controller", controller_cls)
-    monkeypatch.setattr(cs_runner, "graphdb_for", MagicMock())
+    monkeypatch.setattr(cs_runner, "triplestore_for", MagicMock())
     monkeypatch.setattr(cs_runner, "OGM", MagicMock())
     monkeypatch.setattr(cs_runner, "run_server", _noop_run_server)
     monkeypatch.setattr(cs_runner, "bind_free_socket", lambda host: _FakeListeningSocket())

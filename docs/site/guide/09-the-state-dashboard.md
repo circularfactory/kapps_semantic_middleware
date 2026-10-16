@@ -1,6 +1,6 @@
 # The State Dashboard
 
-The state dashboard is a read-only HTML page that shows a middleware instance's in-memory state. Each instance serves one page at `/dashboard`. The page has no write path.
+The state dashboard is an HTML page that shows a middleware instance's in-memory state. Each instance serves one page at `/dashboard`. The library's own boxes change nothing, with one exception: the form of the Logs tab sets a logger's level in the process.
 
 :::{dropdown} Terms this page assumes
 {term}`ClassScope` · {term}`Parameter` · {term}`Service`
@@ -15,6 +15,8 @@ registry = enable_dashboard(middleware)
 ```
 
 The call mounts the routes on `middleware.app` and returns the `DashboardRegistry`. It also stores that registry as `middleware.dashboard`. A second call on the same instance returns the same registry and mounts nothing twice.
+
+The page, its boxes and its static files are not part of the instance's API. They are left out of its API description, `/openapi.json`, so `/docs` shows the instance's services and not the dashboard's own routes.
 
 Pass `register_default_boxes=False` to start with an empty page:
 
@@ -46,14 +48,85 @@ A name that no tab has is passed over. An unknown `?tab=` opens the `first_tab`,
 
 The server chooses the tab: the page marks the radio of that tab as checked, so no script is necessary. The tab bar keeps its order, and every box stays on the page. The query reaches the page under a path prefix too, and through the redirect from `/dashboard/`.
 
-## The Four Default Boxes
+## The Default Boxes
 
-The library registers four boxes, all of which read only what the instance already holds. The id in brackets is what `hide` takes.
+The library registers six boxes, all of which read only what the instance already holds: five in the System tab, and the Logs box in a tab of its own. The id in brackets is what `hide` takes.
 
-1. **Instance** (`header`) — identity, mode, health, and the graph binding.
+1. **Instance** (`header`) — identity, mode, health, and the graph binding. Only a watchdog-mode instance runs a sweep, so only its box shows the sweep's interval and whether the sweep's task is alive.
 2. **Held data** (`held-data`) — the materialized datamodel, with each parameter's protocol metadata.
-3. **Services** (`services`) — the workflows and state properties this instance serves.
+3. **Services** (`services`) — the workflows and state properties this instance serves, each with what its function's docstring says. See The Services Box below.
 4. **Connectors** (`connectors`) — what each wired connector is, as its descriptor declares it.
+5. **Refused writes** (`refused-writes`) — the writes of this instance that the store's shapes refused, newest first.
+6. **Logs** (`logs`) — the newest records of every logger in the process, and a form that sets a logger's level. See The Logs Tab below.
+
+## The Services Box
+
+The box "Services", on the System tab, lists each workflow and each state property that the instance serves, with a summary and a description from the docstring of the function you registered: the docstring's first line is the summary, and the whole docstring the description. For a workflow, the routes that run it, `workflows/<name>/execute` and `workflows/<name>/execute_background`, carry the text. Its routes `description` and `interrupt` keep the summaries that the framework gives them. A state property's route, `state/<name>`, carries its getter's text. The event trigger, `workflows/event_trigger/...`, which every resource-mode instance serves, says what it does in the same way.
+
+```python
+@mw.workflow(capability_class=SPAWN_CAPABILITY, workflow_class=SPAWN_WORKFLOW)
+def spawn(count: int) -> dict:
+    """Spawn new boxes at the module's entry.
+
+    The count says how many, and each box gets a fresh id.
+    """
+    ...
+```
+
+The box reads the instance's API description, which the process generates in memory, so it causes no traffic. `/docs` shows the same text. A function without a docstring shows the default summary, such as "Execute", and no description.
+
+## The Box of Refused Writes
+
+When the store's SHACL shapes refuse a write of `mw.commit()`, `mw.create()` or `mw.handover()`, the caller gets `ShaclValidationError`, unchanged, and the instance keeps the refusal in memory: the time, the verb, the rules that the store's validation report names, and the report. It keeps the newest 50, and writes nothing of them to the graph. `mw.refused_writes` gives them, newest first. The write of a `commit`'s error transition, which the shapes may refuse when the body failed, is kept too: its verb is `commit`, and its first line reads `commit (error transition) refused by ...`; the caller still gets the error of the body, with a note that the error transition was not committed. A write that is refused for another reason, such as a false precondition, is not kept.
+
+The box "Refused writes", on the System tab, shows them and refreshes every 5 seconds. Each refused write is one line that is always visible, for example:
+
+```text
+14:03:12 handover refused by FlexConveyorModulePossessionShape at Module3
+```
+
+That is the time, the verb, and each rule as its source shape at its focus node. Click the line to open its expander. It holds a table with one block of rows for each result of the report: the message, the severity, the focus node, the path, the value, the source shape and the constraint component. Each name shows its local name; hold the pointer over it to read the full IRI. A path is in SPARQL property path syntax. Below the table is the whole report, as the store sent it, with its line breaks. Every value is escaped, so a message that holds markup shows as text. An expander that you opened stays open when the box refreshes.
+
+A report that is not RDF names no result. The box then says so, and shows the text as it is.
+
+Each refusal is also logged, as one record at INFO on the logger `kapps_semantic_middleware.validation_report`: its first line says what was refused and by which rules, and the following lines hold the readable results and the whole report. The activity page and the Logs tab show it as its first line, with the rest behind an expander (see The Logs Tab); the Logs tab cuts a long message, and the box keeps the whole report.
+
+To show a refused write on a page of your own, call `kapps_semantic_middleware.validation_report.render_refused_write(refused)`. The same module reads a report for code: `readable_results(report)` for a person, `validation_results(report)` for comparing, and `rule_names(report)` for a log line.
+
+## The Logs Tab
+
+The Logs tab shows the newest records of the whole process: every logger, the library's own, your subproject's, such as `jms_kapps.uc2.module`, and those of the libraries it calls, such as `httpx`. The activity page at `/activity` stays as it was, a live stream of the library's own logger.
+
+**Where the records come from.** The tab is a default box, so `enable_dashboard(middleware)` attaches one handler to the root logger, once per process, however many instances in the process enable the dashboard. `register_default_boxes=False` leaves out the tab, its handler and its route. The handler keeps the newest 500 records in memory, and cuts a message at 4000 characters; the oldest record goes when a new one arrives. A render reads only that memory and the loggers' levels, so the box causes no traffic. The handler changes no logger's level, so the terminal shows what it showed before.
+
+A record reaches the box only when its logger sends it: at or above the level in force for that logger, and on to the root logger, which every logger does unless its `propagate` is off. A level that holds a record back from the terminal holds it back from the box too. A process that configures logging again after `enable_dashboard`, with `logging.basicConfig(force=True)` or `logging.config.dictConfig`, removes the handler from the root logger, and the box then says that no new record reaches it. Configure logging first.
+
+Each record shows its time, level, logger and message, newest first. A record with an exception shows the exception's type and message after its own; the traceback stays in the terminal.
+
+**A record of several lines** shows its first line, the text before the first line break, in its row, and the rest behind an expander that is closed at first. A store's refusal report, or a message with an exception after it, takes one line until a reader opens it. Opened, the expander shows the rest as text, with its line breaks and its indentation kept; markup in a message is shown as text. A record of one line has no expander. The expander stays open when the box refreshes, and a new record neither opens nor closes another record's expander. The cut at 4000 characters applies to the whole message first, so the expander ends with the note of how many characters were cut. The activity page at `/activity` folds a record of several lines the same way.
+
+**The level filter** chooses which records the box shows: those at or above DEBUG, INFO, WARNING, ERROR or CRITICAL. It filters the view in the browser, changes no level, and keeps its choice when the box refreshes. A record of a level of your own, such as 25, shows with the standard level below it.
+
+**Setting a logger's level.** The form sets the level of one logger while the process runs. Type the logger's name, or pick one the box has seen, choose the level, and press *Set level*. The level holds until the process ends or the level is set again. The table beside the form lists the loggers seen so far, root first, each with its own level and the level in force: a logger whose own level is NOTSET takes its parent's.
+
+The form posts to `POST dashboard/logs/level`, and so can any other client:
+
+```http
+POST /dashboard/logs/level HTTP/1.1
+Content-Type: application/json
+
+{"logger": "jms_kapps.uc2", "level": "DEBUG"}
+```
+
+The answer is the level now in force, `{"logger": "jms_kapps.uc2", "level": "DEBUG"}`.
+
+- The level is one of `NOTSET`, `DEBUG`, `INFO`, `WARNING`, `ERROR` and `CRITICAL`, spelled so. Any other value, `debug` or `10` among them, is refused with 422 and the list of the names. `NOTSET` clears the logger's own level, and the answer is then the level it takes from its parent.
+- The root logger is named `root`. An empty name is refused, rather than taken for the root logger.
+- A name the process has no logger for yet gets one, so a level can be set before the logger first writes. A misspelt name gets one too: check the name in the answer.
+- The page's own form gets its answer as HTML, and a refusal as a readable error in the box.
+- When the box `logs` is hidden, the route answers 404, as the box's fragment does.
+
+The level belongs to the logger, for the whole process: `root` at DEBUG sends DEBUG records to every handler of the process, the terminal included. Anyone who reaches the instance's address can set a level, as anyone who reaches it can run its workflows.
 
 ## Registering Your Own Box
 
@@ -98,7 +171,7 @@ registry.hide("held-data", "connectors")
 
 There is no configuration file, no environment variable and nothing in the graph that controls this, and nothing a viewer of the page can change. A box is hidden for every reader of that instance's page, for as long as the process runs.
 
-Hide takes the box ids, which are not the titles shown on the page. The library's own four are `header`, `held-data`, `services` and `connectors`.
+Hide takes the box ids, which are not the titles shown on the page. The library's own six are `header`, `held-data`, `services`, `connectors`, `refused-writes` and `logs`.
 
 Hide any number of them in one call, or call it again later as long as the process has not yet served the page. `enable_dashboard(middleware, register_default_boxes=False)` stays the all-or-nothing switch; `hide` is for keeping most of the defaults and dropping a few.
 
@@ -130,12 +203,12 @@ A subproject's box may fetch in its own render. That traffic is the subproject's
 
 A render may take either form, and the page waits on neither.
 
-Write a box that reads what the instance already holds as a plain function. This is what the library's own four boxes do:
+Write a box that reads what the instance already holds as a plain function. This is what the library's own boxes do:
 
 ```python
 @registry.box("mine", title="Mine")
 def mine(middleware: Any) -> str:
-    return kv_table([("Repository", middleware.ogm.db.repository)])
+    return kv_table([("Dataset", middleware.ogm.db.dataset)])
 ```
 
 Write a box that queries a graph, or calls a peer, with `async def`, and await the I/O inside it:
@@ -172,4 +245,4 @@ def spawn_box(middleware: Any) -> str:
 
 The operator presses Spawn. htmx collects the fields, encodes them as `{"count": 1}`, and posts that to the instance's own workflow. The page does not move, and the next refresh of any box shows whatever the workflow changed.
 
-Write the path without a leading slash: `workflows/spawn_box/execute`, not `/workflows/spawn_box/execute`. A box is placed into the page at `/dashboard`, so the browser resolves a relative path against the page's own address and reaches the instance that served the page. That holds at the process's root and behind a proxy that serves the process under a path prefix, such as `/p/<process>/dashboard`. An absolute path goes to the proxy's own root there, and the form posts to nothing. Any URL a box names on its own instance follows the same rule, and so does the page itself: its scripts, its boxes and the activity page's stream are named `dashboard/static/...`, `dashboard/box/<id>` and `activity/stream`. The page answers at `/dashboard`; `/dashboard/` redirects there.
+Write the path without a leading slash: `workflows/spawn_box/execute`, not `/workflows/spawn_box/execute`. A box is placed into the page at `/dashboard`, so the browser resolves a relative path against the page's own address and reaches the instance that served the page. That holds at the process's root and behind a proxy that serves the process under a path prefix, such as `/p/<process>/dashboard`. An absolute path goes to the proxy's own root there, and the form posts to nothing. Any URL a box names on its own instance follows the same rule, and so does the page itself: its scripts, its boxes, the form of the Logs tab and the activity page's stream are named `dashboard/static/...`, `dashboard/box/<id>`, `dashboard/logs/level` and `activity/stream`. The page answers at `/dashboard`; `/dashboard/` redirects there.

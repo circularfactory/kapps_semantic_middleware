@@ -38,11 +38,11 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from conftest import requires_graphdb  # noqa: E402
+from conftest import requires_store  # noqa: E402
 from demo.transferunits import seed  # noqa: E402
 from demo.transferunits.__main__ import LAUNCHER_HOST, LAUNCHER_PORT  # noqa: E402
 from demo.transferunits.middleware import _listening  # noqa: E402
-from kapps_semantic_middleware.credentials import DEMO_REPOSITORY, graphdb_for  # noqa: E402
+from kapps_semantic_middleware.credentials import DEMO_DATASET, triplestore_for  # noqa: E402
 from kapps_semantic_middleware.vocabulary import SVC  # noqa: E402
 
 # The two waiting helpers come from the smoke suite rather than being written again. They are
@@ -51,13 +51,13 @@ from kapps_semantic_middleware.vocabulary import SVC  # noqa: E402
 from test_factory_smoke import _await, _url  # noqa: E402
 from _sse import hold  # noqa: E402
 
-pytestmark = [requires_graphdb, pytest.mark.live, pytest.mark.smoke]
+pytestmark = [requires_store, pytest.mark.live, pytest.mark.smoke]
 
 UNITS = 1
 """One unit is enough to show a Service losing its address. Two would only repeat it."""
 
 READY_TIMEOUT_SECONDS = 180.0
-"""Matches the smoke suite's own boot budget: a cold GraphDB seed dominates it."""
+"""Matches the smoke suite's own boot budget: a cold seed of the store dominates it."""
 
 STOP_TIMEOUT_SECONDS = 60.0
 """A clean stop waits on the ordered teardown, not on a signal."""
@@ -119,22 +119,22 @@ def _unit_service_addresses(db) -> List[str]:
 
 
 @pytest.fixture
-def demo_graphdb() -> Iterator[object]:
-    """A live client bound to ``kapps-demo``, the repository the factory registers into.
+def demo_store() -> Iterator[object]:
+    """A live store bound to ``kapps-demo``, the dataset the factory registers into.
 
-    Not ``conftest.py``'s ``graphdb`` fixture: that one is bound to ``TEST_REPOSITORY``
+    Not ``conftest.py``'s ``store`` fixture: that one is bound to ``TEST_DATASET``
     ("Tests"), which the factory launched below never writes to -- it spawns every
-    middleware with ``--repository kapps-demo`` (``DEMO_REPOSITORY``). Reading ``Tests``
+    middleware with ``--dataset kapps-demo`` (``DEMO_DATASET``). Reading ``Tests``
     for this factory's addresses always returns empty. Stated explicitly here so the
     next split of demos from tests cannot repeat that mismatch silently.
     """
-    db = graphdb_for(DEMO_REPOSITORY)
+    db = triplestore_for(DEMO_DATASET)
     yield db
     db.close()
 
 
 @pytest.fixture
-def stopped_factory(demo_graphdb) -> Iterator[None]:
+def stopped_factory(demo_store) -> Iterator[None]:
     """Boot a factory, wait until its unit is reachable, then stop it through the launcher.
 
     Yields once the stop has returned. The test that follows reads the graph, so the point of
@@ -188,13 +188,13 @@ def stopped_factory(demo_graphdb) -> Iterator[None]:
         # The unit has to be reachable *before* the stop, or the assertion afterwards would
         # pass against a factory that never registered at all.
         _await(
-            lambda: bool(_unit_service_addresses(demo_graphdb)),
+            lambda: bool(_unit_service_addresses(demo_store)),
             READY_TIMEOUT_SECONDS,
             f"No unit ever registered an svc:address, so a later absence would prove "
             f"nothing. The launcher said:\n{_tail()}",
         )
 
-        [address] = _unit_service_addresses(demo_graphdb)
+        [address] = _unit_service_addresses(demo_store)
         feed_open = threading.Event()
         hold(_url(address, "activity/stream"), until=stopped.is_set, opened=feed_open)
         assert feed_open.wait(READY_TIMEOUT_SECONDS), (
@@ -213,7 +213,7 @@ def stopped_factory(demo_graphdb) -> Iterator[None]:
         _kill_factory(proc)
 
 
-def test_a_clean_stop_leaves_no_unit_reachable(stopped_factory, demo_graphdb):
+def test_a_clean_stop_leaves_no_unit_reachable(stopped_factory, demo_store):
     """The observable proof: after a clean stop, no unit advertises an address.
 
     The fixture has already established that a unit *was* reachable, so this is a
@@ -225,7 +225,7 @@ def test_a_clean_stop_leaves_no_unit_reachable(stopped_factory, demo_graphdb):
     mechanism, and a clean stop must not need it.
     """
     _await(
-        lambda: _unit_service_addresses(demo_graphdb) == [],
+        lambda: _unit_service_addresses(demo_store) == [],
         STOP_TIMEOUT_SECONDS,
         "A unit still advertises an svc:address after a clean stop through the launcher. "
         "The ordered teardown exists so every middleware deregisters while its PLC "
@@ -233,7 +233,7 @@ def test_a_clean_stop_leaves_no_unit_reachable(stopped_factory, demo_graphdb):
     )
 
 
-def test_the_service_individual_survives_its_deregistration(stopped_factory, demo_graphdb):
+def test_the_service_individual_survives_its_deregistration(stopped_factory, demo_store):
     """Availability is not existence: the Service is still there, it just answers nowhere.
 
     Guards the correction this file was written to make. The acceptance criterion asked for
@@ -242,7 +242,7 @@ def test_the_service_individual_survives_its_deregistration(stopped_factory, dem
     "fixes" the box by deleting Services, this test fails and says why.
     """
     unit_iri = seed._mint_transfer_unit_iri(1)
-    rows = demo_graphdb.query(
+    rows = demo_store.query(
         f"SELECT ?service WHERE {{ ?service <{SVC.isServiceOf}> <{unit_iri}> . }}",
         convert_bindings=True,
     )

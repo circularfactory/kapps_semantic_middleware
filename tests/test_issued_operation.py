@@ -1,7 +1,7 @@
-"""The issuer of an Operation, offline: `request()` records it, the claimer's middleware tells it
+"""The issuer of an Operation, offline: `issue_operation()` records it, the claimer's middleware tells it
 when the Operation is claimed and when it ends, and its handle waits for that.
 
-`request()` is built on `mw.create()` and on the delivery of `mw.notify()`. Its commit records the
+`issue_operation()` is built on `mw.create()` and on the delivery of `mw.notify()`. Its commit records the
 calling instance's Resource as the Operation's issuer (`svc:issuedBy`). A failed notification
 leaves the Operation `queued` and raises `NotificationUndelivered`.
 
@@ -252,7 +252,7 @@ def _queued(graph: _Graph) -> SemanticMiddleware:
 
 
 # --------------------------------------------------------------------------- #
-# request(): create, then notify, and the issuer recorded.
+# issue_operation(): create, then notify, and the issuer recorded.
 # --------------------------------------------------------------------------- #
 
 
@@ -261,7 +261,7 @@ def test_a_request_records_its_issuer_in_the_commit_that_creates_the_operation()
     notified: list = []
     with _trigger(graph, notified) as address:
         graph.target = (CAPABILITY, IRI(f"{EX}screwer_service"), address)
-        with _middleware(PLANNER, graph).request(
+        with _middleware(PLANNER, graph).issue_operation(
             capability_class=CAPABILITY_CLASS, operation_class=OPERATION_CLASS
         ) as op:
             op.data[str(TORQUE)] = ["4.2 Nm"]
@@ -289,7 +289,7 @@ def test_a_failed_notification_leaves_the_operation_queued_and_raises_notificati
     with _trigger(graph, notified, status=503) as address:
         graph.target = (CAPABILITY, IRI(f"{EX}screwer_service"), address)
         with pytest.raises(NotificationUndelivered, match="did not take") as raised:
-            with _middleware(PLANNER, graph).request(
+            with _middleware(PLANNER, graph).issue_operation(
                 capability_class=CAPABILITY_CLASS, operation_class=OPERATION_CLASS
             ) as op:
                 pass
@@ -315,7 +315,7 @@ def test_a_malformed_address_leaves_the_operation_queued_and_raises_notification
     graph = _Graph()
     graph.target = (CAPABILITY, IRI(f"{EX}screwer_service"), address)
     with pytest.raises(NotificationUndelivered, match="did not take") as raised:
-        with _middleware(PLANNER, graph).request(
+        with _middleware(PLANNER, graph).issue_operation(
             capability_class=CAPABILITY_CLASS, operation_class=OPERATION_CLASS
         ) as op:
             pass
@@ -331,7 +331,7 @@ def test_a_draft_that_sets_the_issuer_is_refused_before_anything_is_written():
     graph = _Graph()
     graph.target = (CAPABILITY, IRI(f"{EX}screwer_service"), "http://127.0.0.1:9")
     with pytest.raises(ValueError, match="issuedBy"):
-        with _middleware(PLANNER, graph).request(
+        with _middleware(PLANNER, graph).issue_operation(
             capability_class=CAPABILITY_CLASS, operation_class=OPERATION_CLASS
         ) as op:
             op.data[str(SVC.issuedBy)] = [{"id": str(SCREWER)}]
@@ -678,7 +678,7 @@ def test_the_issuers_notification_handler_sees_both_notifications():
 
 def _issue(graph: _Graph, planner: SemanticMiddleware, receiver_address: str) -> IssuedOperation:
     graph.target = (CAPABILITY, IRI(f"{EX}screwer_service"), receiver_address)
-    with planner.request(
+    with planner.issue_operation(
         capability_class=CAPABILITY_CLASS, operation_class=OPERATION_CLASS
     ) as op:
         pass
@@ -847,7 +847,7 @@ def test_an_operation_that_an_instance_issues_to_itself_runs_its_workflow_once()
     screwer = _screwer_that_unscrews(graph, runs, seen)
     graph.target = (CAPABILITY, screwer.service_iri, screwer.address)
     with _served(screwer):
-        with screwer.request(
+        with screwer.issue_operation(
             capability_class=CAPABILITY_CLASS, operation_class=OPERATION_CLASS
         ) as op:
             pass

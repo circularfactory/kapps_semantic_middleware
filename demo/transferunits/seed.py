@@ -17,7 +17,7 @@ from kapps_ogm.utils.class_scope import ClassScope
 from rdflib import Literal
 from rdflib.namespace import RDF, RDFS
 
-from kapps_semantic_middleware.seeding import clear_repository, load_shared_ontologies
+from kapps_semantic_middleware.seeding import clear_dataset, load_shared_ontologies
 from kapps_semantic_middleware.vocabulary import INF, SVC
 
 
@@ -200,21 +200,21 @@ def _load_demo_ontologies(db) -> None:
     transferunit_ttl = (Path(__file__).parent / "transferunit.ttl").read_text(
         encoding="utf-8"
     )
-    db.import_statements(transferunit_ttl, content_type="application/x-turtle")
+    db.graph_add(transferunit_ttl, content_type="application/x-turtle")
 
     factory_ttl = (Path(__file__).parent / "factory.ttl").read_text(encoding="utf-8")
-    db.import_statements(factory_ttl, content_type="application/x-turtle")
+    db.graph_add(factory_ttl, content_type="application/x-turtle")
 
 
 def seed_factory(db, ogm, units: int) -> None:
     """Seed the factory: clear the default graph, load ontologies, create N units plus one control station.
 
     Args:
-        db: The GraphDB client.
+        db: The store.
         ogm: The OGM instance for validated writes.
         units: Number of TransferUnits to create (indices 1..units).
     """
-    clear_repository(db)
+    clear_dataset(db)
     load_shared_ontologies(db)
     _load_demo_ontologies(db)
 
@@ -236,7 +236,7 @@ def factory_is_live(db, max_age_seconds: float = 90.0) -> list[IRI]:
     fresh, not stale or absent).
 
     Args:
-        db: The GraphDB client.
+        db: The store.
         max_age_seconds: Maximum age of a heartbeat to count as fresh.
 
     Returns:

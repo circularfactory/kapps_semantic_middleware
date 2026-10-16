@@ -1,7 +1,7 @@
 """Offline tests for the launcher seeding logic.
 
 This module tests the IRI minting scheme, the MQTT topic construction, and the
-environment handling without a live GraphDB. This module mirrors the style of
+environment handling without a live store. This module mirrors the style of
 test_recursive_rest_router.py.
 """
 
@@ -13,9 +13,9 @@ from unittest.mock import MagicMock
 from kapps_triplestore_interface import IRI
 
 from demo.transferunits import seed
-from demo.transferunits.launcher import _spawn_plc, _strip_graphdb_env
+from demo.transferunits.launcher import _spawn_plc, _strip_store_env
 
-from conftest import requires_graphdb  # noqa: E402
+from conftest import requires_store  # noqa: E402
 
 
 class TestIRIMinting:
@@ -94,38 +94,49 @@ class TestBrokerPort:
         assert seed.broker_port(17) == 18847
 
 
-class TestEnvironmentHandling:
-    """This class tests that _strip_graphdb_env strips GRAPHDB_* credentials for PLC children."""
+# vendor-check: off -- the deprecated variables, until they go.
+# The deprecated variables, which the PLC must not receive either.
+OLD_STORE_ENV = {
+    "GRAPHDB_URL": "http://localhost:7200",
+    "GRAPHDB_USERNAME": "admin",
+    "GRAPHDB_PASSWORD": "secret",
+    "GRAPHDB_REPOSITORY": "test",
+}
+# vendor-check: on
 
-    def test_strip_graphdb_env_removes_all_graphdb_vars(self):
-        """_strip_graphdb_env removes every GRAPHDB_* key and keeps the rest."""
+
+class TestEnvironmentHandling:
+    """This class tests that _strip_store_env strips the store's credentials for PLC children."""
+
+    def test_strip_store_env_removes_all_store_vars(self):
+        """_strip_store_env removes every TRIPLESTORE_* key, and every deprecated one, and keeps
+        the rest."""
         env = {
-            "GRAPHDB_URL": "http://localhost:7200",
-            "GRAPHDB_USERNAME": "admin",
-            "GRAPHDB_PASSWORD": "secret",
-            "GRAPHDB_REPOSITORY": "test",
+            "TRIPLESTORE_URL": "http://localhost:7200",
+            "TRIPLESTORE_USERNAME": "admin",
+            "TRIPLESTORE_PASSWORD": "secret",
+            "TRIPLESTORE_DATASET": "test",
+            **OLD_STORE_ENV,
             "OTHER_VAR": "kept",
         }
-        stripped = _strip_graphdb_env(env)
+        stripped = _strip_store_env(env)
 
-        assert "GRAPHDB_URL" not in stripped
-        assert "GRAPHDB_USERNAME" not in stripped
-        assert "GRAPHDB_PASSWORD" not in stripped
-        assert "GRAPHDB_REPOSITORY" not in stripped
-        assert stripped["OTHER_VAR"] == "kept"
+        assert stripped == {"OTHER_VAR": "kept"}
 
-    def test_strip_graphdb_env_handles_empty(self):
-        """_strip_graphdb_env works on an empty dict."""
-        assert _strip_graphdb_env({}) == {}
+    def test_strip_store_env_handles_empty(self):
+        """_strip_store_env works on an empty dict."""
+        assert _strip_store_env({}) == {}
 
     def test_spawn_plc_passes_stripped_env_to_popen(self, monkeypatch):
-        """_spawn_plc's actual Popen call carries no GRAPHDB_* var ("asserted, not assumed").
+        """_spawn_plc's actual Popen call carries no store variable ("asserted, not assumed").
 
-        test_strip_graphdb_env_removes_all_graphdb_vars only exercises the helper in isolation;
+        test_strip_store_env_removes_all_store_vars only exercises the helper in isolation;
         this asserts the wiring between "helper strips" and "spawn uses the stripped copy".
         """
-        monkeypatch.setenv("GRAPHDB_URL", "http://localhost:7200")
-        monkeypatch.setenv("GRAPHDB_REPOSITORY", "test")
+        monkeypatch.setenv("TRIPLESTORE_URL", "http://localhost:7200")
+        monkeypatch.setenv("TRIPLESTORE_DATASET", "test")
+        for name, value in OLD_STORE_ENV.items():
+            monkeypatch.setenv(name, value)
 
         captured_env: dict = {}
 
@@ -134,14 +145,14 @@ class TestEnvironmentHandling:
             proc = MagicMock()
             proc.pid = 12345
             proc.stdout = iter(["Panel running on http://127.0.0.1:54321/\n"])
+            proc.wait.return_value = 0  # the stand-in ends cleanly once its line is read
             return proc
 
         monkeypatch.setattr(subprocess, "Popen", fake_popen)
 
         handle = _spawn_plc(1)
 
-        assert "GRAPHDB_URL" not in captured_env
-        assert "GRAPHDB_REPOSITORY" not in captured_env
+        assert not set(captured_env) & {"TRIPLESTORE_URL", "TRIPLESTORE_DATASET", *OLD_STORE_ENV}
         assert handle.address == "http://127.0.0.1:54321/"
 
     def test_spawn_plc_echoes_its_panel_line_to_launcher_stdout(self, monkeypatch, capsys):
@@ -153,6 +164,7 @@ class TestEnvironmentHandling:
             proc = MagicMock()
             proc.pid = 12345
             proc.stdout = iter(["Panel running on http://127.0.0.1:54321/\n"])
+            proc.wait.return_value = 0  # the stand-in ends cleanly once its line is read
             return proc
 
         monkeypatch.setattr(subprocess, "Popen", fake_popen)
@@ -164,34 +176,34 @@ class TestEnvironmentHandling:
         assert "http://127.0.0.1:54321/" in out
 
 
-@requires_graphdb
+@requires_store
 class TestLiveSeeding:
-    """This class tests seed_factory and factory_is_live with a live GraphDB."""
+    """This class tests seed_factory and factory_is_live with a live store."""
 
-    def test_seed_factory_creates_units(self, graphdb):
+    def test_seed_factory_creates_units(self, store):
         """seed_factory creates every requested TransferUnit."""
         from kapps_ogm import OGM
 
-        ogm = OGM(db=graphdb)
-        seed.seed_factory(graphdb, ogm, units=2)
+        ogm = OGM(db=store)
+        seed.seed_factory(store, ogm, units=2)
 
         for n in (1, 2):
-            result = graphdb.query(
+            result = store.query(
                 f'ASK {{ <{seed._mint_transfer_unit_iri(n)}> a <{seed.TRANSFER_UNIT_CLASS}> }}'
             )
             assert result.get("boolean", False), f"TransferUnit{n} should exist"
 
-    def test_seed_writes_each_unit_s_own_broker_port_as_an_integer(self, graphdb):
+    def test_seed_writes_each_unit_s_own_broker_port_as_an_integer(self, store):
         """Unit 2's parameters declare port 18832, as xsd:integer -- the
         round trip must hand back 18832, not "18832" (the default-port rule, extended per-unit)."""
         from kapps_ogm import OGM
         from kapps_semantic_middleware.vocabulary import INF
 
-        ogm = OGM(db=graphdb)
-        seed.seed_factory(graphdb, ogm, units=2)
+        ogm = OGM(db=store)
+        seed.seed_factory(store, ogm, units=2)
 
         belt = seed._mint_conveyor_belt_iri(2, "left")
-        result = graphdb.query(
+        result = store.query(
             f"""
             SELECT ?port WHERE {{
                 <{belt}> <{seed.TU_HAS_CONVEYOR_SPEED}> ?param .
@@ -205,7 +217,7 @@ class TestLiveSeeding:
         assert bindings[0]["port"] == 18832
 
     def test_seed_writes_a_human_readable_label_for_each_unit_and_the_control_station(
-        self, graphdb
+        self, store
     ):
         """Every seeded individual carries an rdfs:label.
 
@@ -217,11 +229,11 @@ class TestLiveSeeding:
         from kapps_ogm import OGM
         from rdflib.namespace import RDFS
 
-        ogm = OGM(db=graphdb)
-        seed.seed_factory(graphdb, ogm, units=2)
+        ogm = OGM(db=store)
+        seed.seed_factory(store, ogm, units=2)
 
         for n in (1, 2):
-            result = graphdb.query(
+            result = store.query(
                 f"""
                 SELECT ?label WHERE {{
                     <{seed._mint_transfer_unit_iri(n)}> <{RDFS.label}> ?label .
@@ -233,7 +245,7 @@ class TestLiveSeeding:
             assert len(bindings) == 1, f"TransferUnit{n} should carry exactly one rdfs:label"
             assert str(bindings[0]["label"]) == f"TransferUnit {n}"
 
-        result = graphdb.query(
+        result = store.query(
             f"""
             SELECT ?label WHERE {{
                 <{seed.CONTROL_STATION}> <{RDFS.label}> ?label .
@@ -245,7 +257,7 @@ class TestLiveSeeding:
         assert len(bindings) == 1
         assert str(bindings[0]["label"]) == "Control Station"
 
-    def test_factory_is_live_detects_fresh_heartbeat(self, graphdb):
+    def test_factory_is_live_detects_fresh_heartbeat(self, store):
         """factory_is_live returns a Service that carries a fresh heartbeat."""
         from datetime import datetime, timezone
 
@@ -254,13 +266,13 @@ class TestLiveSeeding:
 
         from kapps_semantic_middleware.vocabulary import SVC
 
-        ogm = OGM(db=graphdb)
-        seed.seed_factory(graphdb, ogm, units=1)
+        ogm = OGM(db=store)
+        seed.seed_factory(store, ogm, units=1)
 
         service_iri = IRI("http://example.org/test_service")
-        graphdb.triple_add((service_iri, SVC.isServiceOf, seed._mint_transfer_unit_iri(1)))
-        graphdb.triple_add((service_iri, SVC.address, "http://localhost:8000"))
-        graphdb.triple_add(
+        store.triple_add((service_iri, SVC.isServiceOf, seed._mint_transfer_unit_iri(1)))
+        store.triple_add((service_iri, SVC.address, "http://localhost:8000"))
+        store.triple_add(
             (
                 service_iri,
                 SVC.lastHeartbeat,
@@ -268,5 +280,5 @@ class TestLiveSeeding:
             )
         )
 
-        live = seed.factory_is_live(graphdb)
+        live = seed.factory_is_live(store)
         assert len(live) >= 1

@@ -1,7 +1,7 @@
 """Behaviour tests for the state dashboard.
 
 These tests build a fake middleware and exercise the dashboard through a FastAPI
-TestClient. No GraphDB and no network. The tests pin the dashboard's contract:
+TestClient. No store and no network. The tests pin the dashboard's contract:
 idempotent attach, three routes, default boxes, resilience to a raising box,
 escaping, tabs, polling, duplicate-id replacement, and static-file traversal
 protection.
@@ -96,6 +96,29 @@ def test_the_three_routes_exist() -> None:
     assert "/dashboard" in paths
     assert "/dashboard/box/{box_id}" in paths
     assert "/dashboard/static/{filename}" in paths
+
+
+def test_the_three_routes_are_not_in_the_api_description_and_still_answer() -> None:
+    """The page, a box and a static file answer at their addresses, and `/docs` lists none.
+
+    `/docs` renders the API description at `openapi_url`, so a route that is not in that
+    document is not in `/docs` either. A reader of `/docs` sees the instance's services, not
+    the dashboard's own routes.
+    """
+    mw = FakeMiddleware()
+    enable_dashboard(mw)
+    client = TestClient(mw.app)
+
+    docs = client.get("/docs")
+    assert docs.status_code == 200
+    assert mw.app.openapi_url in docs.text
+    described = set(client.get(mw.app.openapi_url).json()["paths"])
+    for path in ("/dashboard", "/dashboard/box/{box_id}", "/dashboard/static/{filename}"):
+        assert path not in described, path
+
+    assert client.get("/dashboard").status_code == 200
+    assert client.get("/dashboard/box/header").status_code == 200
+    assert client.get("/dashboard/static/htmx-2.0.4.min.js").status_code == 200
 
 
 def test_shell_renders_with_vendored_script() -> None:
@@ -510,6 +533,16 @@ def test_a_tab_name_with_a_space_still_shows_its_panel() -> None:
             f"panel {ident!r} has no matching :checked rule, so it can never be shown"
         )
 
+    # Every tab's label is reachable by a rule that names its slug, so the selected tab shows.
+    for ident in radio_ids:
+        assert f'#tab-{ident}:checked ~ .tabs label[for="tab-{ident}"]' in shell, (
+            f"tab {ident!r} has no rule that highlights its label"
+        )
+    assert shell.count(':checked ~ .tabs label[for="tab-') == len(radio_ids), (
+        "exactly one label rule per tab"
+    )
+    assert ".tab-radio:checked + .tab-label" not in shell, "the dead sibling rule is back"
+
     # The reader still sees the original titles.
     for tab in ("UC2 monitor", "A/B", "Etienne&#x27;s", "5 GHz"):
         assert tab in shell
@@ -580,6 +613,42 @@ def test_queue_depth_of_zero_is_shown_as_zero() -> None:
     enable_dashboard(mw)
     fragment = TestClient(mw.app).get("/dashboard/box/header").text
     assert "<td>0</td>" in fragment, "an empty queue is a depth of zero, not an absence"
+
+
+def test_only_a_watchdog_mode_instance_shows_the_sweep_rows() -> None:
+    """The Instance box shows the sweep's interval and its task on a watchdog-mode instance.
+
+    Only that mode runs the sweep. On a resource-mode instance, such as each UC2 module,
+    "Sweep task alive: no" read like a failure of something that never runs there.
+    """
+    from kapps_semantic_middleware import Mode, SemanticMiddleware
+
+    common: dict[str, Any] = {"ogm": object(), "port": 0, "sweep_interval": 12.5}
+    resource = SemanticMiddleware(
+        mode=Mode.RESOURCE,
+        resource_iri="http://example.org/test#Module1",
+        service_class="http://example.org/test#ModuleService",
+        heartbeat_interval=None,
+        **common,
+    )
+    watchdog = SemanticMiddleware(mode=Mode.WATCHDOG, **common)
+
+    def instance_box(mw: SemanticMiddleware) -> str:
+        enable_dashboard(mw)
+        return TestClient(mw.app).get("/dashboard/box/header").text
+
+    resource_box = instance_box(resource)
+    assert "Sweep" not in resource_box
+    assert "Heartbeat task alive" in resource_box, "the other health rows stay"
+
+    watchdog_box = instance_box(watchdog)
+    assert "<tr><th>Sweep interval (s)</th><td>12.5</td></tr>" in watchdog_box
+    assert "<tr><th>Sweep task alive</th><td>no</td></tr>" in watchdog_box, (
+        "the sweep task starts with the instance, and this one was never started"
+    )
+    watchdog._sweep_task = SimpleNamespace(done=lambda: False)  # type: ignore[assignment]
+    running = TestClient(watchdog.app).get("/dashboard/box/header").text
+    assert "<tr><th>Sweep task alive</th><td>yes</td></tr>" in running
 
 
 def test_hiding_a_box_leaves_the_others_in_registration_order() -> None:
@@ -957,7 +1026,7 @@ class GraphStore:
     """The store as the dashboard reaches it, ``middleware.ogm.db``, answered by an rdflib graph.
 
     ``query`` runs the SPARQL that it is given against the graph, and returns the answer in the
-    shape of the interface's ``GraphDB.query``: the SPARQL JSON results, with the bindings
+    shape of the store's ``query``: the SPARQL JSON results, with the bindings
     converted as ``convert_bindings=True`` converts them. So the query that the dashboard sends
     is the query that is tested, not a stand-in for it. ``reads`` counts the queries.
     """
@@ -1160,7 +1229,7 @@ def test_the_query_opens_the_tab_it_names() -> None:
     page = TestClient(mw.app).get("/dashboard", params={"tab": "WMS"}).text
 
     assert _opened_tab(page) == "wms"
-    assert re.findall(r'<label for="tab-([^"]+)"', page) == ["system", "wms"]
+    assert re.findall(r'<label for="tab-([^"]+)"', page) == ["system", "logs", "wms"]
     for spec in mw.dashboard.specs():
         assert f'hx-get="dashboard/box/{spec.id}"' in page, f"box {spec.id} left the page"
 
@@ -1230,3 +1299,21 @@ def test_a_first_tab_that_names_no_tab_is_reported_once(
     reports = [r.getMessage() for r in caplog.records if "'wms'" in r.getMessage()]
     assert len(reports) == 1, [r.getMessage() for r in caplog.records]
     assert "System" in reports[0] and "WMS" in reports[0], reports[0]
+
+
+def test_the_header_names_the_dataset_of_the_store() -> None:
+    """The Instance box names the dataset of the OGM's store, as the store's contract does."""
+    mw = FakeMiddleware()
+    mw.ogm = SimpleNamespace(db=SimpleNamespace(dataset="Tests"))  # type: ignore[attr-defined]
+    enable_dashboard(mw)
+    fragment = TestClient(mw.app).get("/dashboard/box/header").text
+
+    assert "<tr><th>Dataset</th><td>Tests</td></tr>" in fragment
+
+
+def test_the_header_shows_a_dash_for_an_instance_without_a_store() -> None:
+    mw = FakeMiddleware()
+    enable_dashboard(mw)
+    fragment = TestClient(mw.app).get("/dashboard/box/header").text
+
+    assert "<tr><th>Dataset</th><td>&mdash;</td></tr>" in fragment

@@ -124,7 +124,8 @@ def _make_get_handler(
 
     # FastAPI reads `inspect.signature()` before it looks at `__annotations__`. This module
     # has `from __future__ import annotations`. A written-out annotation would reach it as an
-    # unresolvable string. Stamp the signature. This drives request parsing.
+    # unresolvable string. Stamp the signature. This drives request parsing. mypy knows no
+    # `__signature__` attribute on a function, hence the ignore.
     get_parameter.__signature__ = inspect.Signature(  # type: ignore[attr-defined]
         parameters=[],
         return_annotation=response_annotation,
@@ -204,6 +205,7 @@ def _make_put_handler(
     # whether the annotation looks "scalar", and an `Optional` wrapper defeats that inference: it
     # falls back to a query parameter named "body", which every real PUT then 422s against, since
     # a list can never arrive on a query string. Mark it explicitly rather than rely on inference.
+    # mypy knows no `__signature__` attribute on a function, hence the ignore.
     put_parameter.__signature__ = inspect.Signature(  # type: ignore[attr-defined]
         parameters=[
             inspect.Parameter(

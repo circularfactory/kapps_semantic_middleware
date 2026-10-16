@@ -1,6 +1,6 @@
 """Unit tests for KnowledgeGraphConnector.
 
-Pure logic: the OGM is a mock, so no GraphDB is needed. The connector runs ``OGM.fetch`` and
+Pure logic: the OGM is a mock, so no store is needed. The connector runs ``OGM.fetch`` and
 ``OGM.commit`` on a worker thread. An error from either reaches the caller as the same object,
 with its own type and message: a store that refuses a write is not reported as a network failure.
 """
@@ -11,7 +11,7 @@ from unittest.mock import Mock
 
 import pytest
 from kapps_triplestore_interface import IRI
-from kapps_triplestore_interface.exceptions import GraphDbException
+from kapps_triplestore_interface.exceptions import TripleStoreResponseError
 
 from kapps_semantic_middleware.connectors import KnowledgeGraphConnector
 
@@ -19,14 +19,14 @@ INSTANCE = IRI("https://example.org/instances/belt1")
 NAMED_GRAPH = "https://example.org/graphs/state"
 
 
-class StoreRefusal(GraphDbException):
+class StoreRefusal(TripleStoreResponseError):
     """A subclass of the store's error, as a typed SHACL refusal is. It keeps its own type."""
 
 
 def errors() -> list[BaseException]:
     """One error of each kind the OGM can raise: a refusal, bad data, and an untyped failure."""
     return [
-        StoreRefusal("Error while querying GraphDB (500) - <validation report>"),
+        StoreRefusal("Error while querying the store (500) - <validation report>"),
         ValueError("data does not fit the class"),
         Exception("Failed to update instance in database."),
     ]

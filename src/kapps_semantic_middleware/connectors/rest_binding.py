@@ -124,7 +124,7 @@ def _is_a_change(value: Any, previous: Any) -> bool:
 try:
     import httpx
 except ImportError:  # pragma: no cover - depends on httpx being installed
-    httpx = None  # type: ignore[assignment]
+    httpx = None  # type: ignore[assignment]  # None stands in for the missing module
 
 
 def _httpx_module():

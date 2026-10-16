@@ -28,6 +28,7 @@ class TestCopyExamples:
         for name in examples_cli.PAYLOAD_FILES:
             assert (tmp_path / name).exists(), f"{name} should have been copied"
 
+    # vendor-check: off -- the local Docker store's compose file and its configuration.
     def test_the_compose_files_arrive_together_in_a_docker_subdirectory(
         self, tmp_path: Path
     ) -> None:
@@ -36,7 +37,7 @@ class TestCopyExamples:
         Both files, in one directory, and that directory created by the copy rather than
         assumed. `docker-compose.yml` mounts `./graphdb-repo-config.ttl` as a **sibling path**,
         so a copy that flattened them or dropped either one would produce a compose file that
-        starts GraphDB and then fails to create the repository -- with a container error rather
+        starts the store and then fails to create the dataset -- with a container error rather
         than anything naming the missing file.
         """
         examples_cli.copy_examples(tmp_path)
@@ -44,11 +45,13 @@ class TestCopyExamples:
         compose = tmp_path / "docker" / "docker-compose.yml"
         config = tmp_path / "docker" / "graphdb-repo-config.ttl"
         assert compose.is_file(), "the compose file did not reach the copied directory"
-        assert config.is_file(), "the repository config did not reach the copied directory"
+        assert config.is_file(), "the dataset config did not reach the copied directory"
         assert "graphdb-repo-config.ttl" in compose.read_text(encoding="utf-8"), (
             "the compose file no longer mounts the config beside it; the two may have been "
             "split, which this test exists to prevent"
         )
+
+    # vendor-check: on
 
     def test_copy_does_not_create_init_or_context_or_docs(self, tmp_path: Path) -> None:
         """copy_examples does not copy __init__.py, CONTEXT.md, or docs/."""

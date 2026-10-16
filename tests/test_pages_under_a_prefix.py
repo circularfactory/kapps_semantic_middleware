@@ -17,7 +17,7 @@ a prefix, reached in the two ways a prefix happens: an ASGI parent that mounts t
 app, and a proxy that strips the prefix before it forwards, as an HTTP reverse proxy does. The
 second is how such a launcher reaches a process; the inner app never learns the prefix.
 
-No GraphDB, no network.
+No store, no network.
 """
 
 from __future__ import annotations
@@ -161,6 +161,32 @@ def test_the_dashboard_loads_its_scripts_and_boxes(serve: Serve, slash: str) -> 
             f"{url!r} resolves to {resolved}: {response.status_code}"
         )
         assert response.text.strip() != ""
+
+
+@SETUPS
+def test_the_logs_form_posts_to_its_own_instance(serve: Serve) -> None:
+    """The Logs box's form reaches the level route where the page was loaded.
+
+    A box is placed into the page, so a URL in it resolves against the page's address, not
+    against the fragment's.
+    """
+    name = "tests.pages_under_a_prefix.logs_form"
+    mw = FakeMiddleware()
+    enable_dashboard(mw)
+    app, prefix = serve(mw.app)
+    client = TestClient(app)
+    page_url = f"{BASE}{prefix}/dashboard"
+    box = client.get(urljoin(page_url, "dashboard/box/logs")).text
+    [form_url] = re.findall(r'<form [^>]*hx-post="([^"]*)"', box)
+
+    resolved = urljoin(page_url, form_url)
+    try:
+        response = client.post(resolved, json={"logger": name, "level": "ERROR"})
+        assert urlsplit(resolved).path == f"{prefix}/dashboard/logs/level"
+        assert response.status_code == 200, f"{form_url!r} resolves to {resolved}"
+        assert logging.getLogger(name).level == logging.ERROR
+    finally:
+        logging.getLogger(name).setLevel(logging.NOTSET)
 
 
 @SETUPS

@@ -1,11 +1,11 @@
 """Unit tests for the demonstration algorithm's background loop: pause, mode switch, and
 event-driven quiescence.
 
-No GraphDB and no live peer process here -- ``run_algorithm_loop``/``run_algorithm_once`` only
+No store and no live peer process here -- ``run_algorithm_loop``/``run_algorithm_once`` only
 ever touch ``controller.units`` (plain attribute access), ``controller.push()`` and
 ``controller.writes``, so a duck-typed fake stands in for both the ``Controller``
 and its loaded units. The real wiring/fetch/REST path is covered separately, against a live
-GraphDB and a real peer process, in ``tests/test_controller_view.py``.
+store and a real peer process, in ``tests/test_controller_view.py``.
 """
 
 from __future__ import annotations

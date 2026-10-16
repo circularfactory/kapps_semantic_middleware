@@ -1,4 +1,4 @@
-"""`request()` and `claim_next()` on `mw.commit()`, without a triple store.
+"""`issue_operation()` and `claim_next()` on `mw.commit()`, without a triple store.
 
 The OGM is faked at the calls the middleware makes through it: `commit` (either form), whose
 result is the node of each change, `fetch`, and the reads on `ogm.db`. The fake has no direct
@@ -21,7 +21,7 @@ from typing import Iterator
 import pytest
 from kapps_ogm import Create, Update
 from kapps_triplestore_interface import IRI
-from kapps_triplestore_interface.exceptions import GraphDbException
+from kapps_triplestore_interface.exceptions import TripleStoreResponseError
 
 from kapps_semantic_middleware import SemanticMiddleware
 from kapps_semantic_middleware.vocabulary import CFC, SVC
@@ -67,7 +67,7 @@ class _FakeOGM:
             changes = [Update(instance_iri=instance_iri, data=data)]
         changes = list(changes)
         if self.refuse(changes):
-            raise GraphDbException("SHACL validation failed")
+            raise TripleStoreResponseError("SHACL validation failed")
         self.log.append(("commit", changes))
         return [SimpleNamespace(id=change.instance_iri) for change in changes]
 
@@ -131,7 +131,7 @@ def _data(change) -> dict:
 
 
 # --------------------------------------------------------------------------- #
-# request(): one commit creates the Operation, then the receiver is notified.
+# issue_operation(): one commit creates the Operation, then the receiver is notified.
 # --------------------------------------------------------------------------- #
 
 
@@ -139,7 +139,7 @@ def test_a_dispatch_creates_its_operation_in_one_commit_before_the_receiver_is_n
     ogm = _FakeOGM()
     with _receiver(ogm.log) as address:
         ogm.db.address = address
-        with _middleware(ogm).request(
+        with _middleware(ogm).issue_operation(
             capability_class=CAPABILITY_CLASS, operation_class=OPERATION_CLASS
         ) as op:
             op.data[str(TORQUE)] = ["4.2 Nm"]
@@ -168,12 +168,33 @@ def test_a_refused_creation_notifies_no_receiver():
     ogm = _FakeOGM(refuse=lambda changes: True)
     with _receiver(ogm.log) as address:
         ogm.db.address = address
-        with pytest.raises(GraphDbException):
-            with _middleware(ogm).request(
+        with pytest.raises(TripleStoreResponseError):
+            with _middleware(ogm).issue_operation(
                 capability_class=CAPABILITY_CLASS, operation_class=OPERATION_CLASS
             ) as op:
                 op.data[str(TORQUE)] = ["4.2 Nm"]
     assert ogm.log == []
+
+
+def test_the_deprecated_request_warns_names_issue_operation_and_still_issues_the_operation():
+    ogm = _FakeOGM()
+    with _receiver(ogm.log) as address:
+        ogm.db.address = address
+        with pytest.warns(DeprecationWarning, match=r"issue_operation\(\)") as caught:
+            with _middleware(ogm).request(
+                capability_class=CAPABILITY_CLASS, operation_class=OPERATION_CLASS
+            ) as op:
+                op.data[str(TORQUE)] = ["4.2 Nm"]
+
+    # The warning points at the caller, not at the alias.
+    assert caught[0].filename == __file__
+    # The effect is that of issue_operation(): one commit creates the Operation, then the
+    # receiver is notified.
+    assert [entry[0] for entry in ogm.log] == ["commit", "notification"]
+    (creation,) = ogm.log[0][1]
+    assert isinstance(creation, Create)
+    assert (creation.class_iri, creation.instance_iri) == (OPERATION_CLASS, op.iri)
+    assert _data(creation)[str(TORQUE)] == ["4.2 Nm"]
 
 
 # --------------------------------------------------------------------------- #
@@ -214,7 +235,7 @@ def _commits(ogm) -> list:
 
 def test_a_refused_done_records_failed_with_its_provenance_and_raises_the_stores_error():
     ogm = _FakeOGM(refuse=_sets_status("done"))
-    with pytest.raises(GraphDbException, match="SHACL validation failed"):
+    with pytest.raises(TripleStoreResponseError, match="SHACL validation failed"):
         with _queued(ogm).claim_next() as claimed:
             claimed.result = "4 screws out"
 
@@ -274,7 +295,7 @@ def test_a_refused_claim_runs_no_body_and_writes_nothing():
     ogm = _FakeOGM(refuse=_sets_status("running"))
     mw = _queued(ogm)
     ran = []
-    with pytest.raises(GraphDbException):
+    with pytest.raises(TripleStoreResponseError):
         with mw.claim_next():
             ran.append(True)
     assert ran == []

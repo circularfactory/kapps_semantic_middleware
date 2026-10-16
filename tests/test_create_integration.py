@@ -1,9 +1,11 @@
-"""`mw.create()` and its predefined scopes against a live GraphDB.
+"""`mw.create()` and its predefined scopes against a live store.
 
 The OGM is the real one, subclassed only to record each commit it makes, so "one commit" is
 counted at the seam that `mw.create()` writes through. A refusal comes from the store's own SHACL
 engine or from its check that an instance to create does not exist yet. Skipped when the
-GRAPHDB_* variables are absent (see conftest). The unit counterpart is `test_create_unit.py`.
+TRIPLESTORE_* variables are absent (see conftest). The unit counterpart is `test_create_unit.py`.
+A test that needs a shape sets it with the store's `shapes_set`, which replaces every shape
+of the dataset, and removes every shape again at its end.
 """
 
 from __future__ import annotations
@@ -24,8 +26,9 @@ from kapps_triplestore_interface.exceptions import (
 )
 from rdflib.namespace import RDF
 
+from _explicit import explicit_select
 from kapps_semantic_middleware import SemanticMiddleware
-from kapps_semantic_middleware.credentials import graphdb_for
+from kapps_semantic_middleware.credentials import triplestore_for
 from kapps_semantic_middleware.errors import NotificationUndelivered
 from kapps_semantic_middleware.operation import operation
 from kapps_semantic_middleware.possession import workpiece
@@ -73,9 +76,6 @@ _TBOX = f"""
 _PORT = 8993
 _ADDRESS = f"http://127.0.0.1:{_PORT}"
 
-# The graph a GraphDB SHACL repository reads its shapes from.
-_SHAPES_GRAPH = IRI("http://rdf4j.org/schema/rdf4j#SHACLShapeGraph")
-
 
 def _status_shape(*allowed: str) -> str:
     """A shape that admits only the given values of an Operation's status."""
@@ -106,15 +106,15 @@ class _RecordingOGM(OGM):
 
 def _seed(db) -> None:
     seed.seed_scenario1(db)
-    db.import_statements(_TBOX, content_type="application/x-turtle")
+    db.graph_add(_TBOX, content_type="application/x-turtle")
 
 
-def _middleware(graphdb, resource: IRI = WMS) -> SemanticMiddleware:
+def _middleware(store, resource: IRI = WMS) -> SemanticMiddleware:
     return SemanticMiddleware(
         mode="resource",
         resource_iri=str(resource),
         service_class=seed.HELLO_SERVICE_CLASS,
-        ogm=_RecordingOGM(graphdb_for(graphdb.repository)),
+        ogm=_RecordingOGM(triplestore_for(store.dataset)),
         host="127.0.0.1",
         port=_PORT,
         heartbeat_interval=None,
@@ -128,7 +128,7 @@ def _values(db, subject: IRI, predicate: IRI) -> list[str]:
 def _explicit_statements(db) -> set:
     """Every explicit statement of the default graph, to compare before and after."""
     result = db.query(
-        "SELECT ?s ?p ?o FROM <http://www.ontotext.com/explicit> WHERE { ?s ?p ?o }",
+        explicit_select(["?s", "?p", "?o"], "?s ?p ?o"),
         convert_bindings=True,
     )
     return {(str(b["s"]), str(b["p"]), str(b["o"])) for b in result["results"]["bindings"]}
@@ -152,10 +152,10 @@ def _kinds(changes: list) -> list[tuple[str, str]]:
 # --------------------------------------------------------------------------- #
 
 
-def _register_receiver_at(graphdb, address: str) -> IRI:
+def _register_receiver_at(store, address: str) -> IRI:
     """The hello resource's Service and Workflow at ``address``, as if it had started there.
     Returns its Capability."""
-    ogm = OGM(db=graphdb)
+    ogm = OGM(db=store)
     service = mint_service_iri(seed.HELLO_RESOURCE, address)
     capability = mint_capability_iri(seed.HELLO_RESOURCE, "hello_world")
     register_service(
@@ -178,43 +178,40 @@ def _register_receiver_at(graphdb, address: str) -> IRI:
     return capability
 
 
-def _queued_operation(graphdb) -> tuple[SemanticMiddleware, IRI]:
+def _queued_operation(store) -> tuple[SemanticMiddleware, IRI]:
     """The hello resource registered at its address, and one queued Operation in its queue."""
-    _seed(graphdb)
-    ogm = OGM(db=graphdb)
-    capability = _register_receiver_at(graphdb, _ADDRESS)
+    _seed(store)
+    ogm = OGM(db=store)
+    capability = _register_receiver_at(store, _ADDRESS)
     op = mint_operation_iri(CFC.Operation)
     create_operation(
         ogm, operation_iri=op, operation_class=CFC.Operation, capability_iri=capability
     )
-    mw = _middleware(graphdb, seed.HELLO_RESOURCE)
+    mw = _middleware(store, seed.HELLO_RESOURCE)
     mw._operation_queue.append(op)  # as its event trigger does
     return mw, op
 
 
-def test_a_decision_snapshot_and_its_operations_done_land_in_one_commit(graphdb):
-    mw, op = _queued_operation(graphdb)
+def test_a_decision_snapshot_and_its_operations_done_land_in_one_commit(store):
+    mw, op = _queued_operation(store)
     with mw.claim_next() as claimed:
         with mw.create(SNAPSHOT, ClassScope()) as snapshot:
             snapshot.update({DECISION: ["unscrew"], ABOUT: [claimed.iri]})
-        assert _statements_about(graphdb, snapshot.iri) == []  # nothing before the exit
+        assert _statements_about(store, snapshot.iri) == []  # nothing before the exit
         claimed.result = "unscrew"
 
     claim, done = mw.ogm.commits
     assert _kinds(done) == [("Update", str(op)), ("Create", str(snapshot.iri))]
-    assert _values(graphdb, op, SVC.operationStatus) == [OperationStatus.DONE]
-    assert graphdb.triple_exists((snapshot.iri, RDF.type, SNAPSHOT))
-    assert _values(graphdb, snapshot.iri, DECISION) == ["unscrew"]
-    assert _values(graphdb, snapshot.iri, ABOUT) == [str(op)]
+    assert _values(store, op, SVC.operationStatus) == [OperationStatus.DONE]
+    assert store.triple_exists((snapshot.iri, RDF.type, SNAPSHOT))
+    assert _values(store, snapshot.iri, DECISION) == ["unscrew"]
+    assert _values(store, snapshot.iri, ABOUT) == [str(op)]
 
 
-def test_a_refused_done_leaves_neither_the_done_nor_the_decision_snapshot(graphdb):
-    mw, op = _queued_operation(graphdb)
-    graphdb.import_statements(
-        _status_shape("queued", "running", "failed"),  # every status but done
-        graph_iri=_SHAPES_GRAPH,
-        content_type="application/x-turtle",
-    )
+def test_a_refused_done_leaves_neither_the_done_nor_the_decision_snapshot(store):
+    mw, op = _queued_operation(store)
+    # The shape admits every status but done.
+    store.shapes_set(_status_shape("queued", "running", "failed"), "text/turtle")
     try:
         with pytest.raises(TripleStoreInterfaceError, match="ValidationReport"):
             with mw.claim_next() as claimed:
@@ -222,16 +219,16 @@ def test_a_refused_done_leaves_neither_the_done_nor_the_decision_snapshot(graphd
                     snapshot.update({DECISION: ["unscrew"], ABOUT: [claimed.iri]})
                 claimed.result = "unscrew"
     finally:
-        graphdb.clear_graph(_SHAPES_GRAPH)
+        store.shapes_set("", "text/turtle")
 
-    assert _values(graphdb, op, SVC.operationStatus) == [OperationStatus.FAILED]
-    assert _statements_about(graphdb, snapshot.iri) == []
+    assert _values(store, op, SVC.operationStatus) == [OperationStatus.FAILED]
+    assert _statements_about(store, snapshot.iri) == []
 
 
-def test_a_creation_in_an_async_commit_joins_its_exit(graphdb):
+def test_a_creation_in_an_async_commit_joins_its_exit(store):
     """The asynchronous form runs the commit's entry in a worker thread; the body still finds
     the open commit."""
-    mw, op = _queued_operation(graphdb)
+    mw, op = _queued_operation(store)
     running = [Update(instance_iri=op, data={str(SVC.operationStatus): ["running"]})]
     done = [Update(instance_iri=op, data={str(SVC.operationStatus): ["done"]})]
 
@@ -246,7 +243,7 @@ def test_a_creation_in_an_async_commit_joins_its_exit(graphdb):
         [("Update", str(op))],
         [("Update", str(op)), ("Create", str(snapshot))],
     ]
-    assert _values(graphdb, snapshot, DECISION) == ["keep"]
+    assert _values(store, snapshot, DECISION) == ["keep"]
 
 
 # --------------------------------------------------------------------------- #
@@ -254,44 +251,44 @@ def test_a_creation_in_an_async_commit_joins_its_exit(graphdb):
 # --------------------------------------------------------------------------- #
 
 
-def test_a_creation_alone_commits_at_its_exit(graphdb):
-    _seed(graphdb)
-    mw = _middleware(graphdb)
+def test_a_creation_alone_commits_at_its_exit(store):
+    _seed(store)
+    mw = _middleware(store)
     with mw.create(SNAPSHOT, ClassScope()) as snapshot:
         snapshot.update({DECISION: ["keep"]})
-        assert _statements_about(graphdb, snapshot.iri) == []
+        assert _statements_about(store, snapshot.iri) == []
 
     assert [_kinds(changes) for changes in mw.ogm.commits] == [[("Create", str(snapshot.iri))]]
     assert str(snapshot.iri).startswith(f"{SNAPSHOT}_")
-    assert graphdb.triple_exists((snapshot.iri, RDF.type, SNAPSHOT))
-    assert _values(graphdb, snapshot.iri, DECISION) == ["keep"]
+    assert store.triple_exists((snapshot.iri, RDF.type, SNAPSHOT))
+    assert _values(store, snapshot.iri, DECISION) == ["keep"]
 
 
-def test_an_error_in_the_body_of_a_creation_alone_writes_nothing(graphdb):
-    _seed(graphdb)
-    mw = _middleware(graphdb)
-    before = _explicit_statements(graphdb)
+def test_an_error_in_the_body_of_a_creation_alone_writes_nothing(store):
+    _seed(store)
+    mw = _middleware(store)
+    before = _explicit_statements(store)
     with pytest.raises(RuntimeError, match="camera failed"):
         with mw.create(SNAPSHOT, ClassScope()) as snapshot:
             snapshot.update({DECISION: ["keep"]})
             raise RuntimeError("camera failed")
     assert mw.ogm.commits == []
-    assert _explicit_statements(graphdb) == before
+    assert _explicit_statements(store) == before
 
 
-def test_an_iri_that_the_store_already_holds_is_refused(graphdb):
-    _seed(graphdb)
-    mw = _middleware(graphdb)
+def test_an_iri_that_the_store_already_holds_is_refused(store):
+    _seed(store)
+    mw = _middleware(store)
     with mw.create(SNAPSHOT, ClassScope()) as existing:
         existing.update({DECISION: ["keep"]})
-    before = _explicit_statements(graphdb)
+    before = _explicit_statements(store)
 
     with pytest.raises(PreconditionFailedError):
         with mw.create(SNAPSHOT, ClassScope(), instance_iri=str(existing.iri)) as again:
             again.update({DECISION: ["discard"]})
 
-    assert _explicit_statements(graphdb) == before
-    assert _values(graphdb, existing.iri, DECISION) == ["keep"]
+    assert _explicit_statements(store) == before
+    assert _values(store, existing.iri, DECISION) == ["keep"]
 
 
 # --------------------------------------------------------------------------- #
@@ -299,25 +296,25 @@ def test_an_iri_that_the_store_already_holds_is_refused(graphdb):
 # --------------------------------------------------------------------------- #
 
 
-def test_a_workpiece_without_a_possessor_raises_at_entry_before_any_write(graphdb):
-    _seed(graphdb)
-    mw = _middleware(graphdb)
-    before = _explicit_statements(graphdb)
+def test_a_workpiece_without_a_possessor_raises_at_entry_before_any_write(store):
+    _seed(store)
+    mw = _middleware(store)
+    before = _explicit_statements(store)
     ran = []
     with pytest.raises(ValueError, match="possessor"):
         with mw.create(seed.BOX_CLASS, workpiece(ClassScope(), possessor=None)):
             ran.append(True)
     assert ran == []
     assert mw.ogm.commits == []
-    assert _explicit_statements(graphdb) == before
+    assert _explicit_statements(store) == before
 
 
 def test_a_workpiece_whose_possessor_has_no_state_is_created_with_that_state_in_one_commit(
-    graphdb,
+    store,
 ):
-    _seed(graphdb)
-    mw = _middleware(graphdb)
-    assert _values(graphdb, WMS, CFC.hasPossessor) == []
+    _seed(store)
+    mw = _middleware(store)
+    assert _values(store, WMS, CFC.hasPossessor) == []
     with mw.create(seed.BOX_CLASS, workpiece(ClassScope(), possessor=mw.resource)) as box:
         pass
 
@@ -325,16 +322,16 @@ def test_a_workpiece_whose_possessor_has_no_state_is_created_with_that_state_in_
     assert [_kinds(changes) for changes in mw.ogm.commits] == [
         [("Create", str(box.iri)), ("Create", str(state)), ("Update", str(WMS))]
     ]
-    assert graphdb.triple_exists((state, RDF.type, CFC.PossessionState))
-    assert _values(graphdb, WMS, CFC.hasPossessor) == [str(state)]
-    assert _values(graphdb, box.iri, CFC.hasPossessedWorkpiece) == [str(state)]
+    assert store.triple_exists((state, RDF.type, CFC.PossessionState))
+    assert _values(store, WMS, CFC.hasPossessor) == [str(state)]
+    assert _values(store, box.iri, CFC.hasPossessedWorkpiece) == [str(state)]
 
 
 def test_opening_a_transport_is_one_commit_of_the_operation_the_box_and_the_first_possession(
-    graphdb,
+    store,
 ):
-    _seed(graphdb)
-    mw = _middleware(graphdb)
+    _seed(store)
+    mw = _middleware(store)
     with mw.create(
         TRANSPORT, operation(ClassScope(), capability=TRANSPORT_CAPABILITY)
     ) as transport:
@@ -342,7 +339,7 @@ def test_opening_a_transport_is_one_commit_of_the_operation_the_box_and_the_firs
         with mw.create(seed.BOX_CLASS, workpiece(ClassScope(), possessor=mw.resource)) as box:
             pass
         transport.update({HAS_BOX: [box.iri]})
-        assert _statements_about(graphdb, box.iri) == []
+        assert _statements_about(store, box.iri) == []
 
     state = IRI(f"{WMS}_possession")
     ((changes),) = mw.ogm.commits
@@ -353,16 +350,16 @@ def test_opening_a_transport_is_one_commit_of_the_operation_the_box_and_the_firs
         ("Update", str(WMS)),
     ]
     assert isinstance(changes[0], Create)
-    assert graphdb.triple_exists((transport.iri, RDF.type, TRANSPORT))
-    assert _values(graphdb, transport.iri, CFC.implementsCapability) == [str(TRANSPORT_CAPABILITY)]
-    assert _values(graphdb, transport.iri, SVC.operationStatus) == [OperationStatus.QUEUED]
-    assert _values(graphdb, transport.iri, HAS_BOX) == [str(box.iri)]
-    assert _values(graphdb, box.iri, CFC.hasPossessedWorkpiece) == [str(state)]
-    assert _values(graphdb, WMS, CFC.hasPossessor) == [str(state)]
+    assert store.triple_exists((transport.iri, RDF.type, TRANSPORT))
+    assert _values(store, transport.iri, CFC.implementsCapability) == [str(TRANSPORT_CAPABILITY)]
+    assert _values(store, transport.iri, SVC.operationStatus) == [OperationStatus.QUEUED]
+    assert _values(store, transport.iri, HAS_BOX) == [str(box.iri)]
+    assert _values(store, box.iri, CFC.hasPossessedWorkpiece) == [str(state)]
+    assert _values(store, WMS, CFC.hasPossessor) == [str(state)]
 
 
 # --------------------------------------------------------------------------- #
-# request(): a failed notification undoes nothing of what its commit created.
+# issue_operation(): a failed notification undoes nothing of what its commit created.
 # --------------------------------------------------------------------------- #
 
 
@@ -372,18 +369,18 @@ def _free_port() -> int:
         return probe.getsockname()[1]
 
 
-def test_a_failed_notification_keeps_a_workpiece_created_in_the_request(graphdb):
+def test_a_failed_notification_keeps_a_workpiece_created_in_the_request(store):
     """The box joins the Operation's commit. A failed notification undoes none of it: the
     Operation stays queued with its box, the WMS's new possession state and the WMS's link to
     it."""
-    _seed(graphdb)
+    _seed(store)
     # A reachable-looking receiver: its address is a port where nothing listens.
-    _register_receiver_at(graphdb, f"http://127.0.0.1:{_free_port()}")
-    mw = _middleware(graphdb)
-    before = _explicit_statements(graphdb)
+    _register_receiver_at(store, f"http://127.0.0.1:{_free_port()}")
+    mw = _middleware(store)
+    before = _explicit_statements(store)
 
     with pytest.raises(NotificationUndelivered) as raised:
-        with mw.request(
+        with mw.issue_operation(
             capability_class=seed.HELLO_CAPABILITY_CLASS, operation_class=str(TRANSPORT)
         ) as op:
             with mw.create(seed.BOX_CLASS, workpiece(ClassScope(), possessor=mw.resource)) as box:
@@ -400,11 +397,11 @@ def test_a_failed_notification_keeps_a_workpiece_created_in_the_request(graphdb)
     ]
     assert isinstance(raised.value.__cause__, httpx.ConnectError)
     assert len(mw.ogm.commits) == 1  # nothing after the request's commit
-    assert _values(graphdb, op.iri, SVC.operationStatus) == [OperationStatus.QUEUED]
-    assert _values(graphdb, op.iri, HAS_BOX) == [str(box.iri)]
-    assert _values(graphdb, box.iri, CFC.hasPossessedWorkpiece) == [str(state)]
-    assert _values(graphdb, WMS, CFC.hasPossessor) == [str(state)]
-    assert before < _explicit_statements(graphdb)
+    assert _values(store, op.iri, SVC.operationStatus) == [OperationStatus.QUEUED]
+    assert _values(store, op.iri, HAS_BOX) == [str(box.iri)]
+    assert _values(store, box.iri, CFC.hasPossessedWorkpiece) == [str(state)]
+    assert _values(store, WMS, CFC.hasPossessor) == [str(state)]
+    assert before < _explicit_statements(store)
 
 
 # --------------------------------------------------------------------------- #
@@ -412,9 +409,9 @@ def test_a_failed_notification_keeps_a_workpiece_created_in_the_request(graphdb)
 # --------------------------------------------------------------------------- #
 
 
-def test_a_workpiece_created_in_the_body_of_a_handover_commits_on_its_own(graphdb):
-    seed.seed_handover(graphdb, OGM(db=graphdb))
-    mw = _middleware(graphdb, seed.HANDOVER_SOURCE)
+def test_a_workpiece_created_in_the_body_of_a_handover_commits_on_its_own(store):
+    seed.seed_handover(store, OGM(db=store))
+    mw = _middleware(store, seed.HANDOVER_SOURCE)
     with mw.handover(mode=MES.Pass, workpiece=seed.HANDOVER_BOX, counterpart=seed.HANDOVER_DEST):
         with mw.create(
             seed.BOX_CLASS, workpiece(ClassScope(), possessor=mw.resource)
@@ -426,5 +423,5 @@ def test_a_workpiece_created_in_the_body_of_a_handover_commits_on_its_own(graphd
     dest_state = IRI(f"{seed.HANDOVER_DEST}_possession")
     assert len(mw.ogm.commits) == 2  # the clean exit wrote nothing more
     assert _kinds(mw.ogm.commits[1]) == [("Create", str(second_box.iri))]
-    assert _values(graphdb, second_box.iri, CFC.hasPossessedWorkpiece) == [str(source_state)]
-    assert _values(graphdb, seed.HANDOVER_BOX, CFC.hasPossessedWorkpiece) == [str(dest_state)]
+    assert _values(store, second_box.iri, CFC.hasPossessedWorkpiece) == [str(source_state)]
+    assert _values(store, seed.HANDOVER_BOX, CFC.hasPossessedWorkpiece) == [str(dest_state)]

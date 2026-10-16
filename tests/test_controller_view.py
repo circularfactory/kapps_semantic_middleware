@@ -44,7 +44,7 @@ from kapps_semantic_middleware.connectors.rest_binding import (
 )
 from kapps_semantic_middleware.vocabulary import INF, SVC
 
-from conftest import requires_graphdb  # noqa: E402
+from conftest import requires_store  # noqa: E402
 
 # Repo root, so `demo.transferunits...` resolves -- pytest's own "prepend" import mode
 # already puts this file's own directory (tests/) on sys.path (what makes the plain
@@ -56,12 +56,12 @@ from demo.transferunits.controller import Controller  # noqa: E402
 from demo.transferunits.plc.transfer_unit import TransferUnit  # noqa: E402
 
 
-def _publish_service(graphdb, resource_iri, address: str) -> None:
+def _publish_service(store, resource_iri, address: str) -> None:
     """Give ``resource_iri`` a live Service by hand -- the way a real middleware's own
     ``_register_service`` would, without needing that middleware to actually run.
     Mirrors ``test_scenario3_wiring_integration.py``'s own helper."""
     service_iri = f"{resource_iri}Service"
-    graphdb.query(
+    store.query(
         f"""
         INSERT DATA {{
           <{service_iri}> a <{SVC.Service}> ;
@@ -94,27 +94,27 @@ def _view_query() -> str:
 
 
 @pytest.fixture
-def ogm(graphdb):
-    return OGM(db=graphdb)
+def ogm(store):
+    return OGM(db=store)
 
 
 @pytest.fixture
-def factory4(graphdb, ogm):
+def factory4(store, ogm):
     """4 seeded TransferUnits, none live yet."""
-    seed.seed_factory(graphdb, ogm, units=4)
+    seed.seed_factory(store, ogm, units=4)
     return ogm
 
 
-@requires_graphdb
+@requires_store
 class TestView:
     """The Control Expert's step 1: the query is the whole view."""
 
     def test_even_unit_index_heuristic_yields_exactly_units_2_and_4_of_4(
-        self, graphdb, factory4
+        self, store, factory4
     ):
         for n in (1, 2, 3, 4):
             _publish_service(
-                graphdb, seed._mint_transfer_unit_iri(n), f"http://127.0.0.1:1900{n}"
+                store, seed._mint_transfer_unit_iri(n), f"http://127.0.0.1:1900{n}"
             )
         controller = Controller(resource_iri="http://example.org/CS-view1", ogm=factory4, port=0)
 
@@ -125,10 +125,10 @@ class TestView:
             str(seed._mint_transfer_unit_iri(4)),
         }
 
-    def test_offline_unit_is_absent_from_the_view(self, graphdb, factory4):
+    def test_offline_unit_is_absent_from_the_view(self, store, factory4):
         """Unit 2 never gets a Service -- offline at query time, so it is simply not a
         hit, rather than a hit the caller must separately filter out."""
-        _publish_service(graphdb, seed._mint_transfer_unit_iri(4), "http://127.0.0.1:19004")
+        _publish_service(store, seed._mint_transfer_unit_iri(4), "http://127.0.0.1:19004")
         controller = Controller(resource_iri="http://example.org/CS-view2", ogm=factory4, port=0)
 
         result = {str(r) for r in controller.view(_view_query())}
@@ -148,12 +148,12 @@ class TestView:
         assert "%" not in source  # no heuristic math either
 
 
-@requires_graphdb
+@requires_store
 class TestWireView:
     """The Control Expert's steps 2-4: recognition registers REST connectors, never MQTT."""
 
-    def test_registers_only_rest_connectors(self, graphdb, factory4, unit_scope):
-        _publish_service(graphdb, seed._mint_transfer_unit_iri(2), "http://127.0.0.1:19102")
+    def test_registers_only_rest_connectors(self, store, factory4, unit_scope):
+        _publish_service(store, seed._mint_transfer_unit_iri(2), "http://127.0.0.1:19102")
         controller = Controller(resource_iri="http://example.org/CS-wire1", ogm=factory4, port=0)
         hits = controller.view(_view_query())
 
@@ -171,11 +171,11 @@ class TestWireView:
             for registration in registrations
         )
 
-    def test_six_connectors_for_one_units_four_parameters(self, graphdb, factory4, unit_scope):
+    def test_six_connectors_for_one_units_four_parameters(self, store, factory4, unit_scope):
         """2 belts (readwrite -> 2 connectors each) + 2 barriers (read -> 1 each) = 6,
         the same count MQTT wiring reaches for one unit
         (``test_scenario3_wiring_integration.py::TestRegistrationCount``)."""
-        _publish_service(graphdb, seed._mint_transfer_unit_iri(2), "http://127.0.0.1:19103")
+        _publish_service(store, seed._mint_transfer_unit_iri(2), "http://127.0.0.1:19103")
         controller = Controller(resource_iri="http://example.org/CS-wire2", ogm=factory4, port=0)
         hits = controller.view(_view_query())
 
@@ -243,17 +243,17 @@ async def _wait_for_field(url: str, value_field: str, expected, timeout: float =
     raise AssertionError(f"{url} never reported {value_field}={expected!r} (last error: {last_error})")
 
 
-def _spawn_peer_middleware(unit_index: int, repository: str) -> subprocess.Popen:
+def _spawn_peer_middleware(unit_index: int, dataset: str) -> subprocess.Popen:
     """Spawn a real unit middleware as a genuine OS process, never a thread
     in this test process -- see the module docstring for why that distinction is
     load-bearing here, not just a style preference. Wires real MQTT connectors, on its
     own in-process broker; nothing here needs a PLC, since these tests only
     exercise the REST side.
 
-    ``repository`` must be passed explicitly, and must be the one this test seeded. The
-    child names its repository in code and ignores GRAPHDB_REPOSITORY, so
+    ``dataset`` must be passed explicitly, and must be the one this test seeded. The
+    child names its dataset in code and ignores TRIPLESTORE_DATASET, so
     inheriting the environment is no longer enough to put both ends in the same graph --
-    without this the peer would join the demo's repository and publish its svc:address
+    without this the peer would join the demo's dataset and publish its svc:address
     where the test is not looking.
     """
     return subprocess.Popen(
@@ -265,8 +265,8 @@ def _spawn_peer_middleware(unit_index: int, repository: str) -> subprocess.Popen
             str(unit_index),
             "--port",
             "0",
-            "--repository",
-            repository,
+            "--dataset",
+            dataset,
         ],
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
@@ -276,7 +276,7 @@ def _spawn_peer_middleware(unit_index: int, repository: str) -> subprocess.Popen
     )
 
 
-async def _await_service_address(graphdb, resource_iri, timeout: float = 30.0) -> str:
+async def _await_service_address(store, resource_iri, timeout: float = 30.0) -> str:
     """Poll the graph for ``resource_iri``'s ``svc:address`` -- the same signal
     ``_register_service`` publishes once the middleware's own lifespan has actually
     started, reachable across a process boundary because it goes through
@@ -288,7 +288,7 @@ async def _await_service_address(graphdb, resource_iri, timeout: float = 30.0) -
     }}
     """
     while time.monotonic() < deadline:
-        result = graphdb.query(sparql, convert_bindings=True)
+        result = store.query(sparql, convert_bindings=True)
         bindings = (
             result.get("results", {}).get("bindings", []) if isinstance(result, dict) else []
         )
@@ -310,25 +310,25 @@ def _terminate(proc: subprocess.Popen, timeout: float = 10.0) -> None:
 
 
 @pytest_asyncio.fixture
-async def running_peer_and_controller(graphdb, unit_scope):
+async def running_peer_and_controller(store, unit_scope):
     """A real unit middleware, in its own OS process, plus a real Controller wired onto
     it through the view mechanism, on a genuine uvicorn thread in *this* process (see
     the module docstring for why the peer specifically cannot share this process).
     """
-    seeding_ogm = OGM(db=graphdb)
-    seed.seed_factory(graphdb, seeding_ogm, units=2)
+    seeding_ogm = OGM(db=store)
+    seed.seed_factory(store, seeding_ogm, units=2)
     unit_iri = seed._mint_transfer_unit_iri(2)
 
-    peer_proc = _spawn_peer_middleware(2, graphdb.repository)
+    peer_proc = _spawn_peer_middleware(2, store.dataset)
     try:
-        peer_address = await _await_service_address(graphdb, unit_iri)
+        peer_address = await _await_service_address(store, unit_iri)
 
         controller_sock = _bind_free_socket("127.0.0.1")
         controller_port = controller_sock.getsockname()[1]
         controller = Controller(
             resource_iri="http://example.org/CS-e2e",
             service_class=str(seed.CONTROL_STATION_SERVICE_CLASS),
-            ogm=OGM(db=graphdb),
+            ogm=OGM(db=store),
             host="127.0.0.1",
             port=controller_port,
             heartbeat_interval=None,
@@ -359,7 +359,7 @@ async def running_peer_and_controller(graphdb, unit_scope):
         _terminate(peer_proc)
 
 
-@requires_graphdb
+@requires_store
 @pytest.mark.asyncio
 class TestDrivingAView:
     """The Control Expert's steps 3-5, over real REST between two real middleware processes."""

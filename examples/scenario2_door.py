@@ -18,13 +18,13 @@ import time
 
 import httpx
 import uvicorn
-from kapps_triplestore_interface import GraphDB, IRI
+from kapps_triplestore_interface import IRI, TripleStore
 from rdflib.namespace import RDF
 
 from handlers import door_close, door_open, door_status, reset_door
 from kapps_ogm import OGM
 from kapps_semantic_middleware import Mode, SemanticMiddleware
-from kapps_semantic_middleware.credentials import DEMO_REPOSITORY, graphdb_for
+from kapps_semantic_middleware.credentials import DEMO_DATASET, triplestore_for
 from kapps_semantic_middleware.registration import (
     mint_capability_iri,
     mint_state_property_iri,
@@ -73,9 +73,9 @@ def _start_server(middleware: SemanticMiddleware, port: int) -> tuple[uvicorn.Se
     return server, thread
 
 
-def step_1_seed_clean_repository(db: GraphDB) -> None:
-    """Clear the repository, load the Scenario 2 ontology, and create the door + robot."""
-    print("\nStep 1 — Seed a Clean Repository")
+def step_1_seed_clean_dataset(db: TripleStore) -> None:
+    """Clear the dataset, load the Scenario 2 ontology, and create the door + robot."""
+    print("\nStep 1 — Seed a Clean Dataset")
     reset_door()
     seed.seed_scenario2(db)
     door_exists = db.triple_exists((seed.DOOR_RESOURCE, RDF.type, seed.DOOR_RESOURCE_CLASS))
@@ -86,7 +86,7 @@ def step_1_seed_clean_repository(db: GraphDB) -> None:
     print(f"Robot resource instantiated: {robot_exists}")
 
 
-def step_2_start_door_middleware(db: GraphDB) -> tuple[SemanticMiddleware, uvicorn.Server, threading.Thread]:
+def step_2_start_door_middleware(db: TripleStore) -> tuple[SemanticMiddleware, uvicorn.Server, threading.Thread]:
     """Register the two door workflows + live status StateProperty, and start its server."""
     print("\nStep 2 — Start the Door Middleware")
     door = SemanticMiddleware(
@@ -115,7 +115,7 @@ def step_2_start_door_middleware(db: GraphDB) -> tuple[SemanticMiddleware, uvico
     return door, server, thread
 
 
-def step_3_inspect_registration(db: GraphDB, ogm: OGM) -> str:
+def step_3_inspect_registration(db: TripleStore, ogm: OGM) -> str:
     """Verify the door workflows, state property, and reachable endpoints are in the graph.
 
     The Service IRI is *discovered* through ``svc:isServiceOf`` rather than reconstructed from
@@ -191,7 +191,7 @@ def step_4_robot_passes_through_door(robot_ogm, door_resource_iri) -> None:
     print("  drove back through the door")
 
 
-def step_5_verify_state_not_persisted(db: GraphDB, service_iri: str) -> None:
+def step_5_verify_state_not_persisted(db: TripleStore, service_iri: str) -> None:
     """Confirm the live status value is never written to the graph."""
     print("\nStep 5 — The Live Status is Never Persisted")
     status_sp = mint_state_property_iri(service_iri, "door_status")
@@ -201,7 +201,7 @@ def step_5_verify_state_not_persisted(db: GraphDB, service_iri: str) -> None:
 
 
 def step_6_shutdown(
-    db: GraphDB,
+    db: TripleStore,
     service_iri: str,
     robot_service: IRI,
     servers: list[tuple[uvicorn.Server, threading.Thread]],
@@ -233,10 +233,10 @@ def step_6_shutdown(
 
 def main() -> None:
     """Run the complete Scenario 2 lifecycle."""
-    db = graphdb_for(DEMO_REPOSITORY)
-    print(f"Connected to GraphDB repository: {db.repository}")
+    db = triplestore_for(DEMO_DATASET)
+    print(f"Connected to the dataset: {db.dataset}")
 
-    step_1_seed_clean_repository(db)
+    step_1_seed_clean_dataset(db)
     door_mw, server, thread = step_2_start_door_middleware(db)
     running: list[tuple[uvicorn.Server, threading.Thread]] = [(server, thread)]
     service_iri: str | None = None
@@ -249,7 +249,7 @@ def main() -> None:
             mode=Mode.RESOURCE,
             resource_iri=seed.MOBILE_ROBOT,
             service_class=seed.MOBILE_ROBOT_SERVICE_CLASS,
-            ogm=OGM(db=graphdb_for(DEMO_REPOSITORY)),
+            ogm=OGM(db=triplestore_for(DEMO_DATASET)),
             host="127.0.0.1",
             port=ROBOT_PORT,
         )

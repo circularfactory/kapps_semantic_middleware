@@ -20,15 +20,15 @@ from fastapi.testclient import TestClient
 from kapps_ogm import OGM
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from conftest import requires_graphdb  # noqa: E402
+from conftest import requires_store  # noqa: E402
 from demo.transferunits import algorithm, seed, station_board  # noqa: E402
 from demo.transferunits.controller import Controller  # noqa: E402
 from kapps_semantic_middleware.vocabulary import SVC  # noqa: E402
 
 
-def _publish_service(graphdb, resource_iri, address: str) -> None:
+def _publish_service(store, resource_iri, address: str) -> None:
     service_iri = f"{resource_iri}Service"
-    graphdb.query(
+    store.query(
         f"""
         INSERT DATA {{
           <{service_iri}> a <{SVC.Service}> ;
@@ -41,21 +41,21 @@ def _publish_service(graphdb, resource_iri, address: str) -> None:
 
 
 @pytest.fixture
-def ogm(graphdb):
-    return OGM(db=graphdb)
+def ogm(store):
+    return OGM(db=store)
 
 
-@requires_graphdb
+@requires_store
 @pytest.mark.asyncio
 class TestSetRoute:
     async def test_a_write_to_an_unreachable_unit_is_rejected_distinguishably(
-        self, graphdb, ogm, unit_scope
+        self, store, ogm, unit_scope
     ):
-        seed.seed_factory(graphdb, ogm, units=1)
+        seed.seed_factory(store, ogm, units=1)
         unit1 = seed._mint_transfer_unit_iri(1)
         # Nothing listens on this port -- the PUT genuinely fails, the same "unit down"
         # case `rejected` exists for, with no subprocess required.
-        _publish_service(graphdb, unit1, "http://127.0.0.1:1")
+        _publish_service(store, unit1, "http://127.0.0.1:1")
 
         controller = Controller(resource_iri="http://example.org/CS-set1", ogm=ogm, port=0)
         query = f"""
@@ -96,13 +96,13 @@ class TestSetRoute:
         assert body.get("error"), "a rejected write must carry a reason"
 
     async def test_set_is_refused_while_the_algorithm_is_not_paused(
-        self, graphdb, ogm, unit_scope
+        self, store, ogm, unit_scope
     ):
         """Server-side half of "set controls are inert while the algorithm runs" --
         never trust the frontend's disabled button alone."""
-        seed.seed_factory(graphdb, ogm, units=1)
+        seed.seed_factory(store, ogm, units=1)
         unit1 = seed._mint_transfer_unit_iri(1)
-        _publish_service(graphdb, unit1, "http://127.0.0.1:1")
+        _publish_service(store, unit1, "http://127.0.0.1:1")
 
         controller = Controller(resource_iri="http://example.org/CS-set2", ogm=ogm, port=0)
         query = f"""

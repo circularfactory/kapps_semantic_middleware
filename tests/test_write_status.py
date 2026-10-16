@@ -13,7 +13,7 @@ fire on every write; what actually distinguishes a
 stuck belt is that its observed value has stopped moving while still short of the
 command.
 
-Nothing here needs GraphDB or a broker: the tracker is a pure state machine over
+Nothing here needs a store or a broker: the tracker is a pure state machine over
 observations, which is the point of having it be its own object.
 """
 

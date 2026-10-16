@@ -155,7 +155,7 @@ svc:operationStatus rdf:type owl:DatatypeProperty ;
 
 svc:issuedBy rdf:type owl:ObjectProperty ;
     rdfs:label "issuedBy" ;
-    rdfs:comment "Relates a cfc:Operation to its issuer: the Resource of the middleware instance that issued it with request(). It is written in the commit that creates the Operation, and it never changes. The issuer is responsible for the Operation while it is queued; from running on, the Resource that claimed it is responsible. After the commit that claims the Operation (queued to running), and after the commit of its terminal status (done or failed), the middleware that made the commit notifies the issuer." ;
+    rdfs:comment "Relates a cfc:Operation to its issuer: the Resource of the middleware instance that issued it with issue_operation(). It is written in the commit that creates the Operation, and it never changes. The issuer is responsible for the Operation while it is queued; from running on, the Resource that claimed it is responsible. After the commit that claims the Operation (queued to running), and after the commit of its terminal status (done or failed), the middleware that made the commit notifies the issuer." ;
     rdfs:domain cfc:Operation ;
     rdfs:range cfc:Resource .
 

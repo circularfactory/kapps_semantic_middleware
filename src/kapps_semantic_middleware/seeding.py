@@ -8,11 +8,14 @@ lives here rather than in examples/.
 
 from __future__ import annotations
 
+import os
 from importlib import resources
+from urllib.parse import urlsplit
 
-from kapps_triplestore_interface import IRI
-from kapps_triplestore_interface.exceptions import GraphDbException
+from kapps_triplestore_interface import IRI, TripleStore, TripleStoreResponseError
 
+from kapps_semantic_middleware import _deprecation
+from kapps_semantic_middleware.errors import DeploymentValueError
 from kapps_semantic_middleware.vocabulary import CORE_ONTOLOGY, MES_ONTOLOGY, SVC_ONTOLOGY
 
 # Named-graph IRIs for seeding — same terms as vocabulary.py's *_ONTOLOGY constants,
@@ -20,6 +23,57 @@ from kapps_semantic_middleware.vocabulary import CORE_ONTOLOGY, MES_ONTOLOGY, SV
 CORE_GRAPH = CORE_ONTOLOGY
 SERVICE_GRAPH = SVC_ONTOLOGY
 MES_GRAPH = MES_ONTOLOGY
+
+
+# A wipe is refused unless the target is disposable by construction, not by habit:
+#
+# - **The host is loopback, or a bare hostname with no dot.** A bare name is a container alias
+#   (the service name in the compose file and in CI), reachable only inside the network that
+#   defines it. A store that other people share is always reached by a dotted name. The rule needs
+#   no allowlist, and it names no private host, so it ships.
+# - **``TRIPLESTORE_ALLOW_DESTRUCTIVE=1`` is set**, which is a person saying so in as many words.
+#
+# The same predicate, name and semantics as ``kapps_ogm`` and ``kapps_triplestore_interface``
+# carry in their ``tests/conftest.py``. If the interface one day exports it, the copies collapse
+# into one import with no call-site change.
+_ALLOW_DESTRUCTIVE_ENV = "TRIPLESTORE_ALLOW_DESTRUCTIVE"
+
+_LOOPBACK_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
+
+
+def is_disposable_target(url: str | None) -> bool:
+    """Whether wiping the store at ``url`` is safe by construction rather than by habit.
+
+    A URL this cannot parse a host out of is **not** disposable. Every uncertain case must land
+    on refusal: a wrong ``False`` costs a skipped run, a wrong ``True`` costs somebody else's data.
+    """
+    host = (urlsplit(url or "").hostname or "").lower()
+    if not host:
+        return False
+    return host in _LOOPBACK_HOSTS or "." not in host
+
+
+def _store_url(store: TripleStore) -> str | None:
+    """The URL the store was built for, or ``None`` when the store does not say.
+
+    The ``TripleStore`` contract declares no URL, so this reads the endpoint that the interface's
+    own store keeps. A store without one cannot be told to be disposable, and so is refused.
+    """
+    return getattr(getattr(store, "_endpoint", None), "url", None)
+
+
+def _refuse_unless_disposable(store: TripleStore, what: str) -> None:
+    """Raise ``DeploymentValueError`` before ``what`` wipes a store that is not disposable."""
+    url = _store_url(store)
+    if is_disposable_target(url) or os.getenv(_ALLOW_DESTRUCTIVE_ENV) == "1":
+        return
+    raise DeploymentValueError(
+        f"Refusing to {what} in dataset {store.dataset!r} on {url!r}.\n"
+        f"That host is neither loopback nor a container alias, so nothing here can tell that "
+        f"it is disposable.\n"
+        f"Point TRIPLESTORE_URL at a local store or a service alias, or set "
+        f"{_ALLOW_DESTRUCTIVE_ENV}=1 to state that the target is disposable."
+    )
 
 
 def _read_core_ontology() -> str:
@@ -55,24 +109,27 @@ def _read_mes_ontology() -> str:
     )
 
 
-def clear_repository(db) -> None:
-    """Clear the repository's default graph (authorized test repo).
+def clear_dataset(store: TripleStore) -> None:
+    """Clear the default graph of the store's dataset (an authorized test dataset).
 
     Always run this before seeding, so a scenario never accumulates residual
     triples from a previous run or a different scenario.
 
     The seed must stop where the store refused the clear. Any error that
-    ``clear_graph()`` raises passes on unchanged.
+    ``graph_clear()`` raises passes on unchanged.
 
     Raises:
-        GraphDbException: ``clear_graph()`` returned ``False``, as
-            kapps-triplestore-interface 2.1.1 does when the store answers with
-            an error. The error names the repository.
+        DeploymentValueError: The store is not disposable (see ``is_disposable_target``) and
+            ``TRIPLESTORE_ALLOW_DESTRUCTIVE=1`` is not set. Nothing was cleared.
+        TripleStoreResponseError: ``graph_clear()`` returned ``False``. The
+            store's contract raises instead, so only a store outside it gets here.
+            The error names the dataset.
     """
-    if not db.clear_graph():
-        raise GraphDbException(
-            f"The store did not clear the default graph of repository "
-            f"{db.repository!r}: clear_graph() returned False. The seed stops "
+    _refuse_unless_disposable(store, "clear the default graph")
+    if not store.graph_clear():
+        raise TripleStoreResponseError(
+            f"The store did not clear the default graph of dataset "
+            f"{store.dataset!r}: graph_clear() returned False. The seed stops "
             f"here, so it does not write over the old data."
         )
 
@@ -89,22 +146,36 @@ def load_shared_ontologies(db, *, reload: bool = False) -> None:
 
     Every scenario needs Core, svc:, and mes:, and they never change during
     a run. Each gets its own named graph. It is not re-imported into the
-    default graph on every seed. The clear_repository function clears only
+    default graph on every seed. The clear_dataset function clears only
     the default graph. So a seed wipes the scenario's own data, and leaves
-    these standing. GraphDB reasons across all graphs, so a domain class
+    these standing. The store reasons across all graphs, so a domain class
     still resolves its cfc: superclass from here.
 
     The operation is idempotent. The function skips a present module unless you set reload.
+    ``reload`` wipes the three graphs, so it refuses a store that is not disposable, as
+    ``clear_dataset`` does.
     """
+    if reload:
+        _refuse_unless_disposable(db, "reload the shared ontology graphs")
     for graph, turtle in (
         (CORE_GRAPH, _read_core_ontology()),
         (SERVICE_GRAPH, _read_service_ontology()),
         (MES_GRAPH, _read_mes_ontology()),
     ):
         if reload:
-            db.clear_graph(graph)
+            db.graph_clear(graph)
         elif _graph_is_populated(db, graph):
             continue
-        db.import_statements(
-            turtle, graph_iri=graph, content_type="application/x-turtle"
-        )
+        db.graph_add(turtle, graph_iri=graph, content_type="application/x-turtle")
+
+
+# vendor-check: off -- the deprecated alias, until it goes.
+
+
+@_deprecation.renamed("clear_dataset")
+def clear_repository(db: TripleStore) -> None:
+    """The deprecated name of :func:`clear_dataset`."""
+    clear_dataset(db)
+
+
+# vendor-check: on

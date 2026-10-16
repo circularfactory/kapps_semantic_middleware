@@ -19,7 +19,7 @@ generator to finish. Break and exit the with block. The wait persists. Tests
 drive the generator directly instead. The HTML page at /activity is safe to
 fetch with TestClient.
 
-No GraphDB, no broker, no network. These tests run entirely offline under
+No store, no broker, no network. These tests run entirely offline under
 ``pytest -m 'not live'``.
 """
 

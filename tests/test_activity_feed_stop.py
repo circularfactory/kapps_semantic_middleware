@@ -25,15 +25,15 @@ import pytest
 from kapps_semantic_middleware.registration import mint_service_iri
 from kapps_semantic_middleware.vocabulary import SVC
 
+from _hello_process import command as hello_command
 from _sse import hold
-from conftest import TEST_REPOSITORY, requires_graphdb
+from conftest import requires_store
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "examples"))
 import seed  # noqa: E402
 
 SERVED_PORT = 8983
 ADDRESS = f"http://127.0.0.1:{SERVED_PORT}"
-HELLO_PROCESS = Path(__file__).resolve().parent / "_hello_process.py"
 
 STOP_BOUND_SECONDS = 5.0
 """The demo launcher's stop timeout. A supervisor kills an instance that takes longer."""
@@ -66,20 +66,15 @@ def _await_serving(proc: subprocess.Popen, timeout: float = 60.0) -> None:
             time.sleep(0.1)
 
 
-@requires_graphdb
+@requires_store
 @posix_signals
-def test_a_stop_deregisters_while_a_client_holds_the_activity_stream(graphdb):
-    seed.seed_scenario1(graphdb)
+def test_a_stop_deregisters_while_a_client_holds_the_activity_stream(store):
+    seed.seed_scenario1(store)
     service_iri = mint_service_iri(seed.HELLO_RESOURCE, ADDRESS)
 
+    # The child joins the fixture's dataset, the one this test seeded and reads.
     proc = subprocess.Popen(
-        [
-            sys.executable,
-            str(HELLO_PROCESS),
-            str(SERVED_PORT),
-            TEST_REPOSITORY,
-            "--activity-feed",
-        ],
+        hello_command(store, SERVED_PORT, activity_feed=True),
         stdout=subprocess.DEVNULL,
         stderr=subprocess.PIPE,
         text=True,
@@ -94,7 +89,7 @@ def test_a_stop_deregisters_while_a_client_holds_the_activity_stream(graphdb):
         _await_serving(proc)
         holder = hold(f"{ADDRESS}/activity/stream", until=stop_holding.is_set, opened=connected)
         assert connected.wait(timeout=10.0), "the activity stream never opened"
-        assert _address(graphdb, service_iri) == [ADDRESS]
+        assert _address(store, service_iri) == [ADDRESS]
 
         proc.send_signal(signal.SIGTERM)
         stopped_at = time.monotonic()
@@ -117,7 +112,7 @@ def test_a_stop_deregisters_while_a_client_holds_the_activity_stream(graphdb):
     # No assertion on the exit code: after a graceful shutdown, uvicorn raises the signal it
     # captured again, so a clean stop by SIGTERM exits with -15 as a kill by SIGTERM would.
     # The address is what tells the two apart.
-    assert _address(graphdb, service_iri) == [], (
+    assert _address(store, service_iri) == [], (
         f"the instance stopped in {took:.1f} s but left its address in the graph:\n"
         f"{proc.stderr.read()}"
     )

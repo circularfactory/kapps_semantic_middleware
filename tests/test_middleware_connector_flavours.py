@@ -19,7 +19,7 @@ from kapps_semantic_middleware import SemanticMiddleware
 from kapps_semantic_middleware.connectors.mqtt_binding import MQTTBinding
 from kapps_semantic_middleware.connectors.semantic import SemanticConnectorRegistry
 
-from conftest import requires_graphdb  # noqa: E402
+from conftest import requires_store  # noqa: E402
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "examples"))
 import seed  # noqa: E402
@@ -28,20 +28,20 @@ SERVICE_CLASS = f"{seed.TU_NS}TransferUnitService"
 
 
 @pytest.fixture(scope="module")
-def seeded_unit(graphdb):
+def seeded_unit(store):
     """Module-scoped: these tests construct middlewares and assert on the connectors they
     wire, which is a read of the seeded graph. Registration only writes from the startup
     callbacks, and no test here starts a middleware."""
-    seed.seed_scenario3(graphdb, OGM(db=graphdb))
-    return graphdb
+    seed.seed_scenario3(store, OGM(db=store))
+    return store
 
 
-def _middleware(graphdb, **kwargs):
+def _middleware(store, **kwargs):
     return SemanticMiddleware(
         mode="resource",
         resource_iri=str(seed.TRANSFER_UNIT_1),
         service_class=SERVICE_CLASS,
-        ogm=OGM(db=graphdb),
+        ogm=OGM(db=store),
         heartbeat_interval=None,
         connector_registry=SemanticConnectorRegistry([MQTTBinding]),
         **kwargs,
@@ -51,20 +51,20 @@ def _middleware(graphdb, **kwargs):
 class TestWithoutAClassScope:
     """Scenarios 1 and 2 pass no class_scope, and must be entirely unaffected."""
 
-    @requires_graphdb
+    @requires_store
     def test_no_class_scope_means_no_wiring(self, seeded_unit):
         middleware = _middleware(seeded_unit)
 
         assert middleware._wiring is None
 
-    @requires_graphdb
+    @requires_store
     def test_no_class_scope_registers_no_connectors(self, seeded_unit):
         middleware = _middleware(seeded_unit)
 
         assert not middleware.connection_registry.connections
 
 
-@requires_graphdb
+@requires_store
 class TestFlavours:
     """Three flavours of one library, differing only in what they connect."""
 
@@ -107,7 +107,7 @@ class TestFlavours:
         assert middleware._wiring.southbound_properties
 
 
-@requires_graphdb
+@requires_store
 class TestRegistrationTiming:
     def test_connectors_are_registered_before_startup(self, seeded_unit, unit_scope):
         """lifespan connects everything in the registry *before* on_start_up, and
@@ -127,7 +127,7 @@ class TestRegistrationTiming:
         assert middleware.connector_sync_direction is SyncDirection.BIDIRECTIONAL
 
 
-@requires_graphdb
+@requires_store
 class TestEnsureTransport:
     """``ensure_transport`` reaches the wiring plan through the constructor."""
 

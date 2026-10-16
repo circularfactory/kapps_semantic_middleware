@@ -17,6 +17,11 @@ diagnoses. A page that writes obscures the difference between what an operator c
 what a diagnostic did. A page that queries a peer adds load to that peer and can fail for
 reasons unrelated to the middleware it is meant to inspect.
 
+Rule 1 has one exception, outside this module: the Logs tab, in `dashboard_logs`, has a form
+that sets a logger's level in this process. It changes what the process logs, and nothing in
+the graph or on a device. The operator who presses it commands it, so it does not blur what a
+diagnostic did with what an operator commanded.
+
 Rule 2 binds this module and the boxes it registers. A subproject's box may fetch in its own
 render, which is its own business and its own cost, so this module makes that safe rather than
 impossible: a render declared with `async def` is awaited, and any other render runs in a worker
@@ -130,10 +135,6 @@ header p {
     cursor: pointer;
     border-bottom: 2px solid transparent;
     color: var(--muted);
-}
-.tab-radio:checked + .tab-label {
-    color: var(--fg);
-    border-bottom-color: var(--accent);
 }
 .tab-panel {
     display: none;
@@ -488,7 +489,7 @@ async def _fragment_for_box(spec: BoxSpec, middleware: Any) -> str:
     """
     try:
         if inspect.iscoroutinefunction(spec.render):
-            body = await spec.render(middleware)  # type: ignore[misc]
+            body = await spec.render(middleware)
         else:
             result = await anyio.to_thread.run_sync(spec.render, middleware)
             body = await result if inspect.isawaitable(result) else result
@@ -606,6 +607,15 @@ def _shell_html(
         f"#tab-{slugs[tab]}:checked ~ .panels #panel-{slugs[tab]} {{ display: grid; }}"
         for tab in tabs
     )
+    # The selected tab's label takes the accent. The radio is beside the tab strip and not
+    # before its labels, so an adjacent-sibling rule (`.tab-radio:checked + .tab-label`) never
+    # matches; the rule goes from the checked radio to the label named by its `for`, in the
+    # strip, one rule per tab like the panel rules above.
+    label_rules = "".join(
+        f'#tab-{slugs[tab]}:checked ~ .tabs label[for="tab-{slugs[tab]}"] '
+        "{ color: var(--fg); border-bottom-color: var(--accent); }"
+        for tab in tabs
+    )
 
     panels_html = []
     for tab in tabs:
@@ -645,12 +655,13 @@ def _shell_html(
 <style>
 {_CSS}
 {checked_rules}
+{label_rules}
 </style>
 </head>
 <body>
 <header>
     <h1>{heading}</h1>
-    <p>State the middleware already holds in memory. Read-only. No write path.</p>
+    <p>State the middleware already holds in memory.</p>
 </header>
 {"".join(tab_inputs)}
 <div class="tabs">
@@ -757,10 +768,15 @@ def enable_dashboard(
     """Enable the dashboard on a middleware instance.
 
     Builds a ``DashboardRegistry``, optionally registers the default boxes, and mounts the
-    routes on ``middleware.app``. A second call on the same middleware returns the existing
-    registry without mounting anything twice, and ignores the options of that second call.
+    routes on ``middleware.app``. The default boxes are the four of the System tab and the
+    Logs tab, which attaches the process's log handler to the root logger, once per process.
+    A second call on the same middleware returns the existing registry without mounting
+    anything twice, and ignores the options of that second call.
 
     The registry is stored on the middleware as ``middleware.dashboard``.
+
+    The page, its boxes and its static files are left out of the instance's API description
+    (``/openapi.json``, which ``/docs`` renders): they are not part of the instance's API.
 
     The page is named after the instance's resource: its ``rdfs:label``, else the local name
     of its IRI, as in "Module 1 — dashboard". The name is read from the graph here, once, and
@@ -797,7 +813,10 @@ def enable_dashboard(
     # open it says so, once: a page reloaded every few seconds must not fill the log.
     first_tab_reported = False
 
-    @router.get("/dashboard")
+    # The page, its boxes and its static files are not part of the instance's API: they are left
+    # out of its API description, so a reader of `/docs` sees the instance's services only. The
+    # redirect below is left out for the same reason.
+    @router.get("/dashboard", include_in_schema=False)
     async def get_dashboard_page(tab: Optional[str] = None) -> HTMLResponse:
         nonlocal first_tab_reported
         if first_tab is not None and not first_tab_reported:
@@ -826,16 +845,23 @@ def enable_dashboard(
         query = request.url.query
         return RedirectResponse(f"../dashboard?{query}" if query else "../dashboard")
 
-    @router.get("/dashboard/box/{box_id}")
+    @router.get("/dashboard/box/{box_id}", include_in_schema=False)
     async def get_dashboard_box(box_id: str) -> HTMLResponse:
         spec = registry.get(box_id)
         if spec is None:
             raise HTTPException(status_code=404, detail=f"Unknown box: {box_id}")
         return HTMLResponse(await _fragment_for_box(spec, middleware))
 
-    @router.get("/dashboard/static/{filename}")
+    @router.get("/dashboard/static/{filename}", include_in_schema=False)
     async def get_dashboard_static(filename: str) -> Response:
         return _serve_static_file(filename)
+
+    if register_default_boxes:
+        # The Logs tab is a default box too, after the four of the System tab. It brings the
+        # page's one write route, which sets a logger's level; see `dashboard_logs`.
+        from kapps_semantic_middleware import dashboard_logs
+
+        dashboard_logs.register(registry, router)
 
     middleware.app.include_router(router)
     middleware.dashboard = registry

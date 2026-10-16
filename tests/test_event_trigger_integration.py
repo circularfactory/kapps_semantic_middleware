@@ -1,10 +1,10 @@
-"""Event-trigger coordination end-to-end integration test against a live GraphDB.
+"""Event-trigger coordination end-to-end integration test against a live store.
 
 Prove the decentralized event trigger over REST. Resource A *dispatches*
 an Operation to resource B. Create it in the graph (status ``queued``). Trigger B
 event-trigger endpoint over HTTP. B enqueues it. Leave it ``queued``. Also cover
 a dispatch trigger that cannot be delivered: the created Operation stays ``queued``, and
-the caller gets ``NotificationUndelivered``. Skip when GRAPHDB_* env vars are absent (see
+the caller gets ``NotificationUndelivered``. Skip when TRIPLESTORE_* env vars are absent (see
 conftest).
 """
 
@@ -23,7 +23,7 @@ from rdflib.namespace import RDF
 from kapps_ogm import OGM
 from kapps_ogm.utils.class_scope import ClassScope
 from kapps_semantic_middleware import SemanticMiddleware
-from kapps_semantic_middleware.credentials import graphdb_env_present, graphdb_for
+from kapps_semantic_middleware.credentials import triplestore_env_present, triplestore_for
 from kapps_semantic_middleware.errors import NotificationUndelivered
 from kapps_semantic_middleware.registration import (
     OperationQueueEmpty,
@@ -35,9 +35,9 @@ from kapps_semantic_middleware.registration import (
 )
 from kapps_semantic_middleware.vocabulary import CFC, OperationStatus, SVC
 
-requires_graphdb = pytest.mark.skipif(
-    not graphdb_env_present(),
-    reason="GRAPHDB_* environment variables not set; skipping live-GraphDB integration test",
+requires_store = pytest.mark.skipif(
+    not triplestore_env_present(),
+    reason="TRIPLESTORE_* environment variables not set; skipping live-store integration test",
 )
 
 # examples/ is not a package. Add it to the path. Reuse the scenario seed helper.
@@ -66,10 +66,10 @@ def _start_server(mw: SemanticMiddleware, port: int) -> tuple[uvicorn.Server, th
     return server, thread
 
 
-@requires_graphdb
-def test_event_trigger_dispatch_enqueues_over_rest(graphdb):
+@requires_store
+def test_event_trigger_dispatch_enqueues_over_rest(store):
     """A dispatches -> B event trigger over REST -> B enqueues -> Operation queued in the graph."""
-    db = graphdb
+    db = store
     seed.seed_scenario1(db)
 
     cap_instance = mint_capability_iri(seed.HELLO_RESOURCE, "hello_world")
@@ -79,7 +79,7 @@ def test_event_trigger_dispatch_enqueues_over_rest(graphdb):
         mode="resource",
         resource_iri=seed.HELLO_RESOURCE,
         service_class=seed.HELLO_SERVICE_CLASS,
-        ogm=OGM(db=graphdb_for(graphdb.repository)),
+        ogm=OGM(db=triplestore_for(store.dataset)),
         host="127.0.0.1",
         port=B_PORT,
     )
@@ -97,12 +97,12 @@ def test_event_trigger_dispatch_enqueues_over_rest(graphdb):
             mode="resource",
             resource_iri=seed.PLANNER_RESOURCE,
             service_class=seed.PLANNER_SERVICE_CLASS,
-            ogm=OGM(db=graphdb_for(graphdb.repository)),
+            ogm=OGM(db=triplestore_for(store.dataset)),
             host="127.0.0.1",
             port=8996,
         )
 
-        with mw_a.request(
+        with mw_a.issue_operation(
             capability_class=seed.HELLO_CAPABILITY_CLASS,
             operation_class=str(CFC.Operation),
         ) as op:
@@ -123,11 +123,11 @@ def test_event_trigger_dispatch_enqueues_over_rest(graphdb):
         time.sleep(0.5)
 
 
-@requires_graphdb
-def test_an_undeliverable_event_trigger_leaves_the_operation_queued(graphdb):
+@requires_store
+def test_an_undeliverable_event_trigger_leaves_the_operation_queued(store):
     """A dispatch event trigger cannot be delivered. The created Operation stays ``queued``:
     its receiver takes it up when it starts."""
-    db = graphdb
+    db = store
     seed.seed_scenario1(db)
 
     # Seed a reachable-looking receiver. Address points at a dead port (no server is
@@ -158,13 +158,13 @@ def test_an_undeliverable_event_trigger_leaves_the_operation_queued(graphdb):
         mode="resource",
         resource_iri=seed.PLANNER_RESOURCE,
         service_class=seed.PLANNER_SERVICE_CLASS,
-        ogm=OGM(db=graphdb_for(graphdb.repository)),
+        ogm=OGM(db=triplestore_for(store.dataset)),
         host="127.0.0.1",
         port=8997,
     )
 
     with pytest.raises(NotificationUndelivered):
-        with mw_a.request(
+        with mw_a.issue_operation(
             capability_class=seed.HELLO_CAPABILITY_CLASS,
             operation_class=str(CFC.Operation),
         ) as op:
@@ -185,13 +185,13 @@ def test_an_undeliverable_event_trigger_leaves_the_operation_queued(graphdb):
 # --------------------------------------------------------------------------- #
 
 
-def _hello_resource(graphdb, port: int) -> SemanticMiddleware:
+def _hello_resource(store, port: int) -> SemanticMiddleware:
     """A hello-resource middleware. Expose the helloworld workflow + the event trigger."""
     mw = SemanticMiddleware(
         mode="resource",
         resource_iri=seed.HELLO_RESOURCE,
         service_class=seed.HELLO_SERVICE_CLASS,
-        ogm=OGM(db=graphdb_for(graphdb.repository)),
+        ogm=OGM(db=triplestore_for(store.dataset)),
         host="127.0.0.1",
         port=port,
     )
@@ -202,17 +202,17 @@ def _hello_resource(graphdb, port: int) -> SemanticMiddleware:
     return mw
 
 
-def _dispatch_hello_op(graphdb) -> str:
+def _dispatch_hello_op(store) -> str:
     """Dispatch one hello-capability Operation from a planner middleware. Return its IRI."""
     mw_a = SemanticMiddleware(
         mode="resource",
         resource_iri=seed.PLANNER_RESOURCE,
         service_class=seed.PLANNER_SERVICE_CLASS,
-        ogm=OGM(db=graphdb_for(graphdb.repository)),
+        ogm=OGM(db=triplestore_for(store.dataset)),
         host="127.0.0.1",
         port=8996,
     )
-    with mw_a.request(
+    with mw_a.issue_operation(
         capability_class=seed.HELLO_CAPABILITY_CLASS,
         operation_class=str(CFC.Operation),
     ) as op:
@@ -220,17 +220,17 @@ def _dispatch_hello_op(graphdb) -> str:
     return op.iri
 
 
-@requires_graphdb
-def test_pull_and_run_completes_operation(graphdb):
+@requires_store
+def test_pull_and_run_completes_operation(store):
     """Full loop: A dispatches -> B enqueues -> B pull-and-runs helloworld -> Operation done + provenance."""
-    db = graphdb
+    db = store
     seed.seed_scenario1(db)
-    mw_b = _hello_resource(graphdb, B_PORT)
+    mw_b = _hello_resource(store, B_PORT)
     # Per-instance. Derived from the instance. Not from the resource.
     wf_instance = mint_workflow_iri(mw_b.service_iri, "hello_world")
     server, thread = _start_server(mw_b, B_PORT)
     try:
-        op_iri = _dispatch_hello_op(graphdb)  # queued on B via the REST event trigger
+        op_iri = _dispatch_hello_op(store)  # queued on B via the REST event trigger
 
         # B pulls the queued Operation. Run the work under a domain-supplied ClassScope.
         scope = ClassScope.from_property_chains([[SVC.operationStatus]])
@@ -254,17 +254,17 @@ def test_pull_and_run_completes_operation(graphdb):
         time.sleep(0.5)
 
 
-@requires_graphdb
-def test_pull_and_run_failure_marks_failed(graphdb):
+@requires_store
+def test_pull_and_run_failure_marks_failed(store):
     """A body exception marks the Operation `failed`. Error message + provenance."""
-    db = graphdb
+    db = store
     seed.seed_scenario1(db)
-    mw_b = _hello_resource(graphdb, B_PORT)
+    mw_b = _hello_resource(store, B_PORT)
     # Per-instance. Derived from the instance. Not from the resource.
     wf_instance = mint_workflow_iri(mw_b.service_iri, "hello_world")
     server, thread = _start_server(mw_b, B_PORT)
     try:
-        op_iri = _dispatch_hello_op(graphdb)
+        op_iri = _dispatch_hello_op(store)
 
         with pytest.raises(RuntimeError, match="boom"):
             with mw_b.claim_next():
@@ -285,14 +285,14 @@ def test_pull_and_run_failure_marks_failed(graphdb):
         time.sleep(0.5)
 
 
-@requires_graphdb
-def test_claim_next_empty_queue_raises(graphdb):
+@requires_store
+def test_claim_next_empty_queue_raises(store):
     """claim_next with nothing queued raises OperationQueueEmpty (nothing to pull)."""
     mw = SemanticMiddleware(
         mode="resource",
         resource_iri=seed.HELLO_RESOURCE,
         service_class=seed.HELLO_SERVICE_CLASS,
-        ogm=OGM(db=graphdb),
+        ogm=OGM(db=store),
         host="127.0.0.1",
         port=8998,
     )
@@ -318,22 +318,22 @@ def _wait_for_status(db, op_iri, status: str, timeout: float = 15.0) -> None:
     raise AssertionError(f"operation {op_iri} did not reach status {status!r} within {timeout}s")
 
 
-@requires_graphdb
-def test_callback_runs_operation_on_enqueue(graphdb):
+@requires_store
+def test_callback_runs_operation_on_enqueue(store):
     """A registered callback fires on enqueue. Drive a pull-and-run to done + provenance.
 
     The no-callback path exists. An Operation left `queued`. Covered by
     test_event_trigger_dispatch_enqueues_over_rest. Dispatch without a callback.
     """
-    db = graphdb
+    db = store
     seed.seed_scenario1(db)
-    mw_b = _hello_resource(graphdb, B_PORT)
+    mw_b = _hello_resource(store, B_PORT)
     # Per-instance. Derived from the instance. Not from the resource.
     wf_instance = mint_workflow_iri(mw_b.service_iri, "hello_world")
     mw_b.register_callback(lambda operation: hello_world())  # domain work function
     server, thread = _start_server(mw_b, B_PORT)
     try:
-        op_iri = _dispatch_hello_op(graphdb)  # event trigger enqueues + fires the callback
+        op_iri = _dispatch_hello_op(store)  # event trigger enqueues + fires the callback
 
         # The callback runs in the background. Wait for the terminal transition.
         _wait_for_status(db, op_iri, OperationStatus.DONE)
@@ -355,12 +355,12 @@ def test_callback_runs_operation_on_enqueue(graphdb):
 # --------------------------------------------------------------------------- #
 
 
-@requires_graphdb
-def test_two_instance_rest_event_trigger_full_lifecycle(graphdb):
+@requires_store
+def test_two_instance_rest_event_trigger_full_lifecycle(store):
     """A (mobile robot) dispatches an open Operation to B (door) over REST. B enqueues it
     (queued). Pull-and-runs door_open (done). Assert the full status lifecycle across
     two instances and B observable side effect (the door actually opens)."""
-    db = graphdb
+    db = store
     reset_door()
     seed.seed_scenario2(db)
     # B: the door resource. Expose door_open + the built-in event trigger over REST.
@@ -368,7 +368,7 @@ def test_two_instance_rest_event_trigger_full_lifecycle(graphdb):
         mode="resource",
         resource_iri=seed.DOOR_RESOURCE,
         service_class=seed.DOOR_SERVICE_CLASS,
-        ogm=OGM(db=graphdb_for(graphdb.repository)),
+        ogm=OGM(db=triplestore_for(store.dataset)),
         host="127.0.0.1",
         port=B_PORT,
     )
@@ -387,11 +387,11 @@ def test_two_instance_rest_event_trigger_full_lifecycle(graphdb):
             mode="resource",
             resource_iri=seed.MOBILE_ROBOT,
             service_class=seed.MOBILE_ROBOT_SERVICE_CLASS,
-            ogm=OGM(db=graphdb_for(graphdb.repository)),
+            ogm=OGM(db=triplestore_for(store.dataset)),
             host="127.0.0.1",
             port=8996,
         )
-        with mw_a.request(
+        with mw_a.issue_operation(
             capability_class=seed.DOOR_OPEN_CAPABILITY_CLASS,
             operation_class=str(CFC.Operation),
         ) as op:

@@ -1,6 +1,6 @@
 [project]
 name = "kapps-semantic-middleware"
-version = "0.2.0"
+version = "0.2.1"
 description = "Semantic middleware for industrial data integration, built on transitional-sync-middleware"
 readme = "README.md"
 license = "MIT"
@@ -31,8 +31,8 @@ maintainers = [
 # it on a deliberate `uv lock --upgrade-package <name>`, while a minor release needs a deliberate
 # bump of the pin here, proven by this project's own test suite before it lands.
 dependencies = [
-    "kapps-ogm~=0.3.0",
-    "kapps-triplestore-interface~=2.2.0",
+    "kapps-ogm~=0.3.1",
+    "kapps-triplestore-interface~=2.2.1",
     # The range's floor is 0.1.0 and not 0.2.6: this is the fork of `aas-middleware`, published
     # under its own name with its own numbering, which restarted. The import package renames with
     # it, to `transitional_sync_middleware`, and that rename happens at *its* release time -- so a
@@ -96,6 +96,7 @@ dev = [
     "mypy>=2.1.0",
     "pytest>=9.0.3",
     "pytest-asyncio>=0.24.0",
+    "pytest-playwright>=0.9.0",
     "ruff>=0.15.15",
     "rdflib>=7.1.3",
     "jupyter>=1.1.1",
@@ -113,9 +114,17 @@ dev = [
 testpaths = ["tests"]
 addopts = ["--strict-markers", "-m", "not lap and not smoke"]
 markers = [
-    "live: needs a reachable GraphDB (the GRAPHDB_* env vars). Applied automatically to any test that requests the `graphdb` fixture, so `-m 'not live'` selects the tier that runs anywhere.",
+    "browser: runs a page in a headless browser, and skips where none is installed (Playwright's Chromium, or Google Chrome). The CI has none, so it skips there.",
+    "live: needs a triple store: a reachable one (the TRIPLESTORE_* env vars), or one that the test starts with Docker, only when KAPPS_COMPOSE_COMMAND is set. Applied automatically to any test that requests the `store` fixture, so `-m 'not live'` selects the tier that runs anywhere.",
     "lap: measures a control lap rather than asserting anything, and its timings are machine-dependent. Deselected by default (see `addopts`); run it with `-m lap -s` when the algorithm's tick needs revisiting.",
-    "smoke: boots the whole factory as six real processes and re-checks the claims only a run can show. Deselected by default (see `addopts`) because it needs the launcher's fixed port free, seeds the graph the GRAPHDB_* variables point at, and costs about a minute; run it with `-m smoke`.",
+    "smoke: boots the whole factory as six real processes and re-checks the claims only a run can show. Deselected by default (see `addopts`) because it needs the launcher's fixed port free, seeds the graph the TRIPLESTORE_* variables point at, and costs about a minute; run it with `-m smoke`.",
+]
+# A use of a deprecated name fails its test: a name that the triple store interface deprecates,
+# and one of the middleware's own. Each is attributed to its caller's line, so no module field
+# can select them: the filter selects the form that each of them has, `<old> is deprecated; use`,
+# `set` or `pass` `<successor>`. A test of a deprecated name records its warning instead.
+filterwarnings = [
+    "error:\\w+ is deprecated; (use|set|pass) :DeprecationWarning",
 ]
 # pytest-asyncio warns when this is unset and defaults it to "function". Stated explicitly so
 # the default is a decision rather than a warning; the async fixtures here are per-test.
@@ -129,10 +138,14 @@ python_version = "3.12"
 files = ["src", "demo"]
 
 [[tool.mypy.overrides]]
-# None of the three siblings ships a py.typed marker, and neither does amqtt. Left
-# unsilenced these produce 44 import-untyped errors that bury the real ones -- the whole
-# reason the milestone-1 review found only one genuine type error under the noise.
-# This suppresses the missing marker, not our own annotations.
+# A package listed here that ships no py.typed marker is read as untyped: amqtt,
+# transitional_sync_middleware, and the releases of kapps_ogm and kapps_triplestore_interface
+# that uv.lock pins. When none of them had a marker, leaving this out produced 44
+# import-untyped errors that buried the real ones -- the whole reason the milestone-1 review
+# found only one genuine type error under the noise. It suppresses the missing marker, not
+# our own annotations, and it hides no type that a package publishes: the development heads
+# of kapps_ogm and kapps_triplestore_interface ship the marker, so mypy run against them reads
+# their real types, and this setting does not apply to them.
 module = [
     "transitional_sync_middleware.*",
     "kapps_ogm.*",

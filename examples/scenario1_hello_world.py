@@ -1,8 +1,8 @@
 """Scenario 1: hello-world workflow through the knowledge graph.
 
 A debugger-friendly, plain-Python equivalent of ``scenario1_hello_world.ipynb``. It
-connects to the dedicated GraphDB repository configured through ``GRAPHDB_*`` environment
-variables. It clears and seeds that repository. Then it drives the complete
+connects to the dedicated dataset of the triple store configured through the ``TRIPLESTORE_*``
+environment variables. It clears and seeds that dataset. Then it drives the complete
 **operation-coordination** lifecycle: registration, graph discovery, dispatch through the
 event trigger, pull-and-run, provenance, and deregistration.
 
@@ -17,13 +17,13 @@ import time
 from dataclasses import dataclass
 
 import uvicorn
-from kapps_triplestore_interface import GraphDB, IRI
+from kapps_triplestore_interface import IRI, TripleStore
 from rdflib.namespace import RDF
 
 from handlers import hello_world
 from kapps_ogm import OGM
 from kapps_semantic_middleware import Mode, SemanticMiddleware
-from kapps_semantic_middleware.credentials import DEMO_REPOSITORY, graphdb_for
+from kapps_semantic_middleware.credentials import DEMO_DATASET, triplestore_for
 from kapps_semantic_middleware.registration import (
     mint_capability_iri,
     mint_workflow_iri,
@@ -48,9 +48,9 @@ class Registration:
     workflow_iri: IRI
 
 
-def step_1_seed_clean_repository(db: GraphDB) -> None:
-    """Clear the dedicated repository, load Scenario 1 ontology, and create resources."""
-    print("\nStep 1 — Seed a Clean Repository")
+def step_1_seed_clean_dataset(db: TripleStore) -> None:
+    """Clear the dedicated dataset, load Scenario 1 ontology, and create resources."""
+    print("\nStep 1 — Seed a Clean Dataset")
     seed.seed_scenario1(db)
 
     hello_exists = db.triple_exists((seed.HELLO_RESOURCE, RDF.type, seed.HELLO_RESOURCE_CLASS))
@@ -94,7 +94,7 @@ def _start_server(middleware: SemanticMiddleware, port: int) -> tuple[uvicorn.Se
     return server, thread
 
 
-def step_2_start_hello_world_middleware(db: GraphDB) -> tuple[SemanticMiddleware, uvicorn.Server, threading.Thread]:
+def step_2_start_hello_world_middleware(db: TripleStore) -> tuple[SemanticMiddleware, uvicorn.Server, threading.Thread]:
     """Register the hello-world workflow and start its HTTP server."""
     print("\nStep 2 — Start the Hello-World Middleware")
     middleware = SemanticMiddleware(
@@ -117,7 +117,7 @@ def step_2_start_hello_world_middleware(db: GraphDB) -> tuple[SemanticMiddleware
     return middleware, server, thread
 
 
-def step_3_inspect_registration(db: GraphDB, ogm: OGM) -> Registration:
+def step_3_inspect_registration(db: TripleStore, ogm: OGM) -> Registration:
     """Verify the Service/Capability/Workflow and reachability triples.
 
     The Service IRI is *discovered* through ``svc:isServiceOf``, not rebuilt from the resource
@@ -150,7 +150,7 @@ def step_3_inspect_registration(db: GraphDB, ogm: OGM) -> Registration:
 
 
 def step_4_dispatch_and_run(
-    db: GraphDB, hello_mw: SemanticMiddleware, registration: Registration
+    db: TripleStore, hello_mw: SemanticMiddleware, registration: Registration
 ) -> tuple[IRI, IRI, uvicorn.Server, threading.Thread]:
     """Dispatch an operation through the event trigger, then pull-and-run it.
 
@@ -182,7 +182,7 @@ def step_4_dispatch_and_run(
     print(f"  svc:address in graph: {planner_address[0][2] if planner_address else 'NONE'}")
     assert planner_address, "the planner is served, so it must be discoverable in the graph"
 
-    with planner.request(
+    with planner.issue_operation(
         capability_class=seed.HELLO_CAPABILITY_CLASS,
         operation_class=str(CFC.Operation),
     ) as op:
@@ -197,7 +197,7 @@ def step_4_dispatch_and_run(
     return op_iri, planner_service, planner_server, planner_thread
 
 
-def step_5_inspect_decision_provenance(db: GraphDB, operation_iri: IRI) -> None:
+def step_5_inspect_decision_provenance(db: TripleStore, operation_iri: IRI) -> None:
     """Display the terminal status + execution provenance written to the Operation."""
     print("\nStep 5 — The Decision is Now Traceable in the Graph (R12)")
     status = list(db.triples_get(sub=operation_iri, pred=SVC.operationStatus))
@@ -223,7 +223,7 @@ def _stop(server: uvicorn.Server, thread: threading.Thread) -> None:
 
 
 def step_6_shutdown_and_verify(
-    db: GraphDB,
+    db: TripleStore,
     registration: Registration,
     planner_service: IRI,
     servers: list[tuple[uvicorn.Server, threading.Thread]],
@@ -258,10 +258,10 @@ def step_6_shutdown_and_verify(
 
 def main() -> None:
     """Run the complete Scenario 1 lifecycle."""
-    db = graphdb_for(DEMO_REPOSITORY)
-    print(f"Connected to GraphDB repository: {db.repository}")
+    db = triplestore_for(DEMO_DATASET)
+    print(f"Connected to the dataset: {db.dataset}")
 
-    step_1_seed_clean_repository(db)
+    step_1_seed_clean_dataset(db)
     hello_mw, server, thread = step_2_start_hello_world_middleware(db)
     running: list[tuple[uvicorn.Server, threading.Thread]] = [(server, thread)]
     registration: Registration | None = None

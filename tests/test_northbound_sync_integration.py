@@ -36,7 +36,7 @@ from kapps_ogm import OGM
 from kapps_semantic_middleware import Mode, SemanticMiddleware
 from kapps_semantic_middleware.vocabulary import INF
 
-from conftest import requires_graphdb  # noqa: E402
+from conftest import requires_store  # noqa: E402
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import examples.seed as seed  # noqa: E402
@@ -90,18 +90,18 @@ async def _route_ending(mw, suffix, timeout=10.0):
 
 
 @pytest_asyncio.fixture
-async def running_unit(graphdb, mqtt_broker, unit_scope):
+async def running_unit(store, mqtt_broker, unit_scope):
     """A real ``SemanticMiddleware`` server for TransferUnit1, wired over the test broker.
 
     Reads come back through the middleware's own REST route -- the actual path that broke,
     not the bare connector queue ``test_scenario3_roundtrip_integration.py`` reads.
     """
     host, port = mqtt_broker.split(":")
-    seed.seed_scenario3(graphdb, OGM(db=graphdb))
+    seed.seed_scenario3(store, OGM(db=store))
     # Declare both host and port in the graph, the way provisioning will. No manual
     # patch of the built connectors is needed once `inf:hasMQTTBrokerPort` reaches the
     # connector through the binding itself.
-    graphdb.query(
+    store.query(
         f"DELETE {{ ?n <{INF.hasMQTTBrokerIP}> ?old }} "
         f'INSERT {{ ?n <{INF.hasMQTTBrokerIP}> "{host}" ; '
         f'    <{INF.hasMQTTBrokerPort}> "{port}"^^<http://www.w3.org/2001/XMLSchema#integer> }} '
@@ -113,7 +113,7 @@ async def running_unit(graphdb, mqtt_broker, unit_scope):
         mode=Mode.RESOURCE,
         resource_iri=seed.TRANSFER_UNIT_1,
         service_class=f"{seed.TU_NS}TransferUnitService",
-        ogm=OGM(db=graphdb),
+        ogm=OGM(db=store),
         host="127.0.0.1",
         port=PORT,
         class_scope=unit_scope,
@@ -154,7 +154,7 @@ async def _wait_for_value(url, expected, timeout=5.0):
     return False
 
 
-@requires_graphdb
+@requires_store
 @pytest.mark.asyncio
 class TestConsecutiveChangesReachPersistence:
     """A topic answered exactly once, then went silent -- the background task
@@ -245,7 +245,7 @@ class TestConsecutiveChangesReachPersistence:
                 )
 
 
-@requires_graphdb
+@requires_store
 @pytest.mark.asyncio
 class TestReceiveFailureIsVisible:
     """A receive task that dies logs a traceback instead of vanishing.

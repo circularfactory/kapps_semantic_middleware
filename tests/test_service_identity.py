@@ -8,8 +8,8 @@ that fix it. A discriminator **stable across restarts of the same deployment**.
 **Distinct between concurrent instances**. The discovery helper replaces reconstructing
 a service IRI from a resource IRI.
 
-The unit tests are pure logic. The integration tests need a live GraphDB. Skip when
-the `GRAPHDB_*` env vars are absent.
+The unit tests are pure logic. The integration tests need a live store. Skip when
+the `TRIPLESTORE_*` env vars are absent.
 """
 
 from __future__ import annotations
@@ -24,7 +24,7 @@ from kapps_triplestore_interface import IRI
 
 from kapps_ogm import OGM
 from kapps_semantic_middleware import SemanticMiddleware
-from kapps_semantic_middleware.credentials import graphdb_env_present, graphdb_for
+from kapps_semantic_middleware.credentials import triplestore_env_present, triplestore_for
 from kapps_semantic_middleware.registration import (
     mint_service_iri,
     services_of_resource,
@@ -33,9 +33,9 @@ from kapps_semantic_middleware.registration import (
 )
 from kapps_semantic_middleware.vocabulary import SVC
 
-requires_graphdb = pytest.mark.skipif(
-    not graphdb_env_present(),
-    reason="GRAPHDB_* environment variables not set; skipping live-GraphDB integration test",
+requires_store = pytest.mark.skipif(
+    not triplestore_env_present(),
+    reason="TRIPLESTORE_* environment variables not set; skipping live-store integration test",
 )
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "examples"))
@@ -87,82 +87,82 @@ class TestMintServiceIri:
             mint_service_iri(RESOURCE, "8000")
 
 
-def _hello_instance(graphdb, port: int) -> SemanticMiddleware:
+def _hello_instance(store, port: int) -> SemanticMiddleware:
     """A resource-mode middleware on the shared hello resource. Distinguished only by port."""
     return SemanticMiddleware(
         mode="resource",
         resource_iri=seed.HELLO_RESOURCE,
         service_class=seed.HELLO_SERVICE_CLASS,
-        ogm=OGM(db=graphdb_for(graphdb.repository)),
+        ogm=OGM(db=triplestore_for(store.dataset)),
         host="127.0.0.1",
         port=port,
     )
 
 
-def _two_registered_instances(graphdb) -> tuple[SemanticMiddleware, SemanticMiddleware]:
+def _two_registered_instances(store) -> tuple[SemanticMiddleware, SemanticMiddleware]:
     """Two instances on one resource. Both registered. The scenario one-Service-per-instance exists for."""
-    seed.seed_scenario1(graphdb)
-    mw_a = _hello_instance(graphdb, PORT_A)
-    mw_b = _hello_instance(graphdb, PORT_B)
+    seed.seed_scenario1(store)
+    mw_a = _hello_instance(store, PORT_A)
+    mw_b = _hello_instance(store, PORT_B)
     asyncio.run(mw_a._register_service())
     asyncio.run(mw_b._register_service())
     return mw_a, mw_b
 
 
-@requires_graphdb
+@requires_store
 class TestTwoInstancesOnOneResource:
     """Two middlewares on one `resource_iri`. A controller and a monitor, in the glossary's terms."""
 
-    def test_each_instance_registers_its_own_service(self, graphdb):
-        mw_a, mw_b = _two_registered_instances(graphdb)
+    def test_each_instance_registers_its_own_service(self, store):
+        mw_a, mw_b = _two_registered_instances(store)
 
         assert mw_a.service_iri != mw_b.service_iri
         for mw in (mw_a, mw_b):
-            addresses = graphdb.triples_get(sub=mw.service_iri, pred=SVC.address)
+            addresses = store.triples_get(sub=mw.service_iri, pred=SVC.address)
             assert [str(t[2]) for t in addresses] == [mw.address]
-            assert graphdb.triple_exists((mw.service_iri, SVC.isServiceOf, seed.HELLO_RESOURCE))
+            assert store.triple_exists((mw.service_iri, SVC.isServiceOf, seed.HELLO_RESOURCE))
 
-    def test_heartbeats_are_independent(self, graphdb):
-        mw_a, mw_b = _two_registered_instances(graphdb)
+    def test_heartbeats_are_independent(self, store):
+        mw_a, mw_b = _two_registered_instances(store)
         asyncio.run(mw_a.emit_heartbeat())
 
         # A shared node reports the resource alive while *either* process lives. This
         # stops liveness meaning what discovery assumes it means.
-        assert len(graphdb.triples_get(sub=mw_a.service_iri, pred=SVC.lastHeartbeat)) == 1
-        assert len(graphdb.triples_get(sub=mw_b.service_iri, pred=SVC.lastHeartbeat)) == 0
+        assert len(store.triples_get(sub=mw_a.service_iri, pred=SVC.lastHeartbeat)) == 1
+        assert len(store.triples_get(sub=mw_b.service_iri, pred=SVC.lastHeartbeat)) == 0
 
-    def test_stopping_one_leaves_the_other_discoverable_and_alive(self, graphdb):
-        mw_a, mw_b = _two_registered_instances(graphdb)
+    def test_stopping_one_leaves_the_other_discoverable_and_alive(self, store):
+        mw_a, mw_b = _two_registered_instances(store)
         asyncio.run(mw_b.emit_heartbeat())
         asyncio.run(mw_a._deregister_service())
 
-        assert not graphdb.triples_get(sub=mw_a.service_iri, pred=SVC.address)
-        assert graphdb.triples_get(sub=mw_b.service_iri, pred=SVC.address)
-        reachable = services_of_resource(OGM(db=graphdb), seed.HELLO_RESOURCE, reachable_only=True)
+        assert not store.triples_get(sub=mw_a.service_iri, pred=SVC.address)
+        assert store.triples_get(sub=mw_b.service_iri, pred=SVC.address)
+        reachable = services_of_resource(OGM(db=store), seed.HELLO_RESOURCE, reachable_only=True)
         assert reachable == [mw_b.service_iri]
         # Discoverable is not the same as alive. The survivor must hold its own heartbeat.
         # A shared node could not have expressed this.
-        assert len(graphdb.triples_get(sub=mw_b.service_iri, pred=SVC.lastHeartbeat)) == 1
+        assert len(store.triples_get(sub=mw_b.service_iri, pred=SVC.lastHeartbeat)) == 1
 
-    def test_a_restart_reuses_its_node_rather_than_orphaning_one(self, graphdb):
-        mw_a, _ = _two_registered_instances(graphdb)
+    def test_a_restart_reuses_its_node_rather_than_orphaning_one(self, store):
+        mw_a, _ = _two_registered_instances(store)
         asyncio.run(mw_a._deregister_service())
 
-        restarted = _hello_instance(graphdb, PORT_A)
+        restarted = _hello_instance(store, PORT_A)
         asyncio.run(restarted._register_service())
 
         assert restarted.service_iri == mw_a.service_iri
         # Two instances ever existed. Two nodes exist. A third would be an orphan.
-        assert len(services_of_resource(OGM(db=graphdb), seed.HELLO_RESOURCE)) == 2
+        assert len(services_of_resource(OGM(db=store), seed.HELLO_RESOURCE)) == 2
 
-    def test_only_the_stale_instance_is_swept(self, graphdb):
+    def test_only_the_stale_instance_is_swept(self, store):
         """A crashed instance goes stale on its own. Its sibling keeps reachability.
 
         What the watchdog does with the *resource* stranded Operations once a resource
         carries several Services is a separate question. A harder one, and open.
         """
-        mw_live, mw_dead = _two_registered_instances(graphdb)
-        ogm = OGM(db=graphdb)
+        mw_live, mw_dead = _two_registered_instances(store)
+        ogm = OGM(db=store)
         update_heartbeat(ogm, mw_live.service_iri)
         update_heartbeat(
             ogm, mw_dead.service_iri, timestamp=datetime.now(timezone.utc) - timedelta(hours=1)
@@ -171,13 +171,13 @@ class TestTwoInstancesOnOneResource:
         swept = sweep_stale_services(ogm, max_age_seconds=60.0)
 
         assert mw_dead.service_iri in swept and mw_live.service_iri not in swept
-        assert not graphdb.triples_get(sub=mw_dead.service_iri, pred=SVC.address)
-        assert graphdb.triples_get(sub=mw_live.service_iri, pred=SVC.address)
+        assert not store.triples_get(sub=mw_dead.service_iri, pred=SVC.address)
+        assert store.triples_get(sub=mw_live.service_iri, pred=SVC.address)
 
-    def test_services_of_resource_finds_both(self, graphdb):
-        mw_a, mw_b = _two_registered_instances(graphdb)
+    def test_services_of_resource_finds_both(self, store):
+        mw_a, mw_b = _two_registered_instances(store)
 
         # Consumers query svc:isServiceOf. Not reconstruct the IRI. Accept more than one answer.
-        assert sorted(services_of_resource(OGM(db=graphdb), seed.HELLO_RESOURCE)) == sorted(
+        assert sorted(services_of_resource(OGM(db=store), seed.HELLO_RESOURCE)) == sorted(
             [mw_a.service_iri, mw_b.service_iri]
         )

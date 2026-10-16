@@ -1,7 +1,7 @@
 # Provisioning and Seeding
 
 Every other page in this set takes `ogm=ogm` as given. This page shows how to construct that
-`OGM`, the `GraphDB` under it, and the ontology and instance data the middleware needs before its
+`OGM`, the store under it, and the ontology and instance data the middleware needs before its
 first registration. It is the bootstrap order the other pages assume you are already past.
 
 :::{dropdown} Terms this page assumes
@@ -11,19 +11,20 @@ first registration. It is the bootstrap order the other pages assume you are alr
 
 ## Bootstrap Order
 
-The order is fixed: construct the graph database, wrap it in an OGM, load the shared ontologies,
+The order is fixed: construct the store, wrap it in an OGM, load the shared ontologies,
 author and seed the domain data, then construct the middleware.
 
 ```python
-from kapps_triplestore_interface import GraphDB, IRI
+from kapps_triplestore_interface import IRI
 from kapps_ogm import OGM
 from kapps_semantic_middleware import SemanticMiddleware, Mode
-from kapps_semantic_middleware.seeding import load_shared_ontologies, clear_repository
+from kapps_semantic_middleware.credentials import triplestore_for
+from kapps_semantic_middleware.seeding import load_shared_ontologies, clear_dataset
 
-db = GraphDB.from_env()   # reads GRAPHDB_URL, GRAPHDB_USERNAME, GRAPHDB_PASSWORD, GRAPHDB_REPOSITORY
+db = triplestore_for("kapps-demo")  # reads TRIPLESTORE_URL, TRIPLESTORE_USERNAME, TRIPLESTORE_PASSWORD
 ogm = OGM(db=db)
 
-clear_repository(db)      # empties the default graph (see below)
+clear_dataset(db)         # empties the default graph (see below)
 load_shared_ontologies(db)
 # author the domain TBox and seed the instance data here (see below)
 
@@ -34,6 +35,12 @@ mw = SemanticMiddleware(
     ogm=ogm,
 )
 ```
+
+`triplestore_for` builds the store with the interface's `connect()`, which logs in and checks the
+dataset at once. The dataset is named in code, because the seed clears it. To build a store
+yourself, call `connect(TripleStoreEndpoint.from_env(), GDBTokenAuth.from_env())`, which also
+reads the dataset from `TRIPLESTORE_DATASET`. Type a store as `TripleStore`; all four names come
+from `kapps_triplestore_interface`.
 
 Constructing the middleware wires its connectors and prepares its registration; serving `mw.app`
 (an ASGI application) with `uvicorn` is what brings it live and fires the on-startup registration.
@@ -46,29 +53,46 @@ reload=False)` loads all three; each lands in its own named graph and is skipped
 unless you pass `reload=True`.
 
 ```python
-from kapps_semantic_middleware.seeding import load_shared_ontologies, clear_repository
+from kapps_semantic_middleware.seeding import load_shared_ontologies, clear_dataset
 
-clear_repository(db)        # wipes scenario data
-load_shared_ontologies(db)  # loads the shared modules, left standing by clear_repository
+clear_dataset(db)           # wipes scenario data
+load_shared_ontologies(db)  # loads the shared modules, left standing by clear_dataset
 ```
 
-`clear_repository(db)` empties the repository so a re-run starts clean. Because GraphDB reasons
-across graphs, a domain class in the default graph still resolves its shared superclass.
+`clear_dataset(db)` empties the default graph of the dataset so a re-run starts clean. Because the
+store reasons across graphs, a domain class in the default graph still resolves its shared
+superclass.
 
-If the store refuses to clear the default graph, `clear_repository(db)` raises. So the seed stops
-there and does not write over the old data. The error is a `GraphDbException` from
+`clear_dataset(db)` and `load_shared_ontologies(db, reload=True)` also refuse a store whose host is
+neither loopback nor a bare container alias, and raise `DeploymentValueError` before they clear
+anything. Set `TRIPLESTORE_ALLOW_DESTRUCTIVE=1` to state that the target is disposable.
+
+If the store refuses to clear the default graph, `clear_dataset(db)` raises. So the seed stops
+there and does not write over the old data. The error is a `TripleStoreResponseError` from
 `kapps_triplestore_interface.exceptions`, or a subclass of it. One cause is a loaded SHACL shape
 that makes the store fail on deletes.
+
+% vendor-check: off -- the deprecation note
+```{note}
+**Deprecated names.** The variables `GRAPHDB_URL`, `GRAPHDB_USERNAME` and `GRAPHDB_PASSWORD` are
+still read, each as the fallback of its `TRIPLESTORE_*` variable, and each use warns. The old names
+still work: `graphdb_for`, `graphdb_env_present`, `REQUIRED_GRAPHDB_ENV` and `credentials_for` in
+`kapps_semantic_middleware.credentials`, `DEMO_REPOSITORY` there too, and `clear_repository` in
+`kapps_semantic_middleware.seeding`. Each use warns once and runs its successor:
+`triplestore_for`, `triplestore_env_present`, `REQUIRED_TRIPLESTORE_ENV`, `endpoint_for`,
+`DEMO_DATASET` and `clear_dataset`. A later release removes the old variables and names.
+```
+% vendor-check: on
 
 ## Getting the Domain Classes into the Ontology
 
 The middleware never creates ontology classes. Every {term}`Capability`, {term}`Workflow`,
 StateProperty and {term}`Service` class **must pre-exist** (see {doc}`02-workflow-registration`).
-You author the domain TBox as Turtle and load it with the graph database's `import_statements`, as
+You author the domain TBox as Turtle and load it with the store's `graph_add`, as
 `examples/seed.py` does:
 
 ```python
-db.import_statements(
+db.graph_add(
     turtle_text,                      # the domain TBox, classes only
     content_type="application/x-turtle",
 )

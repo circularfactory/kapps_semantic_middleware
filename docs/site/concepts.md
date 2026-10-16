@@ -4,9 +4,19 @@
 
 A conventional middleware moves values between a machine and an application. This one first asks the graph *what the machine is* and *what it can do*, then moves the values. Registration, discovery and execution are three views of the same triples. The graph holds the authoritative description of each resource; peers query it to learn what is available and how to reach it.
 
+## The components
+
+Several packages work together:
+
+- **kapps-ogm** — handles all knowledge graph reads and writes through a validated object-graph mapping layer.
+- **kapps-triplestore-interface** — provides raw triple-store access where the OGM has no equivalent yet, such as instance discovery.
+- **transitional-sync-middleware** — the synchronization layer, a transitional fork of `aas-middleware` carrying four synchronization fixes, incrementally reimplemented locally. It is retired within a few releases; do not build on it directly.
+- **The triple store** — the examples bring one up with `docker compose` from the `docker/` directory that `kapps-examples` copies out. Reasoning is required.
+- **Per-unit in-process broker** — each middleware unit runs its own MQTT broker for southbound device communication.
+
 ## Why the reasoner is not optional
 
-The middleware relies on the triple store's reasoner: `include_implicit` defaults to querying `FROM onto:implicit`, and both ontologies carry `owl:imports`. A store without a reasoner returns fewer triples and fails quietly, which is why GraphDB — not an in-memory graph — is a prerequisite.
+The middleware relies on the triple store's reasoner: `include_implicit` defaults to reading the inferred statements too, and both ontologies carry `owl:imports`. A store without a reasoner returns fewer triples and fails quietly, which is why a triple store with a reasoner — not an in-memory graph — is a prerequisite.
 
 ## Glossary
 

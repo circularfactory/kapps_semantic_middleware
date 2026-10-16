@@ -1,10 +1,10 @@
-"""Scenario 1 end-to-end integration test against a live GraphDB.
+"""Scenario 1 end-to-end integration test against a live store.
 
 Drives the public SemanticMiddleware API (the one test seam): a hello-world middleware
 registers a workflow on startup; a second middleware (a planner) dispatches an operation
 through the event-trigger coordination model — creating it `queued` in the graph and
 ringing the hello resource's event trigger over REST — and the hello resource pulls and
-runs it, recording the outcome. The graph is asserted at each step. Skipped when GRAPHDB_*
+runs it, recording the outcome. The graph is asserted at each step. Skipped when TRIPLESTORE_*
 env vars are absent (see conftest).
 """
 
@@ -21,7 +21,7 @@ from rdflib.namespace import RDF
 
 from kapps_ogm import OGM
 from kapps_semantic_middleware import SemanticMiddleware
-from kapps_semantic_middleware.credentials import graphdb_env_present, graphdb_for
+from kapps_semantic_middleware.credentials import triplestore_env_present, triplestore_for
 from kapps_semantic_middleware.registration import (
     mint_capability_iri,
     mint_service_iri,
@@ -29,9 +29,9 @@ from kapps_semantic_middleware.registration import (
 )
 from kapps_semantic_middleware.vocabulary import CFC, OperationStatus, SVC
 
-requires_graphdb = pytest.mark.skipif(
-    not graphdb_env_present(),
-    reason="GRAPHDB_* environment variables not set; skipping live-GraphDB integration test",
+requires_store = pytest.mark.skipif(
+    not triplestore_env_present(),
+    reason="TRIPLESTORE_* environment variables not set; skipping live-store integration test",
 )
 
 # examples/ is not a package; add it to the path to reuse the scenario seed helper.
@@ -59,16 +59,16 @@ def _start_server(mw: SemanticMiddleware, port: int) -> tuple[uvicorn.Server, th
     return server, thread
 
 
-@requires_graphdb
-def test_scenario1_hello_world_end_to_end(graphdb):
-    db = graphdb
+@requires_store
+def test_scenario1_hello_world_end_to_end(store):
+    db = store
     seed.seed_scenario1(db)
 
     mw1 = SemanticMiddleware(
         mode="resource",
         resource_iri=seed.HELLO_RESOURCE,
         service_class=seed.HELLO_SERVICE_CLASS,
-        ogm=OGM(db=graphdb_for(graphdb.repository)),
+        ogm=OGM(db=triplestore_for(store.dataset)),
         host="127.0.0.1",
         port=HELLO_PORT,
     )
@@ -103,11 +103,11 @@ def test_scenario1_hello_world_end_to_end(graphdb):
             mode="resource",
             resource_iri=seed.PLANNER_RESOURCE,
             service_class=seed.PLANNER_SERVICE_CLASS,
-            ogm=OGM(db=graphdb_for(graphdb.repository)),
+            ogm=OGM(db=triplestore_for(store.dataset)),
             host="127.0.0.1",
             port=8994,
         )
-        with mw2.request(
+        with mw2.issue_operation(
             capability_class=seed.HELLO_CAPABILITY_CLASS,
             operation_class=str(CFC.Operation),
         ) as op:
@@ -140,16 +140,16 @@ def test_scenario1_hello_world_end_to_end(graphdb):
     assert db.triple_exists((wf_instance, RDF.type, seed.HELLO_WORKFLOW_CLASS))
 
 
-@requires_graphdb
-def test_missing_ground_truth_class_fails_fast(graphdb):
+@requires_store
+def test_missing_ground_truth_class_fails_fast(store):
     """A workflow referencing a non-existent class is rejected at registration."""
     from kapps_semantic_middleware.registration import (
         OntologyGroundTruthError,
         register_workflow,
     )
 
-    seed.seed_scenario1(graphdb)
-    ogm = OGM(db=graphdb)
+    seed.seed_scenario1(store)
+    ogm = OGM(db=store)
     ghost_service = mint_service_iri(seed.HELLO_RESOURCE, "http://127.0.0.1:9")
     with pytest.raises(OntologyGroundTruthError):
         register_workflow(

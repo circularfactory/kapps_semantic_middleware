@@ -61,22 +61,22 @@ class KnowledgeGraphConnector:
         """
         Establish a connection to the knowledge graph backend.
 
-        This is a lightweight liveness check. The OGM and GraphDB own their own
-        connection lifecycle. We do not want to invent GraphDB methods that may not
+        This is a lightweight liveness check. The OGM and the store own their own
+        connection lifecycle. We do not want to invent store methods that may not
         exist. This operation is a no-op. It returns immediately.
 
         Raises:
             ConnectionError: If the backend is not reachable (currently never raised).
         """
         # No-op: the OGM manages its own connection lifecycle.
-        # Future: could add a cheap reachability probe if GraphDB exposes one.
+        # Future: could add a cheap reachability probe if the store's contract exposes one.
         return
 
     async def disconnect(self) -> None:
         """
         Disconnect from the knowledge graph backend.
 
-        This is a no-op since the OGM/GraphDB owns its own connection lifecycle.
+        This is a no-op since the OGM and the store own their own connection lifecycle.
 
         Raises:
             ConnectionError: If disconnection fails (currently never raised).

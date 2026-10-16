@@ -2,7 +2,7 @@
 
 Before this, every page load of the launcher index, the PLC panel, and the control
 station logged a 404 for /favicon.ico -- the only console error on an otherwise clean
-load. Each of the three apps now answers with a bare 204 instead. No GraphDB, no
+load. Each of the three apps now answers with a bare 204 instead. No store, no
 network: none of the apps' lifespans are started here (the TestClient only runs
 startup/shutdown when entered as a context manager, which none of these tests do), so
 a plain, unconstructed SemanticMiddleware instance is enough to exercise its `app`

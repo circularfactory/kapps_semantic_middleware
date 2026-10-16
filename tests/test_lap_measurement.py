@@ -28,7 +28,7 @@ import time
 
 import pytest
 
-from conftest import requires_graphdb
+from conftest import requires_store
 from test_southbound_echo_integration import (  # noqa: F401  (fixtures)
     PORT,
     _await_true,
@@ -92,7 +92,7 @@ async def _spying_on_actuals(host: str, port: int):
             await spy._task
 
 
-@requires_graphdb
+@requires_store
 @pytest.mark.lap
 @pytest.mark.asyncio
 async def test_measure_one_lap(running_unit):  # noqa: F811

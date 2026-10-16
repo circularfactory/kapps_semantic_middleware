@@ -1,8 +1,8 @@
-"""Phase 4 liveness integration tests against a live GraphDB.
+"""Phase 4 liveness integration tests against a live store.
 
 Deterministic (no waiting on real intervals): a heartbeat is written and refreshed
 idempotently, and a watchdog sweep deregisters a stale service while leaving a
-fresh one reachable. Skipped when GRAPHDB_* env vars are absent.
+fresh one reachable. Skipped when TRIPLESTORE_* env vars are absent.
 """
 
 from __future__ import annotations
@@ -16,7 +16,7 @@ import pytest
 
 from kapps_ogm import OGM
 from kapps_semantic_middleware import SemanticMiddleware
-from kapps_semantic_middleware.credentials import graphdb_env_present, graphdb_for
+from kapps_semantic_middleware.credentials import triplestore_env_present, triplestore_for
 from kapps_semantic_middleware.registration import (
     mint_service_iri,
     register_service,
@@ -24,25 +24,25 @@ from kapps_semantic_middleware.registration import (
 )
 from kapps_semantic_middleware.vocabulary import SVC
 
-requires_graphdb = pytest.mark.skipif(
-    not graphdb_env_present(),
-    reason="GRAPHDB_* environment variables not set; skipping live-GraphDB integration test",
+requires_store = pytest.mark.skipif(
+    not triplestore_env_present(),
+    reason="TRIPLESTORE_* environment variables not set; skipping live-store integration test",
 )
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "examples"))
 import seed  # noqa: E402
 
 
-@requires_graphdb
-def test_heartbeat_write_and_refresh(graphdb):
-    db = graphdb
+@requires_store
+def test_heartbeat_write_and_refresh(store):
+    db = store
     seed.seed_scenario1(db)
 
     mw = SemanticMiddleware(
         mode="resource",
         resource_iri=seed.HELLO_RESOURCE,
         service_class=seed.HELLO_SERVICE_CLASS,
-        ogm=OGM(db=graphdb_for(graphdb.repository)),
+        ogm=OGM(db=triplestore_for(store.dataset)),
         host="127.0.0.1",
         port=8987,
     )
@@ -59,9 +59,9 @@ def test_heartbeat_write_and_refresh(graphdb):
     assert len(hb2) == 1, "heartbeat is replaced, not accumulated"
 
 
-@requires_graphdb
-def test_watchdog_sweeps_only_stale_service(graphdb):
-    db = graphdb
+@requires_store
+def test_watchdog_sweeps_only_stale_service(store):
+    db = store
     seed.seed_scenario1(db)
 
     ogm = OGM(db=db)
@@ -90,7 +90,7 @@ def test_watchdog_sweeps_only_stale_service(graphdb):
 
     watchdog = SemanticMiddleware(
         mode="watchdog",
-        ogm=OGM(db=graphdb_for(graphdb.repository)),
+        ogm=OGM(db=triplestore_for(store.dataset)),
         staleness_threshold=60.0,
     )
     swept = asyncio.run(watchdog.sweep())

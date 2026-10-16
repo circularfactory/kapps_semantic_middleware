@@ -221,7 +221,7 @@ def _mqtt_binding_for(*, host: str, port: int):
     """A minimal recognised MQTT parameter, built by hand.
 
     By hand rather than off the graph because this test is about call ordering inside
-    ``build``, and a live fixture would drag GraphDB into a question that has nothing to do
+    ``build``, and a live fixture would drag the store into a question that has nothing to do
     with it. ``root_iri`` is left ``None``, which ``ParameterBinding`` documents as the
     by-hand case.
     """

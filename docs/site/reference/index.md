@@ -1,7 +1,7 @@
 # API reference
 
-Generated from the docstrings in `src/` by `sphinx.ext.autodoc`. 117 of the
-package's 127 public classes and functions carry one.
+Generated from the docstrings in `src/` by `sphinx.ext.autodoc`. 187 of the
+package's 212 public classes and functions carry one.
 
 :::{note}
 The reference documents **this project's modules**. The top-level
@@ -11,6 +11,9 @@ The reference documents **this project's modules**. The top-level
 conflation the fork's naming decision was made to avoid.
 :::
 
+Which action an error type asks for, in this package and in the two packages below it, is on
+{doc}`../errors`.
+
 ```{toctree}
 :caption: Core
 :maxdepth: 1
@@ -18,6 +21,7 @@ conflation the fork's naming decision was made to avoid.
 middleware
 modes
 activity
+validation_report
 ```
 
 ```{toctree}

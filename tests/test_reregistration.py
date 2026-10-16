@@ -9,7 +9,7 @@ An Operation IRI is fresh for each dispatch, so an Operation that already exists
 
 The same error reaches the possession switch, which reports it as `PossessionSwitchConflict`.
 
-The unit tests are pure logic. The integration tests need a live GraphDB.
+The unit tests are pure logic. The integration tests need a live store.
 """
 
 from __future__ import annotations
@@ -174,39 +174,39 @@ class TestRestartIntegration:
     """A restart against the graph that holds the earlier run's registration."""
 
     def test_a_restart_on_the_same_address_restores_the_earlier_registration_exactly(
-        self, graphdb
+        self, store
     ):
-        seed.seed_scenario2(graphdb)
-        ogm = OGM(db=graphdb)
+        seed.seed_scenario2(store)
+        ogm = OGM(db=store)
         written = (seed.DOOR_RESOURCE, *_register_door(ogm, ADDR_A))
-        registered = _explicit_about(graphdb, *written)
+        registered = _explicit_about(store, *written)
 
         deregister_service(ogm, written[1])
         _register_door(ogm, ADDR_A)
 
         # The address and the endpoints come back; nothing else is written.
-        assert _explicit_about(graphdb, *written) == registered
+        assert _explicit_about(store, *written) == registered
 
     def test_a_restart_on_another_address_repoints_the_capability_and_writes_nothing_else(
-        self, graphdb
+        self, store
     ):
-        seed.seed_scenario1(graphdb)
-        ogm = OGM(db=graphdb)
+        seed.seed_scenario1(store)
+        ogm = OGM(db=store)
         service_a, workflow_a, capability = _register_hello(ogm, ADDR_A)
         deregister_service(ogm, service_a)
         service_b = mint_service_iri(seed.HELLO_RESOURCE, ADDR_B)
         workflow_b = mint_workflow_iri(service_b, "hello_world")
         written = (seed.HELLO_RESOURCE, service_a, workflow_a, capability, service_b, workflow_b)
-        before = _explicit_about(graphdb, *written)
+        before = _explicit_about(store, *written)
 
         _, _, same_capability = _register_hello(ogm, ADDR_B)
 
         assert same_capability == capability
-        realized_by = graphdb.triples_get(
+        realized_by = store.triples_get(
             sub=capability, pred=SVC.realizedByWorkflow, include_implicit=False
         )
         assert [str(t[2]) for t in realized_by] == [str(workflow_b)]
-        after = _explicit_about(graphdb, *written)
+        after = _explicit_about(store, *written)
         assert before - after == {(str(capability), str(SVC.realizedByWorkflow), str(workflow_a))}
         # Everything new describes the new Service, its Workflow, or the repointed link.
         assert {t[0] for t in after - before} == {str(service_b), str(workflow_b), str(capability)}
@@ -214,9 +214,9 @@ class TestRestartIntegration:
             (str(capability), str(SVC.realizedByWorkflow), str(workflow_b))
         }
 
-    def test_an_operation_iri_that_exists_is_refused(self, graphdb):
-        seed.seed_scenario1(graphdb)
-        ogm = OGM(db=graphdb)
+    def test_an_operation_iri_that_exists_is_refused(self, store):
+        seed.seed_scenario1(store)
+        ogm = OGM(db=store)
         _, _, capability = _register_hello(ogm, ADDR_A)
         op_iri = mint_operation_iri(CFC.Operation)
         create_operation(

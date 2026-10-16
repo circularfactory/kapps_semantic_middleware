@@ -1,12 +1,12 @@
-"""The intake end to end, against a live GraphDB.
+"""The intake end to end, against a live store.
 
 A resource with a notification handler takes the Operations it is notified of through its intake:
 the event trigger reads each one once, under the instance's scope, and one worker runs them one at
 a time, in arrival order. An Operation whose Capability is one of the resource's own runs the
 exposed workflow that realizes it, with the Operation object; any other reaches the handler. The
 middleware writes nothing. At startup, the resource's own ``queued`` Operations run through the
-intake. A peer reaches the intake with ``request()`` or ``notify()``, over the real REST route.
-Each test waits until the worker has ended before it reads the graph. Skipped when GRAPHDB_* env
+intake. A peer reaches the intake with ``issue_operation()`` or ``notify()``, over the real REST route.
+Each test waits until the worker has ended before it reads the graph. Skipped when TRIPLESTORE_* env
 vars are absent (see conftest).
 """
 
@@ -28,8 +28,9 @@ from kapps_triplestore_interface import IRI
 from rdflib import Literal
 from rdflib.namespace import RDF
 
+from _explicit import explicit_select
 from kapps_semantic_middleware import SemanticMiddleware
-from kapps_semantic_middleware.credentials import graphdb_env_present, graphdb_for
+from kapps_semantic_middleware.credentials import triplestore_env_present, triplestore_for
 from kapps_semantic_middleware.registration import (
     create_operation,
     find_possession_state,
@@ -37,9 +38,9 @@ from kapps_semantic_middleware.registration import (
 )
 from kapps_semantic_middleware.vocabulary import CFC, MES, SVC, OperationStatus
 
-requires_graphdb = pytest.mark.skipif(
-    not graphdb_env_present(),
-    reason="GRAPHDB_* environment variables not set; skipping live-GraphDB integration test",
+requires_store = pytest.mark.skipif(
+    not triplestore_env_present(),
+    reason="TRIPLESTORE_* environment variables not set; skipping live-store integration test",
 )
 
 # examples/ is not a package. Add it to the path. Reuse the scenario seed helper.
@@ -56,7 +57,7 @@ STATUS_SCOPE = ClassScope.from_property_chains([[SVC.operationStatus]])
 
 
 def _receiver(
-    graphdb,
+    store,
     workflow: Callable[[Node], None],
     handler: Optional[Callable[[Node], None]],
 ) -> SemanticMiddleware:
@@ -66,7 +67,7 @@ def _receiver(
         mode="resource",
         resource_iri=seed.HELLO_RESOURCE,
         service_class=seed.HELLO_SERVICE_CLASS,
-        ogm=OGM(db=graphdb_for(graphdb.repository)),
+        ogm=OGM(db=triplestore_for(store.dataset)),
         host="127.0.0.1",
         port=PORT,
         heartbeat_interval=None,
@@ -84,13 +85,13 @@ def _receiver(
     return mw
 
 
-def _planner(graphdb) -> SemanticMiddleware:
+def _planner(store) -> SemanticMiddleware:
     """The planner, which requests and notifies; it is never served."""
     return SemanticMiddleware(
         mode="resource",
         resource_iri=seed.PLANNER_RESOURCE,
         service_class=seed.PLANNER_SERVICE_CLASS,
-        ogm=OGM(db=graphdb_for(graphdb.repository)),
+        ogm=OGM(db=triplestore_for(store.dataset)),
         host="127.0.0.1",
         port=8989,
     )
@@ -98,7 +99,7 @@ def _planner(graphdb) -> SemanticMiddleware:
 
 def _request(planner: SemanticMiddleware) -> IRI:
     """The planner requests the hello Capability, and so notifies the hello resource."""
-    with planner.request(
+    with planner.issue_operation(
         capability_class=seed.HELLO_CAPABILITY_CLASS,
         operation_class=str(CFC.Operation),
     ) as op:
@@ -138,7 +139,7 @@ def _wait_until(
 
 def _explicit_statements(db) -> set:
     result = db.query(
-        "SELECT ?s ?p ?o FROM <http://www.ontotext.com/explicit> WHERE { ?s ?p ?o }",
+        explicit_select(["?s", "?p", "?o"], "?s ?p ?o"),
         convert_bindings=True,
     )
     return {(str(b["s"]), str(b["p"]), str(b["o"])) for b in result["results"]["bindings"]}
@@ -152,13 +153,13 @@ def _values(operation: Node, prop: IRI) -> list:
     return [getattr(value, "id", value) for value in (operation.data or {}).get(prop, [])]
 
 
-@requires_graphdb
+@requires_store
 def test_a_requested_operation_of_an_own_capability_runs_its_workflow_once_and_writes_nothing(
-    graphdb,
+    store,
 ):
     """The workflow gets the Operation object, read under the receiver's scope; the handler
     gets nothing, the Operation stays ``queued`` and the graph does not change."""
-    db = graphdb
+    db = store
     seed.seed_scenario1(db)
     ran: list = []
     handled: list = []
@@ -168,10 +169,10 @@ def test_a_requested_operation_of_an_own_capability_runs_its_workflow_once_and_w
         seen.append(_explicit_statements(db))
         ran.append(operation)
 
-    receiver = _receiver(graphdb, workflow, handled.append)
+    receiver = _receiver(store, workflow, handled.append)
     server, thread = _start_server(receiver)
     try:
-        op_iri = _request(_planner(graphdb))
+        op_iri = _request(_planner(store))
         _wait_until(receiver, lambda: bool(ran))
         time.sleep(0.5)  # a second run would have started by now
 
@@ -189,11 +190,11 @@ def test_a_requested_operation_of_an_own_capability_runs_its_workflow_once_and_w
         _stop_server(server, thread)
 
 
-@requires_graphdb
-def test_two_operations_that_arrive_while_the_first_runs_run_one_after_the_other(graphdb):
+@requires_store
+def test_two_operations_that_arrive_while_the_first_runs_run_one_after_the_other(store):
     """Three requests: the second and third arrive while the first runs, and run after it, in
     arrival order, one at a time."""
-    db = graphdb
+    db = store
     seed.seed_scenario1(db)
     release = threading.Event()
     first_started = threading.Event()
@@ -213,10 +214,10 @@ def test_two_operations_that_arrive_while_the_first_runs_run_one_after_the_other
             order.append(operation.id)
             running.remove(operation.id)
 
-    receiver = _receiver(graphdb, workflow, lambda operation: None)
+    receiver = _receiver(store, workflow, lambda operation: None)
     server, thread = _start_server(receiver)
     try:
-        planner = _planner(graphdb)
+        planner = _planner(store)
         first = _request(planner)
         assert first_started.wait(timeout=20)
         second = _request(planner)
@@ -233,12 +234,12 @@ def test_two_operations_that_arrive_while_the_first_runs_run_one_after_the_other
         _stop_server(server, thread)
 
 
-@requires_graphdb
-def test_a_notification_of_an_operation_of_no_own_capability_reaches_the_handler(graphdb):
+@requires_store
+def test_a_notification_of_an_operation_of_no_own_capability_reaches_the_handler(store):
     """The up direction: a peer notifies the resource that a transport ended. The transport
     implements another resource's Capability, so the handler gets the object; no workflow runs,
     and the graph does not change."""
-    db = graphdb
+    db = store
     seed.seed_scenario1(db)
     db.triple_add((WMS_CAPABILITY, RDF.type, CFC.Capability))
     db.triple_add((TRANSPORT, RDF.type, CFC.Operation))
@@ -246,12 +247,12 @@ def test_a_notification_of_an_operation_of_no_own_capability_reaches_the_handler
     db.triple_add((TRANSPORT, SVC.operationStatus, Literal(OperationStatus.DONE)))
     ran: list = []
     handled: list = []
-    receiver = _receiver(graphdb, ran.append, handled.append)
+    receiver = _receiver(store, ran.append, handled.append)
     server, thread = _start_server(receiver)
     try:
         before = _explicit_statements(db)
 
-        _planner(graphdb).notify(operation=TRANSPORT, resource=seed.HELLO_RESOURCE)
+        _planner(store).notify(operation=TRANSPORT, resource=seed.HELLO_RESOURCE)
 
         _wait_until(receiver, lambda: bool(handled))
         [operation] = handled
@@ -264,22 +265,22 @@ def test_a_notification_of_an_operation_of_no_own_capability_reaches_the_handler
         _stop_server(server, thread)
 
 
-@requires_graphdb
-def test_at_startup_the_resources_own_queued_operation_runs_through_the_intake(graphdb):
+@requires_store
+def test_at_startup_the_resources_own_queued_operation_runs_through_the_intake(store):
     """An Operation requested while the resource took no notifications runs its workflow when
     the resource starts with a handler, and stays out of the queue."""
-    db = graphdb
+    db = store
     seed.seed_scenario1(db)
-    first = _receiver(graphdb, lambda operation: None, None)  # it queues the request
+    first = _receiver(store, lambda operation: None, None)  # it queues the request
     server, thread = _start_server(first)
     try:
-        op_iri = _request(_planner(graphdb))
+        op_iri = _request(_planner(store))
         assert op_iri in first._operation_queue
     finally:
         _stop_server(server, thread)
 
     ran: list = []
-    restarted = _receiver(graphdb, ran.append, lambda operation: None)
+    restarted = _receiver(store, ran.append, lambda operation: None)
     server, thread = _start_server(restarted)
     try:
         _wait_until(restarted, lambda: bool(ran))
@@ -290,15 +291,15 @@ def test_at_startup_the_resources_own_queued_operation_runs_through_the_intake(g
         _stop_server(server, thread)
 
 
-@requires_graphdb
-def test_startup_warns_about_a_resource_with_neither_a_handler_nor_a_callback(graphdb, caplog):
-    db = graphdb
+@requires_store
+def test_startup_warns_about_a_resource_with_neither_a_handler_nor_a_callback(store, caplog):
+    db = store
     seed.seed_scenario1(db)
     mw = SemanticMiddleware(
         mode="resource",
         resource_iri=seed.HELLO_RESOURCE,
         service_class=seed.HELLO_SERVICE_CLASS,
-        ogm=OGM(db=graphdb_for(graphdb.repository)),
+        ogm=OGM(db=triplestore_for(store.dataset)),
         host="127.0.0.1",
         port=PORT,
         heartbeat_interval=None,
@@ -329,7 +330,7 @@ def _transport_capability(resource: IRI) -> IRI:
 
 
 def _conveyor_module(
-    graphdb, resource: IRI, port: int, step: Callable[[SemanticMiddleware, IRI], None], log: list
+    store, resource: IRI, port: int, step: Callable[[SemanticMiddleware, IRI], None], log: list
 ) -> SemanticMiddleware:
     """A FlexConveyor module: its exposed transport workflow takes the transport object and runs
     ``step``; its handler records what it gets."""
@@ -337,7 +338,7 @@ def _conveyor_module(
         mode="resource",
         resource_iri=resource,
         service_class=seed.HELLO_SERVICE_CLASS,
-        ogm=OGM(db=graphdb_for(graphdb.repository)),
+        ogm=OGM(db=triplestore_for(store.dataset)),
         host="127.0.0.1",
         port=port,
         heartbeat_interval=None,
@@ -355,13 +356,13 @@ def _conveyor_module(
     return mw
 
 
-@requires_graphdb
-def test_a_transport_passes_from_module_to_module_and_its_end_reaches_the_wms(graphdb):
+@requires_store
+def test_a_transport_passes_from_module_to_module_and_its_end_reaches_the_wms(store):
     """The WMS notifies the origin; each module's intake runs its transport workflow; the origin
     hands the box over with the transport's reassignment in the entry and notifies the next one;
     the destination completes the transport in its handover and notifies the WMS, whose handler
     gets it."""
-    db = graphdb
+    db = store
     seed.seed_handover(db, OGM(db=db))
     seed.load_scenario1_ontologies(db)
     seed.create_resource(db, WMS, seed.PLANNER_RESOURCE_CLASS)
@@ -395,15 +396,15 @@ def test_a_transport_passes_from_module_to_module_and_its_end_reaches_the_wms(gr
         mode="resource",
         resource_iri=WMS,
         service_class=seed.PLANNER_SERVICE_CLASS,
-        ogm=OGM(db=graphdb_for(graphdb.repository)),
+        ogm=OGM(db=triplestore_for(store.dataset)),
         host="127.0.0.1",
         port=8986,
         heartbeat_interval=None,
     )
     wms.on_notification(ended.append, class_scope=STATUS_SCOPE)
     servers = [
-        _start_server(_conveyor_module(graphdb, origin, 8984, pass_on, log)),
-        _start_server(_conveyor_module(graphdb, destination, 8985, deliver, log)),
+        _start_server(_conveyor_module(store, origin, 8984, pass_on, log)),
+        _start_server(_conveyor_module(store, destination, 8985, deliver, log)),
         _start_server(wms),
     ]
     try:

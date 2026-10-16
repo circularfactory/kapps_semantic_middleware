@@ -130,7 +130,7 @@ class SVC:
     executionResult = IRI("executionResult", base=SVC_NS)  # Operation -> xsd:string
     failureState = IRI("failureState", base=SVC_NS)  # Operation -> xsd:string (JSON resource-datamodel dump on failure)
 
-    # The issuer of an Operation: the Resource of the instance whose request() created it. It is
+    # The issuer of an Operation: the Resource of the instance whose issue_operation() created it. It is
     # responsible for the Operation while it is queued; the Resource that claims it is
     # responsible from running on.
     issuedBy = IRI("issuedBy", base=SVC_NS)  # Operation -> Resource

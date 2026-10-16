@@ -3,7 +3,7 @@
 It serves the Controller as a resource-mode middleware, with the station
 board's own routes and template grafted onto the same
 app. Uvicorn runs on the main thread, and owns the process event loop, the same way the
-middleware runner does. The process reads GRAPHDB_* from its environment.
+middleware runner does. The process reads TRIPLESTORE_* from its environment.
 
 This file is the *runner* half of the station-board split: it names no FastAPI route of its own
 (a guard test, ``tests/test_station_board_guard.py``, holds that split the way
@@ -31,7 +31,7 @@ import socket
 
 from kapps_ogm import OGM
 
-from kapps_semantic_middleware.credentials import DEMO_REPOSITORY, graphdb_for
+from kapps_semantic_middleware.credentials import DEMO_DATASET, triplestore_for
 
 from . import algorithm, seed, station_board
 from .controller import Controller
@@ -45,7 +45,7 @@ middleware -> MQTT -> PLC -> MQTT back -> connector read -- or the algorithm wri
 before it can observe its last write, and the station board oscillates.
 
 **Measured 2026-08-07.** ``tests/test_lap_measurement.py`` (marked ``lap``, deselected by
-default) reproduces the table below against a real GraphDB, a real broker and a real
+default) reproduces the table below against a real store, a real broker and a real
 middleware::
 
     ramp (m/s)   device settled   observed back
@@ -164,7 +164,7 @@ async def main() -> None:
         args.resource_iri if args.resource_iri is not None else str(seed.CONTROL_STATION)
     )
 
-    db = graphdb_for(DEMO_REPOSITORY)
+    db = triplestore_for(DEMO_DATASET)
     ogm = OGM(db=db)
 
     controller = Controller(

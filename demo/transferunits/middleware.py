@@ -3,7 +3,7 @@
 It serves exactly one resource-mode SemanticMiddleware instance. Uvicorn runs on
 the main thread, and owns the process event loop. This is load-bearing:
 It enables signal handling. This enables the library's
-on_shutdown deregistration fire. The process reads GRAPHDB_* from
+on_shutdown deregistration fire. The process reads TRIPLESTORE_* from
 its environment and derives its resource IRI from the unit index.
 
 It also fills the library's transport seam: ``ensure_transport`` below is this
@@ -23,7 +23,7 @@ from kapps_ogm import OGM
 from kapps_ogm.utils.class_scope import ClassScope
 
 from kapps_semantic_middleware import Mode, SemanticMiddleware
-from kapps_semantic_middleware.credentials import DEMO_REPOSITORY, graphdb_for
+from kapps_semantic_middleware.credentials import DEMO_DATASET, triplestore_for
 
 from . import seed
 from .launcher import GRACEFUL_SHUTDOWN_SECONDS
@@ -93,15 +93,44 @@ def ensure_transport(host: str, port: int) -> None:
     Idempotent: a probe first, so a broker already listening at this address --
     this unit's own from an earlier call, or anything else already there -- means this does
     nothing.
+
+    Raises ``RuntimeError`` when the broker is not listening once the wait ends, so the
+    constructor fails and the process exits with the reason, instead of coming up as if healthy
+    while the unit's PLC retries a refused connection forever. A start that raises, such as the
+    import of a missing broker package, ends the wait at once and is the error's cause. A start
+    that never finishes is reported after ``BROKER_READY_TIMEOUT_SECONDS``. A broker that comes
+    up returns as soon as it listens, as before.
     """
     if _listening(host, port):
         return
 
-    ready = threading.Event()
-    threading.Thread(
-        target=lambda: asyncio.run(_serve_broker(host, port, ready)), daemon=True
-    ).start()
-    ready.wait(timeout=BROKER_READY_TIMEOUT_SECONDS)
+    # Set once the broker listens, or once its start has failed: one event, so the wait below
+    # ends at the first of the two and the happy path waits for nothing more than it did.
+    settled = threading.Event()
+    failure: list[BaseException] = []
+
+    def _run() -> None:
+        try:
+            asyncio.run(_serve_broker(host, port, settled))
+        except BaseException as exc:
+            if settled.is_set():
+                raise  # it failed after it listened; the thread reports that itself
+            failure.append(exc)
+            settled.set()
+
+    threading.Thread(target=_run, daemon=True).start()
+    settled.wait(timeout=BROKER_READY_TIMEOUT_SECONDS)
+
+    if failure:
+        cause = failure[0]
+        raise RuntimeError(
+            f"The MQTT broker at {host}:{port} did not start: {type(cause).__name__}: {cause}"
+        ) from cause
+    if not settled.is_set():
+        raise RuntimeError(
+            f"The MQTT broker at {host}:{port} is not listening after "
+            f"{BROKER_READY_TIMEOUT_SECONDS:g} s."
+        )
 
 
 async def run_server(
@@ -135,12 +164,12 @@ async def main() -> None:
     parser.add_argument("--host", type=str, default="127.0.0.1", help="The host to bind")
     parser.add_argument("--port", type=int, default=0, help="The port to bind (0 = free)")
     parser.add_argument(
-        "--repository",
+        "--dataset",
         type=str,
-        default=DEMO_REPOSITORY,
+        default=DEMO_DATASET,
         help=(
-            f"The GraphDB repository to join (default: {DEMO_REPOSITORY}). A caller that "
-            "spawns this process must pass the repository it is itself using, since the "
+            f"The dataset of the store to join (default: {DEMO_DATASET}). A caller that "
+            "spawns this process must pass the dataset it is itself using, since the "
             "environment deliberately cannot name one (see the Provisioning and Seeding guide)."
         ),
     )
@@ -158,7 +187,7 @@ async def main() -> None:
         else str(seed._mint_transfer_unit_iri(args.unit_index))
     )
 
-    db = graphdb_for(args.repository)
+    db = triplestore_for(args.dataset)
     ogm = OGM(db=db)
     class_scope = ClassScope.from_property_chains(
         [

@@ -364,15 +364,15 @@ is the caller's side).
 **Dispatch**:
 The caller-side act of handing an Operation to another resource: find a live Service that realizes
 the Capability, create the Operation individual in the graph (a **Creation**), and then notify that
-Service through its event trigger. Accessed from domain Python as `request()`, a context manager:
+Service through its event trigger. Accessed from domain Python as `issue_operation()`, a context manager:
 the body populates the Operation, and the exit creates it in one commit, `queued`, with its
 **Issuer**, and notifies the receiver only after the store has admitted that commit. A failed
 notification undoes nothing: the Operation stays `queued`, the receiver takes it up when it starts,
-and the caller gets the notification's error. What `request()` yields is the **Issued Operation**.
+and the caller gets the notification's error. What `issue_operation()` yields is the **Issued Operation**.
 _Avoid_: Send, Publish (there is no message bus; dispatch is a graph write plus an event trigger).
 
 **Issuer**:
-The Resource of the middleware whose `request()` created an Operation, recorded on it as
+The Resource of the middleware whose `issue_operation()` created an Operation, recorded on it as
 `svc:issuedBy` in the same commit and never changed. The Issuer is responsible for the Operation
 while it is `queued`; the Resource that claims it is responsible from `running` on. The middleware
 that claims the Operation, and the one that ends it, notifies the Issuer after its commit: that
@@ -381,7 +381,7 @@ _Avoid_: Owner (ownership passes from the Issuer to the claimer), Requester, Cal
 Resource, not a call).
 
 **Issued Operation**:
-The handle that `request()` yields, an `IssuedOperation`: in the block, the draft of the new
+The handle that `issue_operation()` yields, an `IssuedOperation`: in the block, the draft of the new
 Operation; after it, the issued Operation with its IRI and its **Issuer**. It waits until the
 Operation is claimed and until it ends: it reads the status from the graph, and reads it again
 when a notification of the Operation arrives at the Issuer's event trigger.
@@ -461,7 +461,7 @@ A `SemanticMiddleware` construction-time choice governing what the instance is *
 - `"resource"` — wraps one Resource; the REST surface is the user-registered Workflows/
   StateProperties, the built-in `execute()` event trigger, and a CRUD REST API generated from
   the resource's own datamodel (`generate_rest_api_for_data_model`). The
-  transactional context-manager surface (dispatch/`request`, pull-and-run, handover) and the
+  transactional context-manager surface (dispatch/`issue_operation`, pull-and-run, handover) and the
   graph-write helpers stay Python-only, not REST-exposed.
 - `"server"` — wraps no Resource. CRUD/`execute` themselves are the REST surface (e.g. a
   future data-serving "product server"). Not yet implemented, and deliberately still reserved: a

@@ -31,7 +31,7 @@ Written in construction order; a reader can go start to finish without forward r
 | {doc}`06-views-and-projection` | Defining a ClassScope, what a view cannot select, what the northbound projection removes |
 | {doc}`07-writing-to-the-graph-and-to-devices` | Every path that causes a write, creating an instance and the predefined scopes, naming the field that moved, northbound vs. southbound, IRI handling |
 | {doc}`08-provisioning-and-seeding` | **Read first if `ogm=` is a mystery.** The bootstrap order, loading the shared ontologies, authoring the domain TBox, and seeding the instance data a Parameter needs |
-| {doc}`09-the-state-dashboard` | The read-only page an instance serves about itself, the box registry a subproject extends, hiding a box, and posting to its own workflow |
+| {doc}`09-the-state-dashboard` | The page an instance serves about itself, the box registry a subproject extends, hiding a box, posting to its own workflow, and the Logs tab with a logger's level set at run time |
 
 ```{toctree}
 :hidden:
@@ -57,13 +57,13 @@ its three dependencies, by that dependency's own path. Use this table rather tha
 | Name | Import from |
 |---|---|
 | `SemanticMiddleware`, `Mode` | `kapps_semantic_middleware` |
-| `IRI`, `GraphDB` | `kapps_triplestore_interface` |
+| `IRI`, `TripleStore` | `kapps_triplestore_interface` |
 | `OGM` | `kapps_ogm` |
 | `ClassScope` | `kapps_ogm.utils.class_scope` |
 | `SyncDirection` | `transitional_sync_middleware.middleware.sync.synced_connector` |
 | `ConnectionInfo` | `transitional_sync_middleware.middleware.registries` |
 | `INF` (the interface vocabulary) | `kapps_semantic_middleware.vocabulary` |
-| `graphdb_for`, `credentials_for` | `kapps_semantic_middleware.credentials` |
+| `triplestore_for`, `endpoint_for` | `kapps_semantic_middleware.credentials` |
 | `mw.commit()`, `mw.create()`, `mw.fetch()`, `mw.notify()`, `mw.on_notification()`, `mw.resource` (members of `SemanticMiddleware`, nothing more to import; `mw.create(cls, scope)` creates one new instance, `mw.resource` is the middleware's own Resource, `mw.notify(operation=op, resource=r)` sends a notification, an Operation's IRI with no payload and no write, and `mw.on_notification(handler, class_scope=...)` takes the notified Operations through the intake, one at a time, each as the Operation object, to the exposed workflow that realizes its Capability or else to the handler, with no lifecycle; the feedback of an Operation that the instance's Resource issued and that is no longer `queued` goes to the handler, also when a workflow of the instance realizes its Capability) | `kapps_semantic_middleware` |
 | `Create`, `Update` (the changes that a transition of `mw.commit()` is made of, and the `entry` of `mw.handover()`) | `kapps_ogm` |
 | `Node` (the Operation object that the intake passes to a workflow or a notification handler; type a workflow's parameter with it) | `kapps_ogm` |
@@ -72,8 +72,8 @@ its three dependencies, by that dependency's own path. Use this table rather tha
 | `PredefinedScope`, `ScopeChanges` (the hook through which a domain module brings its rules to `mw.create()`, and what its `changes()` returns) | `kapps_semantic_middleware.commit` |
 | `SVC`, `OperationStatus` (the service vocabulary, and an Operation's status values) | `kapps_semantic_middleware.vocabulary` |
 | `MES` (the handover abilities, such as `MES.Pass`, that `mw.handover()` takes as its `mode`) | `kapps_semantic_middleware.vocabulary` |
-| `HandoverPreconditionError`, `PossessionSwitchConflict`, `OperationQueueEmpty`, `OperationResolutionError`, `OntologyGroundTruthError`, `NotificationUndelivered` | `kapps_semantic_middleware.errors` |
-| `TripleStoreInterfaceError`, `GraphDbException` (a refusal by the store, SHACL included) | `kapps_triplestore_interface.exceptions` |
+| `HandoverPreconditionError`, `PossessionSwitchConflict`, `OperationQueueEmpty`, `OperationResolutionError`, `OntologyGroundTruthError`, `NotificationUndelivered`; the types that tell the action: `OperationReceiverUnavailableError` and `NotificationReceiverUnavailableError` (Retry), `DeploymentError` with `DeploymentValueError` and `DeploymentRuntimeError`, `CapabilityNotRealizedError` and `NotificationReceiverAmbiguousError` (Repair) | `kapps_semantic_middleware.errors` |
+| `TripleStoreInterfaceError`, `TripleStoreResponseError` (a refusal by the store, SHACL included) | `kapps_triplestore_interface.exceptions` |
 | `AnonymousNodeFetchError`, `AmbiguousNodeAlignmentError`, `UnresolvableNodeAddressError` (each a `ValueError`) | `kapps_ogm.utils.errors` |
 | `RequestException` (the store cannot be reached; `requests` is the store's HTTP client, reached through `kapps_triplestore_interface`, and not one of the three dependencies) | `requests.exceptions` |
 
@@ -104,6 +104,7 @@ part listed with `cfc:` no longer has any.
 | Module | Kind | What is cfc-specific in it |
 |---|---|---|
 | `kapps_semantic_middleware` | generic | |
+| `kapps_semantic_middleware._deprecation` | generic | |
 | `kapps_semantic_middleware.activity` | generic | |
 | `kapps_semantic_middleware.commit` | generic | |
 | `kapps_semantic_middleware.connectors` | generic | |
@@ -122,7 +123,7 @@ part listed with `cfc:` no longer has any.
 | `kapps_semantic_middleware.shacl_interop.shape_from_typehints` | generic | |
 | `kapps_semantic_middleware.possession` | cfc-specific | Possession: one possession state per Resource, the change of possession that `handover()` commits, and the `workpiece` scope |
 | `kapps_semantic_middleware.operation` | cfc-specific | The Operation: its link to the Capability that it implements, the `operation` scope, and the scope and the Capabilities of a received Operation |
-| `kapps_semantic_middleware.middleware` | generic, with cfc-specific parts | `SemanticMiddleware.handover`, `SemanticMiddleware.request`, `SemanticMiddleware._read_received`: the change of possession of a handover, the Operation of a request, created under the operation scope, and the intake's read of a received Operation with the Capabilities it implements |
+| `kapps_semantic_middleware.middleware` | generic, with cfc-specific parts | `SemanticMiddleware.handover`, `SemanticMiddleware.issue_operation`, `SemanticMiddleware._read_received`: the change of possession of a handover, the Operation of a request, created under the operation scope, and the intake's read of a received Operation with the Capabilities it implements |
 | `kapps_semantic_middleware.registration` | generic, with cfc-specific parts | `register_workflow`, `register_state_property`, `create_operation`, `resolve_operation_workflow`, `find_resource_operations`, `find_possession_state`, `switch_possession`: the Capability links of registration and dispatch, the possession read of a handover's precondition, and the possession helpers that a seed uses |
 | `kapps_semantic_middleware.seeding` | generic, with cfc-specific parts | `CORE_GRAPH`: the graph into which the shared ontologies load Core |
 | `kapps_semantic_middleware.vocabulary` | generic, with cfc-specific parts | `CORE_NS`, `CORE_ONTOLOGY`, `CFC`: the one home of every IRI holds Core's terms too |
@@ -134,14 +135,16 @@ the package's API, and is not classified.
 
 ### These fail silently
 
-**`GraphDB.from_env()` connects to whatever `GRAPHDB_REPOSITORY` names, and seeding destroys what it
-connects to.** `seeding.clear_repository` clears the default graph of the client's current
-repository, so a value left over in a shell — from another project, another checkout, a `.bashrc`
-written months ago — silently redirects a wipe. Nothing validates that the repository was the one you
-meant; it only has to exist. Use `credentials.graphdb_for("name")`, which names the repository in
+**`TripleStoreEndpoint.from_env()` connects to whatever `TRIPLESTORE_DATASET` names, and seeding
+destroys what it connects to.** `seeding.clear_dataset` clears the default graph of the store's
+dataset, so a value left over in a shell — from another project, another checkout, a `.bashrc`
+written months ago — silently redirects a wipe. Nothing validates that the dataset was the one you
+meant; it only has to exist. Use `credentials.triplestore_for("name")`, which names the dataset in
 code and ignores the variable, for anything that seeds, clears, or re-seeds. Note this hazard belongs
-to the *variable*, not the server: pinning the repository does not stop `GRAPHDB_URL` pointing at a
-shared instance.
+to the *variable*, not the server: pinning the dataset does not stop `TRIPLESTORE_URL` pointing at a
+shared instance. `seeding` guards the server too: `clear_dataset` and `load_shared_ontologies(reload=True)`
+raise `DeploymentValueError` for a host that is neither loopback nor a bare container alias, unless
+`TRIPLESTORE_ALLOW_DESTRUCTIVE=1` is set.
 
 **A {term}`ClassScope` terminates at a {term}`Parameter` and cannot select within one.** Any chain
 element below a complex property is silently discarded during fetch. A view that tries to reach
@@ -203,7 +206,7 @@ on an instance in any other mode, and `ValueError` when a required class IRI is 
 ### Structural facts
 
 **Build against `src/kapps_semantic_middleware/`. `examples/` and `demo/` are illustrations, not
-API.** They are teaching vehicles seeded against throwaway repositories, not production patterns to
+API.** They are teaching vehicles seeded against throwaway datasets, not production patterns to
 copy.
 
 **The demo imports as `kapps_semantic_middleware.demonstrations`, not `demo`.** The wheel remaps
@@ -221,4 +224,4 @@ rather than assuming exactly one.
 is a resource-mode instance with its own Resource, not a server-mode one.
 
 **Docker is a prerequisite for running the examples, never for using the library.** The bundled
-`docker compose` file provides the GraphDB the scenarios and the factory need.
+`docker compose` file provides the triple store the scenarios and the factory need.

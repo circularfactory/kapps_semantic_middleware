@@ -20,7 +20,7 @@ discover work against Capabilities; the middleware resolves the concrete Workflo
 
 ## Dispatching Work
 
-Caller-side dispatch is a transactional context manager, `request`. It is built on two other parts
+Caller-side dispatch is a transactional context manager, `issue_operation`. It is built on two other parts
 of the middleware and repeats neither: `mw.create()` writes the Operation, and the delivery of
 `mw.notify()` notifies the receiver. Its own part is discovery: before the body runs, it finds a
 live Service that realizes the capability class (with `target_resource`, one of that resource). The
@@ -31,19 +31,19 @@ does the exit notify the Service that discovery found. If the store refuses the 
 is written and the receiver is not notified. If the notification fails, nothing is undone: the
 Operation stays `queued`, and the caller gets `NotificationUndelivered`. The receiver takes up its
 `queued` Operations when it starts, and the issuer is responsible for the Operation while it is
-`queued`. So a notification is never sent for an uncommitted Operation. Use `request` for a new
+`queued`. So a notification is never sent for an uncommitted Operation. Use `issue_operation` for a new
 Operation; `mw.create()` creates a new instance of any other class, and `mw.notify()` tells a
 resource about an Operation that exists.
 
-`request` is a `mw.create()` of the Operation under the `operation` scope, which writes the
+`issue_operation` is a `mw.create()` of the Operation under the `operation` scope, which writes the
 Capability link (see {doc}`07-writing-to-the-graph-and-to-devices`). It commits on its own, also
 inside the body of another `mw.commit()` or `mw.create()`, because the receiver reads the Operation
 after the notification. A `mw.create()` in its body joins the Operation's commit. The body may not
-set `svc:issuedBy`: `request` sets it, and raises `ValueError` before anything is written when the
+set `svc:issuedBy`: `issue_operation` sets it, and raises `ValueError` before anything is written when the
 body sets it too.
 
 ```python
-with mw.request(capability_class=cap, operation_class=op_cls) as op:
+with mw.issue_operation(capability_class=cap, operation_class=op_cls) as op:
     # The Operation's domain properties, if any, as {property IRI: [values]}.
     op.data[str(EX.hasScrew)] = [{"id": str(screw)}]
 # The exit creates the Operation in one commit, then notifies the receiver
@@ -285,8 +285,8 @@ the completed Operation in `operation`: the OGM refuses two changes of one insta
 An error in the body is raised and undoes nothing: the possession has already changed, so the caller
 records what really happened. For the same reason, a `mw.create()` in the body commits on its own:
 the handover's commit has already happened. Possession history is not in the graph: a handover
-overwrites the Workpiece's link, and the store's history mechanism, such as GraphDB's history plugin
-when it is turned on, keeps the previous value. The middleware does not model the physical transport
+overwrites the Workpiece's link, and the store's history mechanism, such as a history plugin of
+the store when it is turned on, keeps the previous value. The middleware does not model the physical transport
 itself; that logic belongs in the context manager body.
 
 Core says that a Resource and a Workpiece each have exactly one possession state. That is OWL, which

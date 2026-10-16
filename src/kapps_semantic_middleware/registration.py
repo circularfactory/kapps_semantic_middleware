@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING, Any, Callable, Mapping, NamedTuple, Optional, 
 from urllib.parse import urlsplit, urlunsplit
 
 from kapps_triplestore_interface import IRI
+from rdflib import BNode
 from kapps_triplestore_interface.exceptions import InvalidIRIError, PreconditionFailedError
 from kapps_ogm.utils.class_scope import ClassScope
 from kapps_ogm import Create, Update
@@ -31,6 +32,11 @@ from kapps_semantic_middleware.errors import (  # noqa: F401 - their earlier hom
     OperationQueueEmpty,
     OperationResolutionError,
     PossessionSwitchConflict,
+)
+from kapps_semantic_middleware.errors import (
+    CapabilityNotRealizedError,
+    DeploymentValueError,
+    OperationReceiverUnavailableError,
 )
 from kapps_semantic_middleware.operation import _implements
 from kapps_semantic_middleware.possession import _switch_conflict, possession_change
@@ -347,15 +353,34 @@ def deregister_service(
     db = ogm.db
     _set(ogm, service_iri, {str(SVC.address): []}, named_graph)
 
-    for wf_iri, _, _ in db.triples_get(
+    for wf_node, _, _ in db.triples_get(
         pred=SVC.isWorkflowOf, obj=service_iri, named_graph=named_graph
     ):
-        _set(ogm, wf_iri, {str(SVC.endpoint): []}, named_graph)
+        _set(ogm, _named(wf_node, "Workflow", service_iri), {str(SVC.endpoint): []}, named_graph)
 
-    for sp_iri, _, _ in db.triples_get(
+    for sp_node, _, _ in db.triples_get(
         pred=SVC.isStatePropertyOf, obj=service_iri, named_graph=named_graph
     ):
-        _set(ogm, sp_iri, {str(SVC.endpoint): []}, named_graph)
+        _set(
+            ogm, _named(sp_node, "StateProperty", service_iri), {str(SVC.endpoint): []}, named_graph
+        )
+
+
+def _named(node: IRI | BNode, kind: str, service_iri: IRI) -> IRI:
+    """``node`` as the IRI that names a Service's Workflow or StateProperty.
+
+    The store can answer a subject as a blank node, and the OGM's commit takes an IRI. A blank
+    node there is broken data in the store.
+
+    Raises:
+        DeploymentValueError: If ``node`` is a blank node.
+    """
+    if isinstance(node, BNode):
+        raise DeploymentValueError(
+            f"The store holds a blank node as a {kind} of Service {service_iri}, where an IRI is "
+            "required. Repair the data in the store."
+        )
+    return node
 
 
 # --------------------------------------------------------------------------- #
@@ -499,7 +524,7 @@ def create_operation(
     ``cfc:implementsCapability`` link, ``svc:operationStatus``, and ``data``, whose properties
     the Operation's class must declare. Its class scope names every property it sets, because
     kapps_ogm drops a property that the scope does not name, with only a warning.
-    ``request()`` does not call this: it creates the Operation with ``mw.create()`` under the
+    ``issue_operation()`` does not call this: it creates the Operation with ``mw.create()`` under the
     operation scope. This writer is kept for existing callers, such as tests that seed an
     Operation. The IRI must be new: the store must hold no statement about it yet, or the
     store's refusal ``PreconditionFailedError`` is raised, and nothing is written. The
@@ -539,16 +564,20 @@ def resolve_dispatch_target(
         Tuple of (capability_instance_iri, service_iri, service_address).
 
     Raises:
-        OperationResolutionError: If no reachable Service realizes the capability class.
+        OperationReceiverUnavailableError: If a Workflow realizes a Capability of the class, but
+            no Service of it has an address now (Retry). A second read, made only when the
+            first finds no live Service, tells this case from the next.
+        CapabilityNotRealizedError: If no Workflow realizes a Capability of the class (Repair).
     """
     resource_filter = ""
     if target_resource is not None:
         resource_filter = f"\n        ?svc <{SVC.isServiceOf}> <{target_resource}> ."
-    sparql = f"""
-    SELECT ?cap ?svc ?addr WHERE {{
+    realized = f"""
         ?cap a <{capability_class}> .
         ?cap <{SVC.realizedByWorkflow}> ?wf .
-        ?wf <{SVC.isWorkflowOf}> ?svc .
+        ?wf <{SVC.isWorkflowOf}> ?svc ."""
+    sparql = f"""
+    SELECT ?cap ?svc ?addr WHERE {{{realized}
         ?svc <{SVC.address}> ?addr .{resource_filter}
     }}
     """
@@ -557,11 +586,15 @@ def resolve_dispatch_target(
         result.get("results", {}).get("bindings", []) if isinstance(result, dict) else []
     )
     if not bindings:
-        raise OperationResolutionError(
+        message = (
             f"Capability class {capability_class} cannot be resolved to any reachable "
             "Service (no Capability of that class is realized by a Workflow whose Service "
             "has a current svc:address)."
         )
+        answer = ogm.db.query(f"ASK {{{realized}{resource_filter}\n    }}")
+        if isinstance(answer, dict) and answer.get("boolean", False):
+            raise OperationReceiverUnavailableError(message)
+        raise CapabilityNotRealizedError(message)
     binding = bindings[0]
     return IRI(str(binding["cap"])), IRI(str(binding["svc"])), str(binding["addr"])
 
@@ -578,7 +611,8 @@ def resolve_operation_workflow(
     deregistered mid-run.
 
     Raises:
-        OperationResolutionError: If no Workflow realizes the Operation Capability.
+        CapabilityNotRealizedError: If no Workflow realizes the Operation Capability (Repair). It
+            is an ``OperationResolutionError``.
     """
     return _resolve_claim(ogm, operation_iri, named_graph).workflow
 
@@ -600,7 +634,8 @@ def _resolve_claim(
     the claimer notifies after the claim and after the end.
 
     Raises:
-        OperationResolutionError: If no Workflow realizes the Operation Capability.
+        CapabilityNotRealizedError: If no Workflow realizes the Operation Capability (Repair). It
+            is an ``OperationResolutionError``.
     """
     sparql = f"""
     SELECT ?wf ?issuer WHERE {{
@@ -611,7 +646,7 @@ def _resolve_claim(
     """
     bindings = _bindings(ogm.db.query(sparql, convert_bindings=True))
     if not bindings:
-        raise OperationResolutionError(
+        raise CapabilityNotRealizedError(
             f"Operation {operation_iri} cannot be resolved to any Workflow "
             "(no Capability realized by a Workflow)."
         )
@@ -997,7 +1032,9 @@ def switch_possession(
 
     Raises:
         ValueError: If ``workpiece_update`` names ``cfc:hasPossessedWorkpiece``, which the
-            change sets itself, or the new possessor has more than one possession state.
+            change sets itself.
+        DeploymentValueError: If the new possessor has more than one possession state
+            (Repair). It is a ``ValueError``.
         PossessionSwitchConflict: If another write changed what the commit had read, so the
             store found its precondition false (``PreconditionFailedError``, the cause).
             Nothing is written.

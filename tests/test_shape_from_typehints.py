@@ -1,7 +1,7 @@
 """Pure-logic unit tests for SHACL shape generation from Python type hints.
 
 These are the one part of the middleware with no graph interaction, so they run
-without a live GraphDB (unlike the integration tests). See
+without a live store (unlike the integration tests). See
 src/kapps_semantic_middleware/shacl_interop/.
 """
 

@@ -16,7 +16,7 @@ import anyio
 import pytest
 from kapps_ogm import Create, Update
 from kapps_triplestore_interface import IRI
-from kapps_triplestore_interface.exceptions import GraphDbException
+from kapps_triplestore_interface.exceptions import TripleStoreResponseError
 
 from kapps_semantic_middleware import SemanticMiddleware
 
@@ -38,7 +38,7 @@ class _FakeOGM:
         if len(named) != len(set(named)):
             raise ValueError("Two changes name one instance.")
         if self.refuse(changes):
-            raise GraphDbException("SHACL validation failed")
+            raise TripleStoreResponseError("SHACL validation failed")
         self.written.append(changes)
         return []
 
@@ -69,7 +69,7 @@ def _status(value: str) -> list:
 def test_a_refused_entry_runs_no_body_and_writes_nothing():
     ogm = _FakeOGM(refuse=lambda changes: True)
     ran = []
-    with pytest.raises(GraphDbException):
+    with pytest.raises(TripleStoreResponseError):
         with _middleware(ogm).commit(
             OP, entry=_status("running"), exit=_status("done"), error=_status("failed")
         ):
@@ -171,7 +171,7 @@ def test_a_refused_exit_commits_the_error_transition_and_raises_the_stores_error
         seen.append(exc)
         return [Update(instance_iri=OP, data={STATUS: ["failed"], RESULT: [str(exc)]})]
 
-    with pytest.raises(GraphDbException) as raised:
+    with pytest.raises(TripleStoreResponseError) as raised:
         with _middleware(ogm).commit(
             OP, entry=_status("running"), exit=_status("done"), error=failed
         ) as transition:
@@ -422,7 +422,7 @@ async def test_the_async_form_commits_the_error_transition_and_reraises():
 async def test_the_async_form_runs_no_body_after_a_refused_entry():
     ogm = _FakeOGM(refuse=lambda changes: True)
     ran = []
-    with pytest.raises(GraphDbException):
+    with pytest.raises(TripleStoreResponseError):
         async with _middleware(ogm).commit(OP, entry=_status("running")):
             ran.append(True)
     assert ran == []

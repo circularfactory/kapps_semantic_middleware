@@ -19,13 +19,13 @@ from kapps_ogm import OGM
 
 from demo.transferunits.controller import Controller, ResourceInfo
 from kapps_semantic_middleware.connectors.rest_binding import build_parameter_path
-from kapps_semantic_middleware.credentials import graphdb_env_present
+from kapps_semantic_middleware.credentials import triplestore_env_present
 from kapps_semantic_middleware.registration import mint_service_iri, register_service
 from kapps_semantic_middleware.vocabulary import CFC, SVC
 
-requires_graphdb = pytest.mark.skipif(
-    not graphdb_env_present(),
-    reason="GRAPHDB_* environment variables are not set. The test skips live-GraphDB integration.",
+requires_store = pytest.mark.skipif(
+    not triplestore_env_present(),
+    reason="TRIPLESTORE_* environment variables are not set. The test skips live-store integration.",
 )
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "examples"))
@@ -33,9 +33,9 @@ import seed  # noqa: E402
 
 
 @pytest.fixture
-def ogm(graphdb):
+def ogm(store):
     """Create an OGM instance for tests."""
-    return OGM(db=graphdb)
+    return OGM(db=store)
 
 
 @pytest.fixture
@@ -91,7 +91,7 @@ class TestResourceInfo:
 class TestControllerDiscovery:
     """Tests for the Controller discovery functionality."""
 
-    @requires_graphdb
+    @requires_store
     def test_controller_registers_itself(self, seeded_graph):
         """The controller writes its own Service, with an address, on startup.
 
@@ -111,7 +111,7 @@ class TestControllerDiscovery:
         )
         assert len(service_triples) == 1
 
-    @requires_graphdb
+    @requires_store
     def test_discovers_transfer_units(self, seeded_graph):
         """Discovering TransferUnits returns the seeded unit.
 
@@ -136,7 +136,7 @@ class TestControllerDiscovery:
             assert unit.resource_iri is not None
             assert unit.resource_type == tu_class
 
-    @requires_graphdb
+    @requires_store
     def test_discovered_units_have_service_metadata(self, seeded_graph):
         """Discovered units have svc:address from their Service nodes."""
         controller = Controller(
@@ -154,7 +154,7 @@ class TestControllerDiscovery:
         live_units = [u for u in units if u.is_live]
         assert len(live_units) >= 1
 
-    @requires_graphdb
+    @requires_store
     def test_controller_appears_in_own_discovery(self, seeded_graph):
         """The controller appears in its own discovery list, once it registers.
 
@@ -191,7 +191,7 @@ class TestControllerDiscovery:
 class TestGetServiceInfo:
     """Tests for the _get_service_info helper method."""
 
-    @requires_graphdb
+    @requires_store
     def test_gets_address_from_service(self, seeded_graph):
         """_get_service_info returns svc:address for a resource with a Service."""
         controller = Controller(
@@ -206,7 +206,7 @@ class TestGetServiceInfo:
         # The seed writes svc:address for each unit
         assert service_info.get("address") is not None
 
-    @requires_graphdb
+    @requires_store
     def test_returns_none_for_resource_without_service(self, seeded_graph):
         """_get_service_info returns None values for resources without Services."""
         controller = Controller(
@@ -227,7 +227,7 @@ class TestGetServiceInfo:
 class TestParameterPathDerivation:
     """Offline tests for rest_binding.build_parameter_path and _derive_parameter_path.
 
-    There is no GraphDB and no network. These mirror the fixture style of
+    There is no store and no network. These mirror the fixture style of
     test_recursive_rest_router.py, but walk a plain JSON tree of dicts and
     lists instead of pydantic models — the shape open_resource() returns.
     """

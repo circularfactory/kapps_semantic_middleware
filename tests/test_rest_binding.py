@@ -1,6 +1,6 @@
 """Unit tests for the REST semantic connector, including the Service-join amendment.
 
-Pure logic plus a mocked HTTP layer. No GraphDB, no network. The seam exists so a binding can
+Pure logic plus a mocked HTTP layer. No store, no network. The seam exists so a binding can
 be described and reasoned about without a running middleware or a running peer -- this is the
 first consumer of that property for REST, mirroring ``test_semantic_connectors.py``'s split for
 MQTT. Live recognition (the Service join itself, against a seeded TransferUnit) is covered in

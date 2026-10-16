@@ -1,14 +1,14 @@
 """Self-contained seeding for the example scenarios.
 
-Every example scenario runs against a dedicated, clearable GraphDB repository.
+Every example scenario runs against a dedicated, clearable dataset of a triple store.
 These helpers clear it. They load exactly the ground-truth ontology the
 scenario needs (the ``svc:`` module plus the demo ontology of the scenario).
 They then create the starting instance data. A scenario notebook or
 integration test is therefore a complete, reproducible specification of its
 own prerequisites, and never depends on the production state.
 
-The system writes everything into the default graph of the repository, which
-``clear_repository`` wipes at the start of each run.
+The system writes everything into the default graph of the dataset, which
+``clear_dataset`` wipes at the start of each run.
 """
 
 from __future__ import annotations
@@ -28,7 +28,7 @@ from kapps_semantic_middleware.seeding import (
     MES_GRAPH,  # noqa: F401
     SERVICE_GRAPH,  # noqa: F401
     _read_mes_ontology,
-    clear_repository,
+    clear_dataset,
     load_shared_ontologies,
 )
 from kapps_semantic_middleware.vocabulary import MES
@@ -111,7 +111,7 @@ def _read_demo_ontology(filename: str) -> str:
 def load_scenario1_ontologies(db) -> None:
     """Load the shared modules plus ONLY the scenario 1 demo classes."""
     load_shared_ontologies(db)
-    db.import_statements(
+    db.graph_add(
         _read_demo_ontology("demo_scenario1.ttl"), content_type="application/x-turtle"
     )
 
@@ -119,7 +119,7 @@ def load_scenario1_ontologies(db) -> None:
 def load_scenario2_ontologies(db) -> None:
     """Load the shared modules plus ONLY the scenario 2 (door) demo classes."""
     load_shared_ontologies(db)
-    db.import_statements(
+    db.graph_add(
         _read_demo_ontology("demo_scenario2.ttl"), content_type="application/x-turtle"
     )
 
@@ -133,7 +133,7 @@ def load_scenario3_ontologies(db) -> None:
     than from local stubs.
     """
     load_shared_ontologies(db)
-    db.import_statements(
+    db.graph_add(
         _read_demo_ontology("transferunit.ttl"), content_type="application/x-turtle"
     )
 
@@ -145,7 +145,7 @@ def create_resource(db, resource_iri: IRI, resource_class: IRI) -> None:
 
 def seed_scenario1(db) -> None:
     """Full scenario 1 seed: clear, load ontologies, and create the hello + planner resources."""
-    clear_repository(db)
+    clear_dataset(db)
     load_scenario1_ontologies(db)
     create_resource(db, HELLO_RESOURCE, HELLO_RESOURCE_CLASS)
     create_resource(db, PLANNER_RESOURCE, PLANNER_RESOURCE_CLASS)
@@ -165,7 +165,7 @@ def seed_scenario3(db, ogm) -> None:
     graph records where each value lives. The live value exists only in the
     datamodel and over REST.
     """
-    clear_repository(db)
+    clear_dataset(db)
     load_scenario3_ontologies(db)
 
     for belt, position in (
@@ -235,7 +235,7 @@ def seed_scenario3(db, ogm) -> None:
 
 def seed_scenario2(db) -> None:
     """Full scenario 2 (door) seed: clear, load ontologies, create the door + robot resources."""
-    clear_repository(db)
+    clear_dataset(db)
     load_scenario2_ontologies(db)
     create_resource(db, DOOR_RESOURCE, DOOR_RESOURCE_CLASS)
     create_resource(db, MOBILE_ROBOT, MOBILE_ROBOT_RESOURCE_CLASS)
@@ -249,9 +249,9 @@ def seed_handover(db, ogm) -> None:
     complementary to Pass (Retrieve). Makes the source currently possess the
     box (Core reified possession, written through the OGM).
     """
-    clear_repository(db)
-    db.import_statements(_read_mes_ontology(), content_type="application/x-turtle")
-    db.import_statements(
+    clear_dataset(db)
+    db.graph_add(_read_mes_ontology(), content_type="application/x-turtle")
+    db.graph_add(
         _read_demo_ontology("demo_handover.ttl"), content_type="application/x-turtle"
     )
     create_resource(db, HANDOVER_SOURCE, TRANSFER_MODULE_CLASS)

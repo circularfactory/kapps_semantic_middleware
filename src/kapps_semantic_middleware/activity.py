@@ -278,6 +278,9 @@ def enable_activity_feed(
         .level { font-weight: bold; width: 80px; display: inline-block; }
         .logger { color: rgb(0, 102, 204); width: 200px; display: inline-block; }
         .message { color: rgb(51, 51, 51); }
+        details.message { display: inline-block; vertical-align: top; }
+        details.message summary { cursor: pointer; }
+        details.message pre { margin: 0; font: inherit; white-space: pre-wrap; }
         .WARNING .level { color: rgb(153, 102, 0); }
         .ERROR .level { color: rgb(204, 0, 0); }
         .WARNING { background: rgb(255, 248, 225); }
@@ -301,10 +304,29 @@ def enable_activity_feed(
             const date = new Date(record.timestamp * 1000);
             const timeStr = date.toLocaleTimeString();
             const loggerShort = record.logger.split('.').pop();
+            // The first line is the text before the first line break. A record of several
+            // lines shows it in the row, and the rest in an expander that is closed at first.
+            const lineBreak = record.message.indexOf('\\n');
+            const first = lineBreak < 0 ? record.message : record.message.slice(0, lineBreak);
+            const rest = lineBreak < 0 ? '' : record.message.slice(lineBreak + 1);
             div.innerHTML = '<span class="time">' + timeStr + '</span>' +
                             '<span class="level">' + record.level + '</span>' +
                             '<span class="logger">' + loggerShort + '</span>' +
-                            '<span class="message">' + escapeHtml(record.message) + '</span>';
+                            '<span class="message">' + escapeHtml(first) + '</span>';
+            if (rest !== '') {
+                // Built from text nodes, so that the rest is shown as text, with its line
+                // breaks and its indentation.
+                const span = div.querySelector('.message');
+                const details = document.createElement('details');
+                details.className = 'message';
+                const summary = document.createElement('summary');
+                summary.textContent = first;
+                const pre = document.createElement('pre');
+                pre.textContent = rest;
+                details.appendChild(summary);
+                details.appendChild(pre);
+                span.replaceWith(details);
+            }
             log.appendChild(div);
             if (isAtBottom) {
                 log.scrollTop = log.scrollHeight;

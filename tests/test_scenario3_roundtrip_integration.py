@@ -5,7 +5,7 @@ reads that, builds connectors, and a value published by the device arrives throu
 nothing about the topics or the broker is written in this file, it all comes out of the
 ontology and the seeded ABox.
 
-Live GraphDB plus a live in-process MQTT broker.
+Live store plus a live in-process MQTT broker.
 """
 
 from __future__ import annotations
@@ -24,29 +24,29 @@ from kapps_semantic_middleware.connectors.semantic import SemanticConnectorRegis
 from kapps_semantic_middleware.connectors.wiring import plan_wiring
 from kapps_semantic_middleware.vocabulary import INF
 
-from conftest import requires_graphdb  # noqa: E402
+from conftest import requires_store  # noqa: E402
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import examples.seed as seed  # noqa: E402
 from demo.transferunits.plc.transfer_unit import TransferUnit  # noqa: E402
 
 
-def _wire_scenario3_to_test_broker(graphdb, mqtt_broker, *, declare_port):
+def _wire_scenario3_to_test_broker(store, mqtt_broker, *, declare_port):
     """Seed scenario 3, point its broker address at the live test broker, plan its wiring.
 
     Shared by ``wired`` and ``wired_with_declared_port`` below, which differ only in
     whether ``inf:hasMQTTBrokerPort`` also gets declared in the graph.
     """
     host, port = mqtt_broker.split(":")
-    ogm = OGM(db=graphdb)
-    seed.seed_scenario3(graphdb, ogm)
+    ogm = OGM(db=store)
+    seed.seed_scenario3(store, ogm)
 
     port_triple = (
         f'; <{INF.hasMQTTBrokerPort}> "{port}"^^<http://www.w3.org/2001/XMLSchema#integer> '
         if declare_port
         else ""
     )
-    graphdb.query(
+    store.query(
         f"DELETE {{ ?n <{INF.hasMQTTBrokerIP}> ?old }} "
         f'INSERT {{ ?n <{INF.hasMQTTBrokerIP}> "{host}" {port_triple}}} '
         f"WHERE  {{ ?n <{INF.hasMQTTBrokerIP}> ?old }}",
@@ -60,7 +60,7 @@ def _wire_scenario3_to_test_broker(graphdb, mqtt_broker, *, declare_port):
         ]
     )
     plan = plan_wiring(
-        ogm=OGM(db=graphdb),
+        ogm=OGM(db=store),
         resource_iri=seed.TRANSFER_UNIT_1,
         class_scope=scope,
         registry=SemanticConnectorRegistry([MQTTBinding]),
@@ -70,7 +70,7 @@ def _wire_scenario3_to_test_broker(graphdb, mqtt_broker, *, declare_port):
 
 
 @pytest.fixture
-def wired(graphdb, mqtt_broker):
+def wired(store, mqtt_broker):
     """Seed scenario 3 pointed at the test broker, then plan its wiring.
 
     The seeded broker address is rewritten to the test broker's host:port, because the
@@ -78,7 +78,7 @@ def wired(graphdb, mqtt_broker):
     the graph at the test broker is how you redirect a whole TransferUnit, and it is exactly
     what provisioning will do for real once it is built.
     """
-    return _wire_scenario3_to_test_broker(graphdb, mqtt_broker, declare_port=False)
+    return _wire_scenario3_to_test_broker(store, mqtt_broker, declare_port=False)
 
 
 def _connector_for(plan, topic_suffix, direction):
@@ -91,7 +91,7 @@ def _connector_for(plan, topic_suffix, direction):
     raise AssertionError(f"no {direction} connector for a topic ending {topic_suffix!r}")
 
 
-@requires_graphdb
+@requires_store
 @pytest.mark.asyncio
 class TestDeviceToMiddleware:
     """A value the device publishes reaches the connector the graph wired."""
@@ -155,7 +155,7 @@ class TestDeviceToMiddleware:
         assert value is True
 
 
-@requires_graphdb
+@requires_store
 @pytest.mark.asyncio
 class TestMiddlewareToDevice:
     """A setpoint written through the write connector moves the device."""
@@ -192,7 +192,7 @@ class TestMiddlewareToDevice:
             _connector_for(plan, "occupied", SyncDirection.FROM_PERSISTENCE)
 
 
-@requires_graphdb
+@requires_store
 @pytest.mark.asyncio
 class TestFullLoop:
     async def test_setpoint_then_readback_closes_the_loop(self, wired):
@@ -224,7 +224,7 @@ class TestFullLoop:
 
 
 @pytest.fixture
-def wired_with_declared_port(graphdb, mqtt_broker):
+def wired_with_declared_port(store, mqtt_broker):
     """Like ``wired``, but the port comes from the graph too -- no manual patch afterward.
 
     ``wired`` (above) rewrites only the broker IP to the test broker's host, and every test
@@ -233,10 +233,10 @@ def wired_with_declared_port(graphdb, mqtt_broker):
     ``inf:hasMQTTBrokerPort`` too, the same way provisioning will, so the connector the graph
     wires is already pointed at the live test broker with no test-side patch at all.
     """
-    return _wire_scenario3_to_test_broker(graphdb, mqtt_broker, declare_port=True)
+    return _wire_scenario3_to_test_broker(store, mqtt_broker, declare_port=True)
 
 
-@requires_graphdb
+@requires_store
 @pytest.mark.asyncio
 class TestDeclaredPortReachesALiveBroker:
     """The declared port is proven against a live broker on a non-default port, not a mock."""

@@ -2,7 +2,7 @@
 
 These verify the load-bearing guarantee that ``_dump_resource_datamodel`` is BEST-EFFORT and
 never raises into ``claim_next``'s failure-recording path, across all of its branches. Pure
-unit tests — the OGM is faked, so no live GraphDB is needed (unlike the happy-path assertion in
+unit tests — the OGM is faked, so no live store is needed (unlike the happy-path assertion in
 ``test_event_trigger_integration``).
 """
 
@@ -58,4 +58,4 @@ def test_dump_returns_none_when_instance_missing():
 
 def test_dump_returns_none_on_fetch_error():
     # A fetch/serialization failure must NEVER propagate — failure recording must still complete.
-    assert _dump(_FakeOGM(error=RuntimeError("graphdb down"))) is None
+    assert _dump(_FakeOGM(error=RuntimeError("store down"))) is None

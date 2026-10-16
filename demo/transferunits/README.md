@@ -54,23 +54,23 @@ The `[examples]` extra is what the demo needs: without it the factory exits on a
 > three sibling repositories into the same parent folder and put each on a particular branch,
 > because they were wired in as editable path checkouts. They are ordinary dependencies now.
 
-### 3. A GraphDB database
+### 3. A triple store
 
-GraphDB stores the knowledge graph. The demo reads and writes it. Put these three values in your
+The triple store holds the knowledge graph. The demo reads and writes it. Put these three values in your
 environment (for example in a `.env` file, or with `export`):
 
 ```bash
-export GRAPHDB_URL=https://your-graphdb-server
-export GRAPHDB_USERNAME=your-username
-export GRAPHDB_PASSWORD=your-password
+export TRIPLESTORE_URL=https://your-triplestore-server
+export TRIPLESTORE_USERNAME=your-username
+export TRIPLESTORE_PASSWORD=your-password
 ```
 
-There is no fourth value. The demo always uses the repository named **`kapps-demo`**, which is the
+There is no fourth value. The demo always uses the dataset named **`kapps-demo`**, which is the
 one `docker compose` creates for you, and it names that in code rather than reading it from your
-environment. A `GRAPHDB_REPOSITORY` you happen to have set is ignored.
+environment. A `TRIPLESTORE_DATASET` you happen to have set is ignored.
 
 > **Warning.** The demo **writes into** `kapps-demo`, and `--force` **deletes and rewrites** the
-> demo's data in it. Point `GRAPHDB_URL` at a GraphDB you are allowed to overwrite — the repository
+> demo's data in it. Point `TRIPLESTORE_URL` at a store you are allowed to overwrite — the dataset
 > is pinned, but the server is not, and a `kapps-demo` on a shared server is still somebody's.
 
 You do **not** need to install an MQTT broker. Each machine starts its own, inside its own process.
@@ -162,7 +162,7 @@ the machine removed itself from the graph, and the station board simply stopped 
 | what you see | what it usually means |
 | --- | --- |
 | `ModuleNotFoundError`, or strange errors on start | Something the demo needs is not installed. Re-run `pip install "kapps-semantic-middleware[examples]"` — the `[examples]` extra is what brings `uvicorn` and `amqtt`. |
-| An error mentioning `GRAPHDB_` | The three environment variables are not set, or the database is unreachable. |
+| An error mentioning `TRIPLESTORE_` | The three environment variables are not set, or the store is unreachable. |
 | "a live factory is already running" | A previous run did not shut down. Start again with `--force`. |
 | A box on the launcher page turns red | That program crashed. **Click the red box** — it opens and shows that program's last output. |
 | The page loads but no values change | Give it a few seconds. Machines publish their state on a timer. |

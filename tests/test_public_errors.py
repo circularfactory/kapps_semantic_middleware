@@ -20,8 +20,21 @@ MOVED = [
     "PossessionSwitchConflict",
 ]
 
-# Every error the module exports: the moved ones, and the one that was born here.
-NAMES = sorted(MOVED + ["NotificationUndelivered"])
+# The errors that were born here: each tells one action, except the two older types that the
+# action types split.
+BORN_HERE = [
+    "CapabilityNotRealizedError",
+    "DeploymentError",
+    "DeploymentRuntimeError",
+    "DeploymentValueError",
+    "NotificationReceiverAmbiguousError",
+    "NotificationReceiverUnavailableError",
+    "NotificationUndelivered",
+    "OperationReceiverUnavailableError",
+]
+
+# Every error the module exports: the moved ones, and those born here.
+NAMES = sorted(MOVED + BORN_HERE)
 
 
 @pytest.mark.parametrize("name", MOVED)

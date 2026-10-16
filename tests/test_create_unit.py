@@ -20,7 +20,7 @@ import pytest
 from kapps_ogm import Create, Update
 from kapps_ogm.utils.class_scope import ClassScope
 from kapps_triplestore_interface import IRI
-from kapps_triplestore_interface.exceptions import GraphDbException
+from kapps_triplestore_interface.exceptions import TripleStoreResponseError
 
 from kapps_semantic_middleware import SemanticMiddleware
 from kapps_semantic_middleware.errors import NotificationUndelivered
@@ -63,7 +63,7 @@ class _FakeOGM:
         if len(named) != len(set(named)):
             raise ValueError("Two changes name one instance.")
         if self.refuse(changes):
-            raise GraphDbException("SHACL validation failed")
+            raise TripleStoreResponseError("SHACL validation failed")
         self.written.append(changes)
         self.graphs.append(named_graph)
         return [SimpleNamespace(id=change.instance_iri) for change in changes]
@@ -205,7 +205,7 @@ def test_an_error_in_the_body_of_a_creation_alone_writes_nothing_and_is_raised()
 
 def test_a_refused_creation_raises_the_stores_error_and_writes_nothing():
     ogm = _FakeOGM(refuse=lambda changes: True)
-    with pytest.raises(GraphDbException, match="SHACL validation failed"):
+    with pytest.raises(TripleStoreResponseError, match="SHACL validation failed"):
         with _middleware(ogm).create(SNAPSHOT, ClassScope()) as snapshot:
             snapshot.update({DECISION: ["unscrew"]})
     assert ogm.written == []
@@ -267,7 +267,7 @@ def test_a_refused_outer_commit_leaves_neither_its_change_nor_the_nested_creatio
 
     ogm = _FakeOGM(refuse=refuse_done)
     mw = _middleware(ogm)
-    with pytest.raises(GraphDbException):
+    with pytest.raises(TripleStoreResponseError):
         with mw.commit(
             OP, entry=_status("running"), exit=_status("done"), error=_status("failed")
         ):
@@ -496,7 +496,7 @@ def test_opening_a_transport_is_one_commit_of_the_operation_the_box_and_the_firs
 
 
 # --------------------------------------------------------------------------- #
-# request() on mw.create(): its receiver is notified after its own commit.
+# issue_operation() on mw.create(): its receiver is notified after its own commit.
 # --------------------------------------------------------------------------- #
 
 
@@ -544,7 +544,7 @@ def test_a_request_in_the_body_of_a_commit_commits_its_operation_before_it_notif
     with _receiver(ogm, notified):
         mw = _middleware(ogm)
         with mw.commit(OP, entry=_status("running"), exit=_status("done")):
-            with mw.request(
+            with mw.issue_operation(
                 capability_class=f"{EX}TransportCapability", operation_class=TRANSPORT
             ) as op:
                 pass
@@ -576,7 +576,7 @@ def test_a_failed_notification_keeps_every_instance_that_the_requests_commit_cre
     notified: list = []
     with _receiver(ogm, notified, status=503):
         with pytest.raises(NotificationUndelivered):
-            with _middleware(ogm, resource=str(WMS)).request(
+            with _middleware(ogm, resource=str(WMS)).issue_operation(
                 capability_class=f"{EX}TransportCapability", operation_class=TRANSPORT
             ) as op:
                 with _middleware(ogm, resource=str(WMS)).create(

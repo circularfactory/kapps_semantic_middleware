@@ -10,7 +10,7 @@
 #
 # The ontology is ground truth for types, so the Service/Workflow/Capability
 # classes a middleware references must pre-exist. This file declares exactly the
-# classes scenario 1 needs — nothing else — so seeding a clean repository inserts
+# classes scenario 1 needs — nothing else — so seeding a clean dataset inserts
 # only the hello-world/planner vocabulary (no unrelated door classes).
 #
 # Every demo class declares a DIRECT rdfs:subClassOf to the exact base the

@@ -2,12 +2,13 @@
 
 A subproject consumes the dashboard through the same public API. That API is
 the contract. If it is awkward for a subproject it must be awkward for KSM
-first. These four boxes use only the public surface of
+first. These five boxes use only the public surface of
 ``kapps_semantic_middleware.dashboard``. They reach no private hook.
 
 The boxes describe the middleware machinery: what it holds, which services it
-exposes, which connectors it wired. They do not describe resource state. That
-is the monitor job. Keeping the two apart is a decided boundary.
+exposes, which connectors it wired, and which of its writes the store refused.
+They do not describe resource state. That is the monitor job. Keeping the two
+apart is a decided boundary.
 """
 
 from __future__ import annotations
@@ -23,6 +24,8 @@ from kapps_semantic_middleware.dashboard import (
 )
 from kapps_triplestore_interface import IRI
 
+from kapps_semantic_middleware.modes import Mode
+from kapps_semantic_middleware.validation_report import render_refused_write
 from kapps_semantic_middleware.vocabulary import INF
 
 
@@ -244,7 +247,7 @@ def _demangle_fragment(prop: str) -> str:
 
 
 def register(registry: DashboardRegistry) -> None:
-    """Register KSM's own four boxes on the given registry.
+    """Register KSM's own five boxes on the given registry.
 
     The registry is per instance, so registration happens per call. Using
     module-level decorators would tie the boxes to one global registry. Each
@@ -294,33 +297,33 @@ def register(registry: DashboardRegistry) -> None:
         # and label the row so a reader does not mistake it for an observed age.
         queue = attr("_operation_queue", None)
         heartbeat_live = task_alive(attr("_heartbeat_task", None))
-        sweep_live = task_alive(attr("_sweep_task", None))
+        # Only a watchdog-mode instance runs the sweep. Anywhere else its rows would show an
+        # interval that nothing uses and "Sweep task alive: no", which reads like a failure.
+        sweep_rows: List[Tuple[str, Any]] = []
+        if attr("mode") == Mode.WATCHDOG:
+            sweep_rows = [
+                ("Sweep interval (s)", attr("sweep_interval")),
+                ("Sweep task alive", task_alive(attr("_sweep_task", None))),
+            ]
         health_rows: Sequence[Tuple[str, Any]] = [
             ("Heartbeat interval (s)", attr("heartbeat_interval")),
             # The threshold is what a reader judges the heartbeat against, so it belongs
             # beside it even though the observed age cannot be shown without a graph read.
             ("Staleness threshold (s)", attr("staleness_threshold")),
             ("Heartbeat task alive", heartbeat_live),
-            ("Sweep interval (s)", attr("sweep_interval")),
-            ("Sweep task alive", sweep_live),
+            *sweep_rows,
             # `None` rather than a literal dash: `kv_table` renders an absent value as the
             # em dash itself, so the one place that decision lives is `escape`.
             ("Operation queue depth", len(queue) if queue is not None else None),
         ]
 
-        # Repository name comes from the OGM. The attribute differs between
-        # backends, and a missing one should yield the em dash, not a crash.
-        repository: Any = None
-        for repo_attr in ("repository", "repository_id"):
-            try:
-                repository = getattr(middleware.ogm.db, repo_attr, None)
-            except AttributeError:
-                continue
-            if repository is not None:
-                break
+        # The dataset comes from the OGM's store, as the store's contract names it. An
+        # instance without an OGM, or a store without a dataset, yields the em dash, not a
+        # crash.
+        dataset: Any = getattr(getattr(attr("ogm"), "db", None), "dataset", None)
 
         graph_rows: Sequence[Tuple[str, Any]] = [
-            ("Repository", repository),
+            ("Dataset", dataset),
             # `None` here is not missing information. The instance writes to the default
             # graph, which is what the demo does. An em dash would read as "unknown".
             (
@@ -464,7 +467,11 @@ def register(registry: DashboardRegistry) -> None:
 
     @registry.box(id="services", title="Services", tab="System", refresh_seconds=30)
     def services_box(middleware: Any) -> str:
-        """Local workflows and state properties, from the OpenAPI spec."""
+        """Local workflows and state properties, from the OpenAPI spec.
+
+        The middleware describes the routes that run a workflow, and a state property's route,
+        with the registered function's docstring, so each shows its summary and description.
+        """
         # ``middleware.app.openapi()`` is generated in process. No traffic.
         # Some app states make it raise, so call it defensively.
         try:
@@ -565,3 +572,25 @@ def register(registry: DashboardRegistry) -> None:
             "<th>Live state</th></tr></thead>"
             f"<tbody>{''.join(rows)}</tbody></table></div>"
         )
+
+    @registry.box(
+        id="refused-writes", title="Refused writes", tab="System", refresh_seconds=5
+    )
+    def refused_writes_box(middleware: Any) -> str:
+        """The writes of this instance that the store's shapes refused, newest first.
+
+        Read from the instance's memory, ``middleware.refused_writes``, which ``commit``,
+        ``create`` and ``handover`` fill. Each refused write is an expander: its first line shows
+        what was refused and by which rules, and it opens to the results and the whole report.
+        An expander that a reader opened stays open when the box refreshes.
+        """
+        refused = getattr(middleware, "refused_writes", None)
+        if refused is None:
+            return "<p>This instance keeps no record of refused writes.</p>"
+        if not refused:
+            return "<p>No write of this instance was refused since it started.</p>"
+        return hint(
+            "Writes of this instance that the store's shapes refused, newest first; the instance "
+            "keeps only the newest. Open one to read its results and the store's whole report. "
+            "Names are local; hold the pointer over one to read it in full."
+        ) + "".join(render_refused_write(each) for each in refused)

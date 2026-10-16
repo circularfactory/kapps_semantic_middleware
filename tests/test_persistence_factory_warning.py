@@ -13,7 +13,7 @@ had explained trains people to ignore warnings, and a receive task dying silentl
 the kind of bug that hides behind one. ``SemanticMiddleware._suppress_default_persistence_warning``
 pre-registers that identical fallback so the "not found" branch is never reached.
 
-No GraphDB, no network: these tests exercise the persistence registry directly, and the
+No store, no network: these tests exercise the persistence registry directly, and the
 source-inspection tests read files rather than run them.
 """
 

@@ -27,7 +27,7 @@ from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from transitional_sync_middleware.middleware.sync.synced_connector import SyncDirection
-from kapps_triplestore_interface import IRI
+from kapps_triplestore_interface import IRI, SPARQLQuery
 
 from kapps_semantic_middleware.connectors.semantic import (
     ParameterBinding,
@@ -36,21 +36,23 @@ from kapps_semantic_middleware.connectors.semantic import (
     normalize_metadata,
     resolve_direction,
 )
+from kapps_semantic_middleware.errors import DeploymentValueError
 from kapps_semantic_middleware.projection import cross_check, prune_southbound
 from kapps_semantic_middleware.vocabulary import META_TYPE_NAMESPACES, RDFS, SVC
 
 logger = logging.getLogger(__name__)
 
-EXPLICIT_GRAPH = "FROM <http://www.ontotext.com/explicit>"
-"""Restrict a query to asserted triples.
+def _asserted_select(variables: List[str], where: str) -> SPARQLQuery:
+    """This function builds a SELECT that reads asserted triples only.
 
-It is not an ontology term, so it does not belong in ``vocabulary.py``. It names a GraphDB
-*feature*, the pseudo-graph of explicit statements. It is a constant rather than three inline
-copies because every recognition query needs it for the same reason. The default graph
-includes materialized inference, and a parameter node's only types are anonymous restriction
-nodes that exist by inference alone. Count or read without this. This returns
-inferred triples and inflates every result.
-"""
+    The default graph includes materialized inference, and a parameter node's only types are
+    anonymous restriction nodes that exist by inference alone. Count or read without this scope
+    and the query returns inferred triples and inflates every result. The interface writes the
+    scope in the form its store understands, so no query text names a store's own graph.
+    """
+    return SPARQLQuery.select(
+        variables=variables, where_clauses=[where], include_implicit=False
+    )
 
 
 @dataclass
@@ -337,8 +339,10 @@ def _service_address(*, ogm: Any, resource_iri: IRI) -> Optional[str]:
     yet, so there is no address to find and REST recognition finds nothing to bind.
     """
     rows = ogm.db.query(
-        f"SELECT ?addr {EXPLICIT_GRAPH} "
-        f"WHERE {{ ?svc <{SVC.isServiceOf}> <{resource_iri}> ; <{SVC.address}> ?addr }}",
+        _asserted_select(
+            ["?addr"],
+            f"?svc <{SVC.isServiceOf}> <{resource_iri}> ; <{SVC.address}> ?addr",
+        ),
         convert_bindings=True,
     )["results"]["bindings"]
     return str(rows[0]["addr"]) if rows else None
@@ -347,8 +351,9 @@ def _service_address(*, ogm: Any, resource_iri: IRI) -> Optional[str]:
 def _linked_individuals(ogm: Any, subject: IRI, prop_iri: IRI) -> List[IRI]:
     """This function returns the individuals a resource references through one object property."""
     rows = ogm.db.query(
-        f"SELECT ?o {EXPLICIT_GRAPH} "
-        f"WHERE {{ <{subject}> <{prop_iri}> ?o . FILTER(isIRI(?o)) }}",
+        _asserted_select(
+            ["?o"], f"<{subject}> <{prop_iri}> ?o . FILTER(isIRI(?o))"
+        ),
         convert_bindings=True,
     )["results"]["bindings"]
     return [IRI(str(row["o"])) for row in rows]
@@ -415,8 +420,9 @@ def _parameter_metadata(
     declared = {str(p) for p in getattr(prop_spec.nested, "properties", {})}
 
     rows = ogm.db.query(
-        f"SELECT ?p ?v {EXPLICIT_GRAPH} "
-        f"WHERE {{ <{holder_iri}> <{prop_iri}> ?node . ?node ?p ?v }}",
+        _asserted_select(
+            ["?p", "?v"], f"<{holder_iri}> <{prop_iri}> ?node . ?node ?p ?v"
+        ),
         convert_bindings=True,
     )["results"]["bindings"]
 
@@ -470,10 +476,13 @@ def class_of(ogm: Any, instance_iri: IRI) -> IRI:
 
     Public because a consumer that discovers resources in the graph needs exactly this answer,
     and the alternative is the copy that grew in the demo's station board and drifted.
+
+    Raises:
+        DeploymentValueError: If the individual has no asserted domain ``rdf:type`` (Repair):
+            seed it first. It is a ``ValueError``.
     """
     rows = ogm.db.query(
-        f"SELECT ?c {EXPLICIT_GRAPH} "
-        f"WHERE {{ <{instance_iri}> a ?c . FILTER(isIRI(?c)) }}",
+        _asserted_select(["?c"], f"<{instance_iri}> a ?c . FILTER(isIRI(?c))"),
         convert_bindings=True,
     )["results"]["bindings"]
 
@@ -484,7 +493,7 @@ def class_of(ogm: Any, instance_iri: IRI) -> IRI:
     ]
 
     if not candidates:
-        raise ValueError(
+        raise DeploymentValueError(
             f"{instance_iri} has no asserted domain rdf:type, so its ClassSpec cannot be "
             f"resolved. Pass resource_class explicitly, or seed the instance first."
         )

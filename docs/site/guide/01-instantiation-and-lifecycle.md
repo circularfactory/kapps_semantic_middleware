@@ -55,7 +55,7 @@ Deregistration keeps everything else: the individuals, their types, and their st
 
 ## Heartbeat and Staleness
 
-Every resource-mode instance runs an internal periodic {term}`Workflow` that refreshes `svc:lastHeartbeat` on its Service individual. Watchdog-mode instances query for Services whose {term}`heartbeat <Heartbeat>` has exceeded a staleness threshold and remove their `svc:address` and `svc:endpoint` triples.
+Every resource-mode instance runs an internal periodic {term}`Workflow` that refreshes `svc:lastHeartbeat` on its Service individual. The loop beats once at startup, so a reader sees a fresh heartbeat right after registration. It then waits a random time, drawn uniformly from zero up to `heartbeat_interval`, and only then beats every interval. Without that phase, instances started together would beat together for life, and a grid's writes would land in one burst that fills the store's write queue. No two heartbeats of an instance are further apart than one interval plus one write. Watchdog-mode instances query for Services whose {term}`heartbeat <Heartbeat>` has exceeded a staleness threshold and remove their `svc:address` and `svc:endpoint` triples.
 
 A deployment needs at least one running watchdog instance to guarantee no dangling registrations after crashes or power loss. Set the three liveness parameters as keyword arguments to `SemanticMiddleware`:
 

@@ -21,7 +21,7 @@ import anyio
 from kapps_ogm import Create, Update
 from kapps_ogm.utils.class_scope import ClassScope
 from kapps_triplestore_interface import IRI
-from kapps_triplestore_interface.exceptions import InvalidIRIError
+from kapps_triplestore_interface.exceptions import InvalidIRIError, ShaclValidationError
 from rdflib import URIRef
 
 logger = logging.getLogger(__name__)
@@ -70,6 +70,7 @@ class _Commit:
         "_staged",
         "_token",
         "_on_admitted",
+        "_on_refused",
         "nodes",
     )
 
@@ -84,6 +85,7 @@ class _Commit:
         error: ErrorTransition,
         named_graph: Optional[IRI],
         on_admitted: Optional[Callable[[Sequence[Change]], None]] = None,
+        on_refused: Optional[Callable[..., None]] = None,
     ) -> None:
         self._ogm = ogm
         self._instances = [IRI(iri) for iri in instances]
@@ -100,6 +102,10 @@ class _Commit:
         #: Told of each write that the store admitted, with its changes, after the write. It
         #: cannot change the write's outcome: its error is logged, not raised.
         self._on_admitted = on_admitted
+        #: Told of each refusal by the store's shapes, of the entry, of the clean exit or (with
+        #: ``error_transition=True``) of the error transition, with the store's error, before
+        #: the error is raised. It cannot change the error: its own error is logged, not raised.
+        self._on_refused = on_refused
         #: The instances this commit is about, by IRI, as the OGM fetched them after the entry.
         self.nodes: dict[IRI, Any] = {}
 
@@ -150,19 +156,31 @@ class _Commit:
     # The steps, shared by the synchronous and the asynchronous form.
     # ------------------------------------------------------------------ #
 
-    def _write(self, changes: Sequence[Change]) -> None:
+    def _write(self, changes: Sequence[Change], *, error_transition: bool = False) -> None:
         """One ``OGM.commit`` of ``changes``, each checked first. Nothing is sent when there is
         nothing to write, or when a change fails its check.
 
         After the store admitted the write, the function given as ``on_admitted`` is told of it.
-        The write has happened, so an error of that function is logged and not raised.
+        The write has happened, so an error of that function is logged and not raised. When the
+        store's shapes refuse a write, the function given as ``on_refused`` is told of the
+        store's error, and the error is raised unchanged. For the write of the error transition
+        (``error_transition``), it is told so by the keyword ``error_transition``, and the error is
+        not the caller's: it is only noted on the error that is.
         """
         for change in changes:
             _check(change)
         if not changes:
             return
         sent = list(changes)
-        self._ogm.commit(changes=sent, named_graph=self._named_graph)
+        try:
+            self._ogm.commit(changes=sent, named_graph=self._named_graph)
+        except ShaclValidationError as refusal:
+            if self._on_refused is not None:
+                try:
+                    self._on_refused(refusal, error_transition=error_transition)
+                except Exception:
+                    logger.warning("A function told of a refused write raised", exc_info=True)
+            raise
         if self._on_admitted is None:
             return
         try:
@@ -220,7 +238,7 @@ class _Commit:
         """
         self._staged = []
         try:
-            self._write(self._error_changes(exc))
+            self._write(self._error_changes(exc), error_transition=True)
         except Exception as failure:
             logger.error("The error transition was not committed: %r", failure, exc_info=failure)
             exc.add_note(f"The error transition was not committed: {failure!r}")
@@ -321,6 +339,7 @@ class _Creation:
         "_token",
         "_written",
         "_on_admitted",
+        "_on_refused",
         "iri",
     )
 
@@ -333,6 +352,7 @@ class _Creation:
         instance_iri: Optional[str],
         named_graph: Optional[IRI],
         on_admitted: Optional[Callable[[Sequence[Change]], None]] = None,
+        on_refused: Optional[Callable[..., None]] = None,
     ) -> None:
         self._ogm = ogm
         self._class_iri = IRI(class_iri)
@@ -345,6 +365,9 @@ class _Creation:
         self._written: tuple[Change, ...] = ()
         #: Told of the creation's own commit, when it commits alone, as ``_Commit`` tells it.
         self._on_admitted = on_admitted
+        #: Told of a refusal of that commit by the store's shapes, as ``_Commit`` tells it. A
+        #: creation that joins a pending write is refused with it, and that write tells its own.
+        self._on_refused = on_refused
 
     def __setattr__(self, name: str, value: Any) -> None:
         if name not in _Creation.__slots__:
@@ -461,6 +484,7 @@ class _Creation:
                 error=(),
                 named_graph=self._named_graph,
                 on_admitted=self._on_admitted,
+                on_refused=self._on_refused,
             )
             with alone:
                 pass
@@ -498,7 +522,7 @@ def _nothing_to_join() -> Iterator[None]:
     Two bodies need it. One is a body whose commit has already happened, such as that of
     ``handover()``: its clean exit writes nothing more. The other is a creation that must commit
     on its own although a write of its caller is still to come, such as the Operation of
-    ``request()``, whose receiver reads it after the notification. A creation opened in a
+    ``issue_operation()``, whose receiver reads it after the notification. A creation opened in a
     ``mw.commit()`` or a ``mw.create()`` inside the marked body still joins that one.
     """
     token = _pending_write.set(None)

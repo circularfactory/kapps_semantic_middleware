@@ -28,7 +28,7 @@ from kapps_semantic_middleware.commit import (
     _as_reference,
     _require_iri,
 )
-from kapps_semantic_middleware.errors import PossessionSwitchConflict
+from kapps_semantic_middleware.errors import DeploymentValueError, PossessionSwitchConflict
 from kapps_semantic_middleware.vocabulary import CFC
 
 if TYPE_CHECKING:
@@ -78,7 +78,8 @@ def possession_state(ogm: "OGM", resource_iri: IRI) -> tuple[IRI, list[Change]]:
         The state's IRI, and the changes that create it (none when it exists).
 
     Raises:
-        ValueError: If the Resource has more than one possession state. A Resource has one.
+        DeploymentValueError: If the Resource has more than one possession state (Repair). A
+            Resource has one. It is a ``ValueError``.
     """
     sparql = f"SELECT DISTINCT ?state WHERE {{ <{resource_iri}> <{CFC.hasPossessor}> ?state . }}"
     result = ogm.db.query(sparql, convert_bindings=True)
@@ -87,7 +88,7 @@ def possession_state(ogm: "OGM", resource_iri: IRI) -> tuple[IRI, list[Change]]:
     )
     states = sorted(str(b["state"]) for b in bindings)
     if len(states) > 1:
-        raise ValueError(
+        raise DeploymentValueError(
             f"{resource_iri} has {len(states)} possession states ({', '.join(states)}); "
             "a Resource has one"
         )
@@ -122,7 +123,9 @@ def possession_change(
 
     Raises:
         ValueError: If ``workpiece_update`` names ``cfc:hasPossessedWorkpiece``, which this change
-            sets itself, or the Possessor has more than one possession state.
+            sets itself.
+        DeploymentValueError: If the Possessor has more than one possession state (Repair). It
+            is a ``ValueError``.
     """
     update = {
         prop: [_as_reference(value) for value in values]
@@ -172,8 +175,9 @@ def workpiece(scope: Mapping, *, possessor: Optional[str]) -> PredefinedScope:
     ``handover()``, the creation does not try again.
 
     Raises:
-        ValueError: At entry, if ``possessor`` is missing or no IRI. At the clean exit, if the
-            possessor has more than one possession state.
+        ValueError: At entry, if ``possessor`` is missing or no IRI.
+        DeploymentValueError: At the clean exit, if the possessor has more than one possession
+            state (Repair). It is a ``ValueError``.
     """
 
     def check() -> None:

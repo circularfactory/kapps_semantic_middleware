@@ -107,7 +107,7 @@ def _protocol_markers(ogm: Any, parameter_property: Any, interface_root: Any) ->
     - **The parameter property itself** matches ``subPropertyOf+ <root>``. Its own range is
       *domain* content — the value and its unit — and deleting that would leave a payload with
       nothing in it.
-    - **The interface root** matches too, because GraphDB materialises *reflexive*
+    - **The interface root** matches too, because the store materialises *reflexive*
       ``rdfs:subPropertyOf`` (RDFS rule rdfs6), so ``+`` behaves like ``*``. Without excluding
       it, the root's own range is treated as protocol metadata and ``inf:accessMode`` — the one
       interface fact a peer legitimately needs — is deleted.

@@ -20,7 +20,7 @@ implementation makes two mistakes that this guard exists to catch:
    specifically to reproduce the real shape.
 
 This is a **static** check of the generated routes plus **behavioural** checks via `TestClient`.
-No GraphDB, no broker: the middleware is faked, the instance tree is plain pydantic models,
+No store, no broker: the middleware is faked, the instance tree is plain pydantic models,
 and the connectors are stubs that record what they consume.
 """
 
@@ -191,7 +191,7 @@ class _StubConnector:
     Stands in for a ``PersistedConnector``, so it must carry that class's signature:
     ``origin`` and ``changed`` are how a caller tells the fan-out what it attributed the
     write to and which region of the model actually moved. Recording
-    ``changed`` rather than swallowing it makes this stub the fast, GraphDB-free place to
+    ``changed`` rather than swallowing it makes this stub the fast, store-free place to
     assert that the PUT handler scopes its write to one parameter.
     """
 
@@ -437,7 +437,7 @@ def test_put_tells_the_fan_out_which_parameter_moved():
     and a sibling parameter's write leg publishes its last *observed* value onto its *set*
     topic -- an unbidden command. The integration test in
     ``test_southbound_echo_integration.py`` proves the effect against a real broker; this
-    proves the cause, with no GraphDB and no network.
+    proves the cause, with no store and no network.
     """
     mw = _FakeMiddleware()
     unit = _make_unit()

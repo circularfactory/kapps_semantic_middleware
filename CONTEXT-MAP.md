@@ -10,7 +10,7 @@
   explicit scaffolding, will move to `kapps_ogm`.
 - [Example Scenarios](./examples/CONTEXT.md) — self-contained demonstration notebooks, plus the
   seed-data logic and the ontology-provisioning logic under them. That logic makes each notebook
-  reproducible against a dummy repository, and never against the production state.
+  reproducible against a dummy dataset, and never against the production state.
 - [TransferUnit Factory](./demo/transferunits/CONTEXT.md) — the runnable multi-process demo. A
   launcher seeds N units and starts one process per participant.
 - **Module Requirements** — requirements this project places on sibling KAPPS-family

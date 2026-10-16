@@ -1,6 +1,6 @@
 """The middleware mode constants.
 
-Pure unit tests — no GraphDB, no network. The point of the type is that a typo cannot reach
+Pure unit tests — no store, no network. The point of the type is that a typo cannot reach
 the constructor's mode check unnoticed, and that every existing caller passing a bare string
 keeps working.
 """

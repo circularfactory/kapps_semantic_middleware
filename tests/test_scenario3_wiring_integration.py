@@ -1,6 +1,6 @@
 """Scenario 3 wiring: graph -> recognition -> connectors -> served payload.
 
-Live GraphDB, plus a live MQTT broker that runs in-process. This is the ticket real acceptance
+Live store, plus a live MQTT broker that runs in-process. This is the ticket real acceptance
 surface. The middleware reads the seeded TransferUnit out of the graph. Recognize
 which properties are interface-accessible parameters. Build the right number of
 connectors in the right directions. The regression matters. Serve a payload that
@@ -21,21 +21,22 @@ from kapps_ogm import OGM
 from kapps_semantic_middleware.connectors.mqtt_binding import MQTTBinding
 from kapps_semantic_middleware.connectors.rest_binding import RESTBinding, build_parameter_path
 from kapps_semantic_middleware.connectors.semantic import SemanticConnectorRegistry
-from kapps_semantic_middleware.connectors.wiring import plan_wiring
+from kapps_semantic_middleware.connectors.wiring import class_of, plan_wiring
 from kapps_semantic_middleware.projection import (
     carries_southbound,
     southbound_properties,
 )
 from kapps_semantic_middleware.vocabulary import INF, SVC, AccessMode
 
-from conftest import requires_graphdb  # noqa: E402
+from _explicit import explicit_select
+from conftest import requires_store  # noqa: E402
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "examples"))
 import seed  # noqa: E402
 
 
 @pytest.fixture
-def scenario3(graphdb):
+def scenario3(store):
     """A seeded scenario 3 and an OGM over it.
 
     Function-scoped. Load-bearing. Tempt the ~80 round trips a seed costs. Several
@@ -45,11 +46,11 @@ def scenario3(graphdb):
     puts a later test formatter into envelope mode. It reads a raw scalar as an
     unobserved payload.
     """
-    seed.seed_scenario3(graphdb, OGM(db=graphdb))
+    seed.seed_scenario3(store, OGM(db=store))
     # A *fresh* OGM. Deliberately not the one that seeded. The seeding client carries
     # state from its own writes. A test plans a wiring. Read the graph the way a
     # cold middleware reads it.
-    return graphdb, OGM(db=graphdb)
+    return store, OGM(db=store)
 
 
 def _plan(ogm, unit_scope, **kwargs):
@@ -65,16 +66,16 @@ def _plan(ogm, unit_scope, **kwargs):
 SERVICE_ADDRESS = "http://10.0.0.5:8010"
 
 
-def _publish_service(graphdb, resource_iri, address=SERVICE_ADDRESS):
+def _publish_service(store, resource_iri, address=SERVICE_ADDRESS):
     """Give ``resource_iri`` a live Service, the way ``_register_service`` would at runtime.
 
     Plain ``INSERT DATA``, not the OGM write path -- the same pattern
     ``test_an_envelope_path_reaches_the_binding_from_the_graph`` already relies on to prove a
-    raw insert lands in the explicit graph that ``wiring.py``'s ``EXPLICIT_GRAPH``-scoped
+    raw insert lands in the explicit graph that ``wiring.py``'s asserted-only
     queries read from.
     """
     service_iri = f"{resource_iri}Service"
-    graphdb.query(
+    store.query(
         f"""
         INSERT DATA {{
           <{service_iri}> a <{SVC.Service}> ;
@@ -87,7 +88,7 @@ def _publish_service(graphdb, resource_iri, address=SERVICE_ADDRESS):
     return address
 
 
-@requires_graphdb
+@requires_store
 class TestRecognition:
     """Four parameters. Recognised from the graph by their interface property."""
 
@@ -138,8 +139,8 @@ class TestRecognition:
         activate from real data. The formatter is correct and unreachable. Pin the
         declaration. Not the formatter logic.
         """
-        graphdb, ogm = scenario3
-        graphdb.query(
+        store, ogm = scenario3
+        store.query(
             f'INSERT {{ ?n <{INF.hasMQTTValuePath}> "payload.speed" }} '
             f"WHERE {{ <{seed.CONVEYOR_BELT_LEFT}> <{seed.TU_HAS_CONVEYOR_SPEED}> ?n }}",
             update=True,
@@ -163,8 +164,8 @@ class TestRecognition:
         `xsd:string`. A connector handed a string port fails at the socket layer, not at
         construction, so this is load-bearing rather than a type-purity nicety.
         """
-        graphdb, ogm = scenario3
-        graphdb.query(
+        store, ogm = scenario3
+        store.query(
             f'INSERT {{ ?n <{INF.hasMQTTBrokerPort}> '
             f'"18831"^^<http://www.w3.org/2001/XMLSchema#integer> }} '
             f"WHERE {{ <{seed.CONVEYOR_BELT_LEFT}> <{seed.TU_HAS_CONVEYOR_SPEED}> ?n }}",
@@ -241,7 +242,7 @@ class TestRecognition:
         assert INF.hasValue.lined not in {b.field_id for b in plan.bindings}
 
 
-@requires_graphdb
+@requires_store
 class TestRegistrationCount:
     """4 parameters -> 4 bindings -> 6 connectors -> 6 topics."""
 
@@ -290,7 +291,7 @@ class TestRegistrationCount:
         assert len(plan.bindings) == 4
 
 
-@requires_graphdb
+@requires_store
 class TestNorthboundProjection:
     """The regression matters. No flavour ever serves connection metadata."""
 
@@ -312,7 +313,7 @@ class TestNorthboundProjection:
 
         Two protocols on one parameter is not hypothetical: own-built hardware. Protocol is not known when the ontology is authored.
         """
-        graphdb, ogm = scenario3
+        store, ogm = scenario3
         opcua_marker = IRI(f"{seed.INF_NS}isInterfaceAccessibleOPCUAParameter")
         opcua_endpoint = IRI(f"{seed.INF_NS}hasOPCUAEndpoint")
         owl, rdfs, xsd = (
@@ -321,7 +322,7 @@ class TestNorthboundProjection:
             "http://www.w3.org/2001/XMLSchema#",
         )
 
-        graphdb.query(
+        store.query(
             f"""
             INSERT DATA {{
               <{opcua_marker}> a <{owl}ObjectProperty> ;
@@ -335,7 +336,7 @@ class TestNorthboundProjection:
             """,
             update=True,
         )
-        graphdb.query(
+        store.query(
             f'INSERT {{ ?n <{opcua_endpoint}> "opc.tcp://10.0.0.5:4840/belt" }} '
             f"WHERE {{ <{seed.CONVEYOR_BELT_LEFT}> <{seed.TU_HAS_CONVEYOR_SPEED}> ?n }}",
             update=True,
@@ -418,8 +419,8 @@ class TestNorthboundProjection:
         """The port is a restriction on the MQTT protocol marker's range, so the
         projection prunes it with the rest of the connection metadata -- no projection code
         change needed, just this proof that the claim holds now that the term exists."""
-        graphdb, ogm = scenario3
-        graphdb.query(
+        store, ogm = scenario3
+        store.query(
             f'INSERT {{ ?n <{INF.hasMQTTBrokerPort}> '
             f'"18831"^^<http://www.w3.org/2001/XMLSchema#integer> }} '
             f"WHERE {{ <{seed.CONVEYOR_BELT_LEFT}> <{seed.TU_HAS_CONVEYOR_SPEED}> ?n }}",
@@ -434,7 +435,7 @@ class TestNorthboundProjection:
         assert str(INF.hasMQTTBrokerPort) in plan.southbound_properties
 
 
-@requires_graphdb
+@requires_store
 class TestAConsumerLoadsThePrunedShape:
     """Prune-on-load: a consumer fetching a peer's datamodel gets the prune.
 
@@ -499,7 +500,7 @@ class TestAConsumerLoadsThePrunedShape:
         assert INF.hasMQTTBrokerIP.lined not in parameter
 
 
-@requires_graphdb
+@requires_store
 class TestServiceJoinRecognition:
     """The Service-join amendment of 2026-08-03: evidence may sit on the resource's Service.
 
@@ -509,8 +510,8 @@ class TestServiceJoinRecognition:
     """
 
     def test_a_live_resource_s_address_reaches_every_binding(self, scenario3, unit_scope):
-        graphdb, ogm = scenario3
-        address = _publish_service(graphdb, seed.TRANSFER_UNIT_1)
+        store, ogm = scenario3
+        address = _publish_service(store, seed.TRANSFER_UNIT_1)
 
         plan = _plan(ogm, unit_scope)
 
@@ -543,7 +544,7 @@ class TestServiceJoinRecognition:
         )
 
 
-@requires_graphdb
+@requires_store
 class TestRESTRecognition:
     """A live resource, generically interface-accessible, binds a REST connector."""
 
@@ -552,8 +553,8 @@ class TestRESTRecognition:
         MQTT marker keeps resolving to MQTTBinding even with RESTBinding in the registry and
         a live Service present -- wiring.py's existing most-specific-match tie-break, exercised
         against a new competitor."""
-        graphdb, ogm = scenario3
-        _publish_service(graphdb, seed.TRANSFER_UNIT_1)
+        store, ogm = scenario3
+        _publish_service(store, seed.TRANSFER_UNIT_1)
 
         plan = _plan(ogm, unit_scope, registry=SemanticConnectorRegistry([MQTTBinding, RESTBinding]))
 
@@ -564,8 +565,8 @@ class TestRESTRecognition:
         """With MQTTBinding out of the registry, the same seeded (MQTT-marked) parameters
         still recognise -- through the generic interface root, per the Service-join amendment --
         and build a REST connector addressed at the live Service."""
-        graphdb, ogm = scenario3
-        address = _publish_service(graphdb, seed.TRANSFER_UNIT_1)
+        store, ogm = scenario3
+        address = _publish_service(store, seed.TRANSFER_UNIT_1)
 
         plan = _plan(ogm, unit_scope, registry=SemanticConnectorRegistry([RESTBinding]))
 
@@ -607,8 +608,8 @@ class TestRESTRecognition:
 
     def test_a_monitor_builds_read_only_rest_connectors(self, scenario3, unit_scope):
         """readwrite + observing binds read-only, the same rule as MQTT."""
-        graphdb, ogm = scenario3
-        _publish_service(graphdb, seed.TRANSFER_UNIT_1)
+        store, ogm = scenario3
+        _publish_service(store, seed.TRANSFER_UNIT_1)
 
         plan = _plan(
             ogm,
@@ -623,7 +624,7 @@ class TestRESTRecognition:
         )
 
 
-@requires_graphdb
+@requires_store
 class TestEnsureTransport:
     """The deployment's transport hook, threaded through ``plan_wiring``.
 
@@ -641,8 +642,8 @@ class TestEnsureTransport:
         assert calls == [(seed.MQTT_BROKER_IP, 1883)]
 
     def test_two_distinct_addresses_each_get_ensured(self, scenario3, unit_scope):
-        graphdb, ogm = scenario3
-        graphdb.query(
+        store, ogm = scenario3
+        store.query(
             f'DELETE {{ ?n <{INF.hasMQTTBrokerIP}> "{seed.MQTT_BROKER_IP}" }} '
             f'INSERT {{ ?n <{INF.hasMQTTBrokerIP}> "10.0.0.9" }} '
             f"WHERE {{ <{seed.CONVEYOR_BELT_LEFT}> <{seed.TU_HAS_CONVEYOR_SPEED}> ?n . "
@@ -679,3 +680,70 @@ class TestEnsureTransport:
         )
 
         assert calls == []
+
+
+@requires_store
+class TestRecognitionIgnoresInferredStatements:
+    """Recognition reads asserted statements only, on ``rdfsplus-optimized``.
+
+    The store materializes ``rdfs:subClassOf``. The queries state "asserted only" through the
+    interface, which writes the scope in the form its store understands. If that scope were
+    lost, these reads would return the inferred types.
+    """
+
+    CHILD = "http://example.org/ksm468#ChildClass"
+    PARENT = "http://example.org/ksm468#ParentClass"
+    SUBCLASS_OF = "http://www.w3.org/2000/01/rdf-schema#subClassOf"
+
+    def test_an_inferred_super_class_is_not_the_recognised_class(self, scenario3):
+        store, ogm = scenario3
+        thing = "http://example.org/ksm468#thing"
+        store.query(
+            f"INSERT DATA {{ <{self.CHILD}> <{self.SUBCLASS_OF}> <{self.PARENT}> . "
+            f"<{thing}> a <{self.CHILD}> }}",
+            update=True,
+        )
+        inferred = store.query(
+            f"ASK {{ <{thing}> a <{self.PARENT}> }}", convert_bindings=True
+        )
+        assert inferred["boolean"], "the store must infer the super class"
+
+        assert str(class_of(ogm, IRI(thing))) == self.CHILD
+
+    def test_an_inferred_type_on_a_parameter_node_does_not_reach_recognition(
+        self, scenario3, unit_scope
+    ):
+        store, ogm = scenario3
+        store.query(
+            f"""
+            INSERT {{ ?n a <{self.CHILD}> . <{self.CHILD}> <{self.SUBCLASS_OF}> <{self.PARENT}> }}
+            WHERE {{ <{seed.CONVEYOR_BELT_LEFT}> <{seed.TU_HAS_CONVEYOR_SPEED}> ?n }}
+            """,
+            update=True,
+        )
+        inferred = store.query(
+            f"ASK {{ <{seed.CONVEYOR_BELT_LEFT}> <{seed.TU_HAS_CONVEYOR_SPEED}> ?n . "
+            f"?n a <{self.PARENT}> }}",
+            convert_bindings=True,
+        )
+        assert inferred["boolean"], "the store must infer the super class on the node"
+
+        plan = _plan(ogm, unit_scope)
+        left = next(
+            b for b in plan.bindings if str(b.resource_iri) == str(seed.CONVEYOR_BELT_LEFT)
+        )
+
+        assert len(plan.bindings) == 4
+        assert left.get(INF.hasMQTTTopic) == "TransferUnit1/ConveyorBelt/left/speed"
+        asserted = {
+            str(r["t"])
+            for r in store.query(
+                explicit_select(
+                    ["?t"],
+                    f"<{seed.CONVEYOR_BELT_LEFT}> <{seed.TU_HAS_CONVEYOR_SPEED}> ?n . ?n a ?t",
+                ),
+                convert_bindings=True,
+            )["results"]["bindings"]
+        }
+        assert self.CHILD in asserted
+        assert self.PARENT not in asserted

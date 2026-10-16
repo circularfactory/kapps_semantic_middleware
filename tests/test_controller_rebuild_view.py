@@ -20,17 +20,17 @@ import pytest
 from kapps_ogm import OGM
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from conftest import requires_graphdb  # noqa: E402
+from conftest import requires_store  # noqa: E402
 from demo.transferunits import seed  # noqa: E402
 from demo.transferunits.controller import Controller  # noqa: E402
 from kapps_semantic_middleware.vocabulary import SVC  # noqa: E402
 
 
-def _publish_service(graphdb, resource_iri, address: str) -> None:
+def _publish_service(store, resource_iri, address: str) -> None:
     """Give ``resource_iri`` a live Service by hand -- mirrors
     ``test_controller_view.py``'s own helper of the same name."""
     service_iri = f"{resource_iri}Service"
-    graphdb.query(
+    store.query(
         f"""
         INSERT DATA {{
           <{service_iri}> a <{SVC.Service}> ;
@@ -42,13 +42,13 @@ def _publish_service(graphdb, resource_iri, address: str) -> None:
     )
 
 
-def _unpublish_service(graphdb, resource_iri) -> None:
+def _unpublish_service(store, resource_iri) -> None:
     """Take ``resource_iri`` offline: delete its Service triples entirely, the graph
     state a clean deregistration leaves behind -- the live clause then binds
     nothing for it, exactly like an offline unit's absence in ``test_controller_view.py``.
     """
     service_iri = f"{resource_iri}Service"
-    graphdb.query(f"DELETE WHERE {{ <{service_iri}> ?p ?o }}", update=True)
+    store.query(f"DELETE WHERE {{ <{service_iri}> ?p ?o }}", update=True)
 
 
 def _query_selecting(*indices: int) -> str:
@@ -78,30 +78,30 @@ def _query_selecting(*indices: int) -> str:
 
 
 @pytest.fixture
-def ogm(graphdb):
-    return OGM(db=graphdb)
+def ogm(store):
+    return OGM(db=store)
 
 
 @pytest.fixture
-def factory3(graphdb, ogm):
+def factory3(store, ogm):
     """3 seeded TransferUnits, none live yet."""
-    seed.seed_factory(graphdb, ogm, units=3)
+    seed.seed_factory(store, ogm, units=3)
     return ogm
 
 
-@requires_graphdb
+@requires_store
 @pytest.mark.asyncio
 class TestDifferentialRebuild:
     async def test_one_rebuild_covers_a_joiner_a_leaver_and_an_unchanged_hit(
-        self, graphdb, factory3, unit_scope
+        self, store, factory3, unit_scope
     ):
         """One rebuild covers a joiner, a leaver and an unchanged unit at once.
         Units 1 and 2 start live and loaded; unit 1 goes offline and
         unit 3 comes online in the same moment; one rebuild_view call must report all
         three categories and leave self.units matching the new hit set exactly."""
         unit1, unit2, unit3 = (seed._mint_transfer_unit_iri(n) for n in (1, 2, 3))
-        _publish_service(graphdb, unit1, "http://127.0.0.1:19201")
-        _publish_service(graphdb, unit2, "http://127.0.0.1:19202")
+        _publish_service(store, unit1, "http://127.0.0.1:19201")
+        _publish_service(store, unit2, "http://127.0.0.1:19202")
 
         controller = Controller(resource_iri="http://example.org/CS-rebuild1", ogm=factory3, port=0)
         hits = controller.view(_query_selecting(1, 2))
@@ -112,8 +112,8 @@ class TestDifferentialRebuild:
         unit2_instance_before = controller.units[str(unit2)]
 
         # The world changes: unit 1 deregisters, unit 3 registers.
-        _unpublish_service(graphdb, unit1)
-        _publish_service(graphdb, unit3, "http://127.0.0.1:19203")
+        _unpublish_service(store, unit1)
+        _publish_service(store, unit3, "http://127.0.0.1:19203")
 
         diff = await controller.rebuild_view(_query_selecting(2, 3))
 
@@ -126,12 +126,12 @@ class TestDifferentialRebuild:
         # "Leave the unchanged alone": the same Python object, not re-fetched.
         assert controller.units[str(unit2)] is unit2_instance_before
 
-    async def test_a_leaver_has_its_connectors_torn_down(self, graphdb, factory3, unit_scope):
+    async def test_a_leaver_has_its_connectors_torn_down(self, store, factory3, unit_scope):
         """"Close connectors and drop the leavers" -- not just drop the dict entry.
         Every connector wire_view registered for the departed hit must be gone from the
         connection registry, and its wiring must no longer be findable."""
         unit1 = seed._mint_transfer_unit_iri(1)
-        _publish_service(graphdb, unit1, "http://127.0.0.1:19301")
+        _publish_service(store, unit1, "http://127.0.0.1:19301")
 
         controller = Controller(resource_iri="http://example.org/CS-rebuild2", ogm=factory3, port=0)
         hits = controller.view(_query_selecting(1))
@@ -148,7 +148,7 @@ class TestDifferentialRebuild:
             cid in controller.connection_registry.connectors for cid in connector_ids_before
         )
 
-        _unpublish_service(graphdb, unit1)
+        _unpublish_service(store, unit1)
         diff = await controller.rebuild_view(_query_selecting())
 
         assert [str(iri) for iri in diff.leavers] == [str(unit1)]
@@ -156,13 +156,13 @@ class TestDifferentialRebuild:
         assert not any(cid in controller.connection_registry.connectors for cid in connector_ids_before)
 
     async def test_a_malformed_heuristic_reports_in_place_and_leaves_units_untouched(
-        self, graphdb, factory3, unit_scope
+        self, store, factory3, unit_scope
     ):
         """Neither a malformed heuristic nor a zero-hit one may 500 -- both are
         reported in the returned ViewDiff, and a malformed one must not disturb
         whatever was already loaded."""
         unit1 = seed._mint_transfer_unit_iri(1)
-        _publish_service(graphdb, unit1, "http://127.0.0.1:19401")
+        _publish_service(store, unit1, "http://127.0.0.1:19401")
 
         controller = Controller(resource_iri="http://example.org/CS-rebuild3", ogm=factory3, port=0)
         hits = controller.view(_query_selecting(1))
@@ -176,11 +176,11 @@ class TestDifferentialRebuild:
         assert diff.joiners == [] and diff.leavers == [] and diff.unchanged == []
         assert controller.units == units_before
 
-    async def test_a_zero_hit_heuristic_is_not_an_error(self, graphdb, factory3, unit_scope):
+    async def test_a_zero_hit_heuristic_is_not_an_error(self, store, factory3, unit_scope):
         """A heuristic that matches nothing is a legitimate outcome, not a failure --
         every previously-loaded hit becomes a leaver, and no error is reported."""
         unit1 = seed._mint_transfer_unit_iri(1)
-        _publish_service(graphdb, unit1, "http://127.0.0.1:19501")
+        _publish_service(store, unit1, "http://127.0.0.1:19501")
 
         controller = Controller(resource_iri="http://example.org/CS-rebuild4", ogm=factory3, port=0)
         hits = controller.view(_query_selecting(1))

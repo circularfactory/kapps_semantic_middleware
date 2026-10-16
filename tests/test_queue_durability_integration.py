@@ -1,10 +1,10 @@
-"""Queue durability + recovery integration tests against a live GraphDB.
+"""Queue durability + recovery integration tests against a live store.
 
 On startup a resource reconstructs its operation queue from the graph — re-enqueuing its
 own ``queued`` Operations and failing its own orphaned ``running`` ones (never auto-rerun) —
 and a watchdog marks a dead resource's stranded Operations ``failed``. A resource's own
 Operations are found by ontology traversal (Operation --implementsCapability--> Capability
-<--hasCapability-- resource), never by matching IRI names. Skipped when GRAPHDB_* env vars
+<--hasCapability-- resource), never by matching IRI names. Skipped when TRIPLESTORE_* env vars
 are absent (see conftest).
 """
 
@@ -18,7 +18,7 @@ import pytest
 
 from kapps_ogm import OGM
 from kapps_semantic_middleware import SemanticMiddleware
-from kapps_semantic_middleware.credentials import graphdb_env_present, graphdb_for
+from kapps_semantic_middleware.credentials import triplestore_env_present, triplestore_for
 from kapps_semantic_middleware.registration import (
     create_operation,
     find_resource_operations,
@@ -31,9 +31,9 @@ from kapps_semantic_middleware.registration import (
 )
 from kapps_semantic_middleware.vocabulary import CFC, OperationStatus, SVC
 
-requires_graphdb = pytest.mark.skipif(
-    not graphdb_env_present(),
-    reason="GRAPHDB_* environment variables not set; skipping live-GraphDB integration test",
+requires_store = pytest.mark.skipif(
+    not triplestore_env_present(),
+    reason="TRIPLESTORE_* environment variables not set; skipping live-store integration test",
 )
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "examples"))
@@ -82,12 +82,12 @@ def _create_op(ogm, cap_iri, status: str):
     return op_iri
 
 
-def _resource_middleware(graphdb):
+def _resource_middleware(store):
     return SemanticMiddleware(
         mode="resource",
         resource_iri=seed.HELLO_RESOURCE,
         service_class=seed.HELLO_SERVICE_CLASS,
-        ogm=OGM(db=graphdb_for(graphdb.repository)),
+        ogm=OGM(db=triplestore_for(store.dataset)),
         host="127.0.0.1",
         port=8993,
     )
@@ -98,10 +98,10 @@ def _status(db, op_iri) -> str | None:
     return str(triples[0][2]) if triples else None
 
 
-@requires_graphdb
-def test_startup_reconstructs_queued_operation(graphdb):
+@requires_store
+def test_startup_reconstructs_queued_operation(store):
     """A restarting resource re-enqueues its own queued Operations (ontology traversal)."""
-    db = graphdb
+    db = store
     seed.seed_scenario1(db)
     ogm = OGM(db=db)
     _service, cap_iri = _register_hello_resource(ogm)
@@ -111,21 +111,21 @@ def test_startup_reconstructs_queued_operation(graphdb):
     assert op_iri in find_resource_operations(ogm, seed.HELLO_RESOURCE, [OperationStatus.QUEUED])
 
     # A fresh middleware for the same resource reconstructs its queue on startup.
-    mw = _resource_middleware(graphdb)
+    mw = _resource_middleware(store)
     asyncio.run(mw._reconstruct_queue())
     assert op_iri in mw._operation_queue
 
 
-@requires_graphdb
-def test_startup_fails_orphaned_running_operation(graphdb):
+@requires_store
+def test_startup_fails_orphaned_running_operation(store):
     """A resource that crashed mid-execution fails its orphaned running Operation, never reruns."""
-    db = graphdb
+    db = store
     seed.seed_scenario1(db)
     ogm = OGM(db=db)
     _service, cap_iri = _register_hello_resource(ogm)
     op_iri = _create_op(ogm, cap_iri, OperationStatus.RUNNING)
 
-    mw = _resource_middleware(graphdb)
+    mw = _resource_middleware(store)
     asyncio.run(mw._reconstruct_queue())
 
     # The orphaned running op is failed (not auto-rerun) and NOT put back on the queue.
@@ -133,10 +133,10 @@ def test_startup_fails_orphaned_running_operation(graphdb):
     assert op_iri not in mw._operation_queue
 
 
-@requires_graphdb
-def test_watchdog_sweeps_stranded_operations(graphdb):
+@requires_store
+def test_watchdog_sweeps_stranded_operations(store):
     """A watchdog marks a stale resource's stranded queued + running Operations failed."""
-    db = graphdb
+    db = store
     seed.seed_scenario1(db)
     ogm = OGM(db=db)
     service_iri, cap_iri = _register_hello_resource(ogm)
@@ -144,7 +144,7 @@ def test_watchdog_sweeps_stranded_operations(graphdb):
     running_op = _create_op(ogm, cap_iri, OperationStatus.RUNNING)
 
     # The service advertised an address but never heartbeated -> stale. A watchdog sweeps it.
-    watchdog = SemanticMiddleware(mode="watchdog", ogm=OGM(db=graphdb_for(graphdb.repository)))
+    watchdog = SemanticMiddleware(mode="watchdog", ogm=OGM(db=triplestore_for(store.dataset)))
     swept = asyncio.run(watchdog.sweep())
 
     assert service_iri in swept

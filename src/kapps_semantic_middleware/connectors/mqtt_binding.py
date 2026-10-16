@@ -64,7 +64,8 @@ except ImportError:  # pragma: no cover - depends on the optional extra being in
     # Importing this module must not require a working MQTT stack. The registry must exist
     # for every flavour, including one that wires nothing, so an inspector on a
     # host without aiomqtt must still receive recognition and the projection. The failure is
-    # deferred to the moment something actually tries to build a connector.
+    # deferred to the moment something actually tries to build a connector. The ignore is for a
+    # typed transitional_sync_middleware, where None is no class; untyped, as today, it is unused.
     MqttClientConnector = None  # type: ignore[assignment]
 
 

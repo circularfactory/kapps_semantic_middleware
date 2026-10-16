@@ -41,24 +41,24 @@ pip install "kapps-semantic-middleware[examples]"
 
 You do **not** need to install an MQTT broker. Each machine starts its own, inside its own process.
 
-### 2. A GraphDB database
+### 2. A triple store
 
-GraphDB stores the knowledge graph, and the demo reads and writes it. See
+The triple store holds the knowledge graph, and the demo reads and writes it. See
 [Install the stack](../index.md) for how to start one. Put these three values in your environment:
 
 ```bash
-export GRAPHDB_URL=https://your-graphdb-server
-export GRAPHDB_USERNAME=your-username
-export GRAPHDB_PASSWORD=your-password
+export TRIPLESTORE_URL=https://your-triplestore-server
+export TRIPLESTORE_USERNAME=your-username
+export TRIPLESTORE_PASSWORD=your-password
 ```
 
-There is no fourth value. The demo always uses the repository named **`kapps-demo`**, which is the
+There is no fourth value. The demo always uses the dataset named **`kapps-demo`**, which is the
 one `docker compose` creates for you, and it names that in code rather than reading it from your
-environment. A `GRAPHDB_REPOSITORY` you happen to have set is ignored.
+environment. A `TRIPLESTORE_DATASET` you happen to have set is ignored.
 
 :::{warning}
 The demo **writes into** `kapps-demo`, and `--force` **deletes and rewrites** the demo's data in it.
-Point `GRAPHDB_URL` at a GraphDB you are allowed to overwrite — the repository is pinned, but the
+Point `TRIPLESTORE_URL` at a store you are allowed to overwrite — the dataset is pinned, but the
 server is not, and a `kapps-demo` on a shared server is still somebody's.
 :::
 
@@ -146,7 +146,7 @@ the machine removed itself from the graph, and the station board simply stopped 
 | what you see | what it usually means |
 | --- | --- |
 | `ModuleNotFoundError`, or strange errors on start | The `examples` extra is not installed. Install `"kapps-semantic-middleware[examples]"`. |
-| An error mentioning `GRAPHDB_` | The three environment variables are not set, or the database is unreachable. |
+| An error mentioning `TRIPLESTORE_` | The three environment variables are not set, or the store is unreachable. |
 | "a live factory is already running" | A previous run did not shut down. Start again with `--force`. |
 | A box on the launcher page turns red | That program crashed. **Click the red box** — it opens and shows that program's last output. |
 | The page loads but no values change | Give it a few seconds. Machines publish their state on a timer. |

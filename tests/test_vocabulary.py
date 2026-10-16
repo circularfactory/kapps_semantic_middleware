@@ -2,7 +2,7 @@
 
 Verifies the vocabulary contract for MES + Operation-status additions
 (event-trigger coordination and ontology layering).
-Pure unit tests — NO GraphDB, NO network dependencies.
+Pure unit tests — NO store, NO network dependencies.
 """
 
 import pytest
