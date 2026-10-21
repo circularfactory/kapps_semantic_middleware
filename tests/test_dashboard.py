@@ -502,16 +502,16 @@ def test_the_422_does_not_win_over_the_real_response() -> None:
 def test_a_tab_name_with_a_space_still_shows_its_panel() -> None:
     """A tab whose title is not a legal identifier still renders a visible panel.
 
-    `UC2 monitor` is the tab the use case adds, so this is reached on the first subproject
-    tab. `html.escape` leaves a space alone, so the id became `tab-UC2 monitor` and the
-    selector `#tab-UC2 monitor:checked`, which no browser parses. The rule was dropped and
+    `Line monitor` is the tab the use case adds, so this is reached on the first subproject
+    tab. `html.escape` leaves a space alone, so the id became `tab-Line monitor` and the
+    selector `#tab-Line monitor:checked`, which no browser parses. The rule was dropped and
     the panel kept `display: none`, leaving a tab strip above nothing.
     """
     import re as _re
 
     mw = FakeMiddleware()
     registry = enable_dashboard(mw, register_default_boxes=False)
-    for index, tab in enumerate(("UC2 monitor", "A/B", "Etienne's", "5 GHz")):
+    for index, tab in enumerate(("Line monitor", "A/B", "Etienne's", "5 GHz")):
         # A safe box id on purpose: this test is about the tab title, and an unsafe box id
         # is refused at registration by its own rule.
         registry.box(id=f"box-{index}", title=tab, tab=tab)(lambda _mw: "<p>x</p>")
@@ -544,7 +544,7 @@ def test_a_tab_name_with_a_space_still_shows_its_panel() -> None:
     assert ".tab-radio:checked + .tab-label" not in shell, "the dead sibling rule is back"
 
     # The reader still sees the original titles.
-    for tab in ("UC2 monitor", "A/B", "Etienne&#x27;s", "5 GHz"):
+    for tab in ("Line monitor", "A/B", "Etienne&#x27;s", "5 GHz"):
         assert tab in shell
 
 
@@ -618,7 +618,7 @@ def test_queue_depth_of_zero_is_shown_as_zero() -> None:
 def test_only_a_watchdog_mode_instance_shows_the_sweep_rows() -> None:
     """The Instance box shows the sweep's interval and its task on a watchdog-mode instance.
 
-    Only that mode runs the sweep. On a resource-mode instance, such as each UC2 module,
+    Only that mode runs the sweep. On a resource-mode instance, such as each station,
     "Sweep task alive: no" read like a failure of something that never runs there.
     """
     from kapps_semantic_middleware import Mode, SemanticMiddleware
@@ -1273,13 +1273,13 @@ def test_the_query_names_a_tab_by_its_title_with_a_space() -> None:
     mw = FakeMiddleware()
     registry = enable_dashboard(mw)
 
-    @registry.box("monitor", title="Monitor", tab="UC2 monitor")
+    @registry.box("monitor", title="Monitor", tab="Line monitor")
     def monitor_box(middleware: Any) -> str:
         return "<p>monitor</p>"
 
     client = TestClient(mw.app)
-    assert _opened_tab(client.get("/dashboard?tab=UC2%20monitor").text) == "uc2-monitor"
-    assert _opened_tab(client.get("/dashboard?tab=uc2-monitor").text) == "system"
+    assert _opened_tab(client.get("/dashboard?tab=Line%20monitor").text) == "line-monitor"
+    assert _opened_tab(client.get("/dashboard?tab=line-monitor").text) == "system"
 
 
 def test_a_first_tab_that_names_no_tab_is_reported_once(

@@ -10,7 +10,7 @@ whole ``rdfs:subPropertyOf*`` chain and there is no merge-depth parameter anywhe
 API, so the shape a consumer gets always contains everything every level declares. The middleware
 must therefore cut the bundle itself, and it does so on the **shape**, before any data is read.
 
-**What gets cut is decided by the ontology, not by the code.** Walking upward from one parameter
+**What gets cut is set by the ontology, not by the code.** Walking upward from one parameter
 property:
 
 ===========================================  =====================  ==========

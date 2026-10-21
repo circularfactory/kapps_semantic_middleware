@@ -40,7 +40,7 @@ mes: rdf:type owl:Ontology ;
 # resource in the role, not of the ability, and it is deliberately not modelled here.
 # Elfaham & Epple call an ability active when it needs control logic beyond the
 # physical means and passive when the physical means suffice (section 4), and the
-# same ability can be either: a shelf receives passively, while a sorting conveyor
+# same ability can be either: a shelf receives passively, while a sorting station
 # must stop its drive to receive and so receives actively (Fischer et al., LDIC 2020,
 # section 4.3). Read a comment below as the role in the procedure, never as a claim
 # about actuation.

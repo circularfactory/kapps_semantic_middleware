@@ -113,11 +113,11 @@ class PossessionSwitchConflict(Exception):
     """The store refused the commit of a change of possession, because the precondition of the
     commit was false, so nothing was written.
 
-    ``handover()`` and ``switch_possession`` raise it for the store's ``PreconditionFailedError``
-    (from ``kapps_triplestore_interface.exceptions``), which is its cause and names the triples
-    of the precondition. Usually another write changed a value after the commit read it: for
-    example, a second handover of the same workpiece landed between the commit's read of the
-    workpiece and its write. Nothing switches against values that are no longer there."""
+    ``possession.handover()`` and ``possession.switch_possession`` raise it for the store's
+    ``PreconditionFailedError`` (from ``kapps_triplestore_interface.exceptions``), which is its
+    cause and names the triples of the precondition. Usually another write changed a value after
+    the commit read it: for example, a second handover of the same workpiece landed between the
+    commit's read of the workpiece and its write. Nothing switches against values that are no longer there."""
 
 
 class NotificationUndelivered(Exception):

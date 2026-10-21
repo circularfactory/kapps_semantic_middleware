@@ -70,3 +70,20 @@ def test_only_the_fixture_reads_the_test_dataset_constant() -> None:
         f"{readers} read TEST_DATASET. Take the dataset from the store fixture "
         "(store.dataset), and pass that to a child process."
     )
+
+
+def test_only_default_assertions_read_the_demo_dataset_constant() -> None:
+    """A test that names ``DEMO_DATASET`` asserts the default; nothing else takes it.
+
+    The factory launcher takes its dataset on the command line, so a child process or a live test
+    takes ``store.dataset``. Only the tests that assert what the default is may name the
+    constant.
+    """
+    readers = sorted(
+        path.name for path in TESTS.glob("*.py") if "DEMO_DATASET" in _referenced_names(path)
+    )
+
+    assert readers == ["test_credentials.py", "test_launcher_factory.py"], (
+        f"{readers} read DEMO_DATASET. Only a test that asserts the default may; a child or a "
+        "live test takes store.dataset."
+    )

@@ -31,11 +31,8 @@ from rdflib.namespace import RDF
 from _explicit import explicit_select
 from kapps_semantic_middleware import SemanticMiddleware
 from kapps_semantic_middleware.credentials import triplestore_env_present, triplestore_for
-from kapps_semantic_middleware.registration import (
-    create_operation,
-    find_possession_state,
-    mint_capability_iri,
-)
+from kapps_semantic_middleware.possession import find_possession_state, handover
+from kapps_semantic_middleware.registration import create_operation, mint_capability_iri
 from kapps_semantic_middleware.vocabulary import CFC, MES, SVC, OperationStatus
 
 requires_store = pytest.mark.skipif(
@@ -379,14 +376,16 @@ def test_a_transport_passes_from_module_to_module_and_its_end_reaches_the_wms(st
                 str(CFC.implementsCapability): [{"id": str(_transport_capability(destination))}],
             },
         )
-        with mw.handover(
+        with handover(
+            mw,
             mode=MES.Pass, workpiece=seed.HANDOVER_BOX, counterpart=destination, entry=[moved_on]
         ):
             pass
         mw.notify(operation=transport, resource=destination)
 
     def deliver(mw: SemanticMiddleware, transport: IRI) -> None:
-        with mw.handover(
+        with handover(
+            mw,
             mode=MES.Pass, workpiece=seed.HANDOVER_BOX, counterpart=WMS, operation=transport
         ):
             pass

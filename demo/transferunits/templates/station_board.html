@@ -4,8 +4,7 @@
 <style>
   :root { --ink:#1c1c1c; --muted:#6b6b6b; --line:#d8d8d8; --warn:#b23b00;
           --paper:#fff; --bg:#f7f7f5; --live:#2e7d32; --starting:#b26a00;
-          --failed:#c62828; --stopped:#8a8a8a; --settled:#2e7d32; --converging:#b26a00;
-          --diverged:#b23b00; --rejected:#c62828; }
+          --failed:#c62828; --stopped:#8a8a8a; }
   body { font:15px/1.5 system-ui,sans-serif; color:var(--ink); margin:0;
          background:var(--bg); padding:24px 24px 90px; }
   main { max-width:1180px; margin:0 auto; }
@@ -29,11 +28,9 @@
   .algo-bar { display:flex; gap:16px; align-items:center; flex-wrap:wrap; margin-bottom:20px;
               padding:12px 16px; background:var(--paper); border:1px solid var(--line);
               border-radius:8px; }
-  .algo-bar .mode-toggle { display:flex; gap:6px; }
   .algo-bar button { padding:6px 12px; border:1px solid var(--line); background:#fff;
                      border-radius:5px; font:inherit; cursor:pointer; }
   .algo-bar button:hover { background:#f0f0ee; }
-  .algo-bar button.active { background:var(--ink); border-color:var(--ink); color:#fff; }
   .algo-bar .status { color:var(--muted); font-size:13px; margin-left:auto; }
   .toggle-row { display:flex; align-items:center; gap:8px; margin-bottom:16px; }
   .toggle-row label { font-size:13px; color:var(--muted); }
@@ -48,25 +45,12 @@
   .station-card .header .meta { font-size:12px; color:var(--muted); }
   .station-card .body { display:none; padding-top:16px; }
   .station-card.expanded .body { display:block; }
-  .station-card .param-row { display:grid; grid-template-columns:1fr auto auto; gap:12px;
+  .station-card .param-row { display:grid; grid-template-columns:1fr auto; gap:12px;
                               align-items:center; padding:10px 0; border-bottom:1px dotted var(--line); }
   .station-card .param-row:last-child { border-bottom:none; }
   .station-card .param-row .label { font-size:13px; }
   .station-card .param-row .value { font-size:14px; font-variant-numeric:tabular-nums; }
   .station-card .param-row .facets { font-size:11px; color:var(--muted); margin-left:6px; }
-  .station-card .param-row .control { display:flex; gap:6px; align-items:center; }
-  .station-card .param-row input[type=number] { width:100px; padding:5px 7px; border:1px solid var(--line);
-                                                 border-radius:4px; font:inherit; }
-  .station-card .param-row button { padding:5px 10px; border:1px solid var(--line); background:#fff;
-                                    border-radius:4px; font:inherit; cursor:pointer; }
-  .station-card .param-row button:hover { background:#f0f0ee; }
-  .station-card .param-row button:disabled { opacity:0.5; cursor:not-allowed; }
-  .station-card .param-row .status-badge { font-size:11px; padding:2px 6px; border-radius:3px;
-                                           border:1px solid var(--line); }
-  .station-card .param-row .status-badge[data-status="settled"] { background:#e8f5e9; color:var(--settled); border-color:var(--settled); }
-  .station-card .param-row .status-badge[data-status="converging"] { background:#fff8e1; color:var(--converging); border-color:var(--converging); }
-  .station-card .param-row .status-badge[data-status="diverged"] { background:#ffebee; color:var(--diverged); border-color:var(--diverged); }
-  .station-card .param-row .status-badge[data-status="rejected"] { background:#ffebee; color:var(--rejected); border-color:var(--rejected); font-weight:600; }
   .station-card .param-row .iri-view { font-size:11px; color:var(--muted); margin-top:4px; }
   .station-card .param-row .iri-view code { background:#f0f0ee; padding:1px 5px; border-radius:3px;
                                              word-break:break-all; }
@@ -86,8 +70,10 @@
   <p class="sub">This board shows one card per TransferUnit selected by the view heuristic.
      Cards are collapsed by default — <strong>collapsed means display-only</strong>: every value
      stays current behind a shut card, only the visual panel is closed. Click a header to expand.
-     Set controls work only while the algorithm is paused. Backend logic lives in
-     <code>demo/transferunits/station_board.py</code>; the driving algorithm itself is in
+     <strong>The board observes and writes nothing.</strong> In KAPPS a device changes only
+     through a workflow of its service; this demo has none yet, and its control returns with
+     workflows after the paper. Backend logic lives in
+     <code>demo/transferunits/station_board.py</code>; the observing algorithm itself is in
      <code>demo/transferunits/algorithm.py</code>.</p>
 
   <div class="card view-frame" data-teach="view-box">
@@ -106,17 +92,13 @@
   </div>
 
   <div class="algo-bar" data-teach="algo-bar">
-    <div class="mode-toggle">
-      <button id="mode-timed" onclick="setMode('timed')">timed</button>
-      <button id="mode-event" onclick="setMode('event_driven')">event driven</button>
-    </div>
     <button id="pause-btn" onclick="togglePause()">pause</button>
     <div class="status" id="algo-status"></div>
   </div>
 
   <div class="toggle-row" data-teach="show-iris">
     <input type="checkbox" id="show-iris" onchange="render(lastState)">
-    <label for="show-iris">Show IRIs and assignment expressions</label>
+    <label for="show-iris">Show IRIs and value expressions</label>
   </div>
 
   <div id="stations"></div>
@@ -176,22 +158,10 @@ async function resetQuery() {
   poll();
 }
 
-async function setMode(mode) {
-  await post('/api/algorithm/mode', {mode});
-  poll();
-}
-
 async function togglePause() {
   const btn = document.getElementById('pause-btn');
   const paused = btn.textContent === 'pause';
   await post('/api/algorithm/pause', {paused});
-  poll();
-}
-
-async function setParam(resourceIri, holderIri, fieldId, value) {
-  // A rejection is recorded on the controller by the set route itself, so the next poll
-  // carries it -- nothing to remember here, and it survives a reload.
-  await post('/api/set', {resource_iri: resourceIri, holder_iri: holderIri, field_id: fieldId, value});
   poll();
 }
 
@@ -202,33 +172,6 @@ function formatValue(val, facets) {
     return s;
   }
   return String(val);
-}
-
-// The verdict itself is the server's (controller.py's WriteTracker). "Has this write
-// stopped converging?" is a domain judgement, and it has to be provable in a
-// test -- pytest cannot reach a function that lives in here. This only dresses it.
-function getRowStatus(param) {
-  const status = param.status;
-  if (!status) return {status: null, text: '', showTarget: false};
-
-  if (status === 'rejected') {
-    return {status: 'rejected', text: 'rejected: ' + (param.status_error || ''), showTarget: false};
-  }
-  if (status === 'settled') {
-    return {status: 'settled', text: 'settled', showTarget: false};
-  }
-
-  const commanded = param.commanded;
-  const cmdVal = commanded ? commanded.value : undefined;
-  if (status === 'diverged') {
-    return {status: 'diverged', text: 'diverged (stuck)', showTarget: true};
-  }
-  if (status === 'converging') {
-    return {status: 'converging', text: 'converging → ' + formatValue(cmdVal, {}), showTarget: true};
-  }
-  // A status this page does not know about: show it verbatim rather than dressing it as
-  // something familiar. Guessing here is how a new server-side state would go unnoticed.
-  return {status: status, text: status, showTarget: true};
 }
 
 function render(s) {
@@ -243,35 +186,17 @@ function render(s) {
   const showIris = document.getElementById('show-iris').checked;
   const algo = s.algorithm || {};
 
-  const modeTimed = document.getElementById('mode-timed');
-  const modeEvent = document.getElementById('mode-event');
-  modeTimed.classList.toggle('active', algo.mode === 'timed');
-  modeEvent.classList.toggle('active', algo.mode === 'event_driven');
-
   const pauseBtn = document.getElementById('pause-btn');
   pauseBtn.textContent = algo.paused ? 'resume' : 'pause';
   pauseBtn.disabled = false;
 
-  // Set controls are inert while the algorithm runs, and live while paused --
-  // this line is the page's own explanation of *why*, tied to the same `algo.paused`
-  // flag that drives each row's own `disabled` attribute below, so the two can never
-  // say different things.
   const statusEl = document.getElementById('algo-status');
   if (algo.paused) {
-    statusEl.textContent = 'paused — set controls are live; drive a unit by hand, or resume to let the algorithm run again';
-  } else if (algo.mode === 'timed') {
-    if (algo.seconds_since_last_tick === null) {
-      statusEl.textContent = 'starting... (pause to drive a unit by hand)';
-    } else {
-      const next = Math.max(0, (algo.tick_seconds || 0) - (algo.seconds_since_last_tick || 0));
-      statusEl.textContent = 'next tick in ~' + next.toFixed(1) + 's — pause to drive a unit by hand';
-    }
+    statusEl.textContent = 'paused — resume to let the algorithm observe again';
+  } else if (algo.waiting_seconds !== null && algo.waiting_seconds !== undefined) {
+    statusEl.textContent = 'waiting for a barrier to change (' + algo.waiting_seconds.toFixed(1) + 's elapsed)';
   } else {
-    if (algo.waiting_seconds !== null && algo.waiting_seconds !== undefined) {
-      statusEl.textContent = 'waiting for a change (' + algo.waiting_seconds.toFixed(1) + 's elapsed) — pause to drive a unit by hand';
-    } else {
-      statusEl.textContent = 'reacting to change — pause to drive a unit by hand';
-    }
+    statusEl.textContent = 'reacting to a change';
   }
   
   const stationsEl = document.getElementById('stations');
@@ -303,40 +228,19 @@ function render(s) {
                <div class="body">`;
     
     for (const param of (unit.parameters || [])) {
-      const statusInfo = getRowStatus(param);
-      const canEdit = param.access_mode === 'readwrite';
-      const disabled = !s.algorithm.paused;
-      
       html += `<div class="param-row" data-teach="param-row">
                  <div>
                    <div class="label">${showIris ? param.field_iri : param.label}</div>`;
-      
-      if (showIris && param.assignment_expression) {
-        html += `<div class="iri-view"><code>${param.assignment_expression}</code></div>`;
+
+      if (showIris && param.value_expression) {
+        html += `<div class="iri-view"><code>${param.value_expression}</code></div>`;
       }
       if (showIris && param.pruned && param.pruned.length > 0) {
         html += `<div class="pruned-note">pruned on load: ${param.pruned.join(', ')}</div>`;
       }
-      
+
       html += `</div>
-                 <div class="value">
-                   ${formatValue(param.value, param.facets)}
-                   ${statusInfo.status ? `<span class="status-badge" data-status="${statusInfo.status}">${statusInfo.text}</span>` : ''}
-                 </div>
-                 <div class="control">`;
-      
-      if (canEdit) {
-        html += `<input type="number" step="0.1" value="${param.value}" 
-                       ${disabled ? 'disabled' : ''}
-                       onchange="this.setAttribute('data-pending', this.value)">
-                 <button ${disabled ? 'disabled' : ''}
-                         onclick="setParam('${unit.resource_iri.replace(/'/g, "\\'")}',
-                                          '${param.holder_iri.replace(/'/g, "\\'")}',
-                                          '${param.field_id.replace(/'/g, "\\'")}',
-                                          parseFloat(this.previousElementSibling.getAttribute('data-pending') || this.previousElementSibling.value))">set</button>`;
-      }
-      
-      html += `</div>
+                 <div class="value">${formatValue(param.value, param.facets)}</div>
                </div>`;
     }
     

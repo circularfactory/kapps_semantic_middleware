@@ -7,11 +7,9 @@ carry an ``id``. What the field annotations are. How the parameter blanknodes co
 back. This file closes that gap. Generate routes from a real seeded TransferUnit.
 Assert the paths that come out.
 
-Scope honestly: this covers **route generation from the real materialized tree**.
-Write semantics are covered by the unit tests. The persistence connector is
-observable there. Drive a live PUT here. Reach connectors that are registered but
-not connected. No ASGI lifespan ran. Test the framework failure handling. Not this
-router.
+Scope honestly: this covers **route generation from the real materialized tree**, and that
+the tree it serves mounts no write verb. That a write verb answers 405 and reaches neither the
+persistence connector nor the graph is covered by the unit tests, where both are observable.
 """
 
 from __future__ import annotations
@@ -120,14 +118,11 @@ class TestParameterRoutes:
         assert "GET" in methods_at(mw.app, expected_path)
 
     @pytest.mark.asyncio
-    async def test_a_settable_parameter_gets_a_put(self, scenario3_ogm):
-        """The conveyor speed path also serves PUT. The seeded parameter is readwrite.
+    async def test_a_settable_parameter_gets_no_put(self, scenario3_ogm):
+        """The conveyor speed path serves GET only, although the seeded parameter is readwrite.
 
-        Access mode is read from the graph. ``inf:accessMode`` on the parameter node.
-        Verb gating is per individual. One belt may be ``readwrite``. A barrier on
-        the same unit is ``read``. A PUT to a read-only parameter returns 405. The
-        route does not exist. FastAPI handles that automatically. Assert the
-        readwrite case.
+        ``readwrite`` says the device accepts a setpoint. It does not open the served data
+        model to writes: a device changes only through a workflow of its service.
         """
         store, ogm = scenario3_ogm
 
@@ -153,7 +148,7 @@ class TestParameterRoutes:
             f"/{seed.TU_HAS_CONVEYOR_SPEED.lined}"
         )
 
-        assert "PUT" in methods_at(mw.app, expected_path)
+        assert methods_at(mw.app, expected_path) == {"GET"}
 
     @pytest.mark.asyncio
     async def test_a_read_only_sensor_gets_no_put(self, scenario3_ogm):
@@ -273,13 +268,12 @@ class TestCoverage:
         assert binding_field_ids == route_last_segments
 
     @pytest.mark.asyncio
-    async def test_the_top_level_crud_still_exists(self, scenario3_ogm):
-        """The framework top-level route for the TransferUnit model is still present.
+    async def test_the_top_level_reads_exist_and_no_write_does(self, scenario3_ogm):
+        """The framework's top-level reads for the TransferUnit model are present, its writes not.
 
-        The local router calls the framework generator. Add its own routes after. Guard
-        the "scenarios 1 and 2 are unaffected" criterion at the route level. Add
-        recursive parameter routes. Do not break the existing top-level CRUD. Other
-        consumers rely on it.
+        The local router runs the framework generator and keeps only its GET routes. The
+        reads guard that the filter did not drop the surface whole; the verbs guard that no
+        POST, PUT, PATCH or DELETE of the framework survived it.
         """
         store, ogm = scenario3_ogm
 
@@ -303,4 +297,11 @@ class TestCoverage:
         # derives the deep paths structurally from a GET. Not build them by hand.
         top_level_path = f"/{model_name}/{{item_id}}"
 
-        assert any(r.path == top_level_path for r in mw.app.routes)
+        assert "GET" in methods_at(mw.app, top_level_path)
+        served = {
+            method
+            for route in mw.app.routes
+            if getattr(route, "path", "").startswith(f"/{model_name}/")
+            for method in route.methods
+        }
+        assert served <= {"GET", "HEAD", "OPTIONS"}, served

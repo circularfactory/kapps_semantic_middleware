@@ -71,7 +71,7 @@ def test_the_box_shows_the_records_of_every_logger() -> None:
     """A library's logger, the middleware's own and a subproject's all reach the box."""
     mw = FakeMiddleware()
     enable_dashboard(mw)
-    names = ("httpx", "kapps_semantic_middleware.middleware", "jms_kapps.uc2.module")
+    names = ("httpx", "kapps_semantic_middleware.middleware", "myplant.line.station")
     for name in names:
         logging.getLogger(name).error("every logger: %s", name)
 

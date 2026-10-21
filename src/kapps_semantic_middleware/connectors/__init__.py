@@ -1,4 +1,4 @@
-"""This package contains the knowledge-graph connector and the semantic-connector seam.
+"""This package contains the semantic-connector seam and the built-in bindings.
 
 When you import this package, it **registers the built-in binding descriptors** on
 ``semantic.default_registry``. That import is necessary. A middleware
@@ -8,10 +8,6 @@ nothing, and every served parameter carries its broker address and topics. The
 registry tells the projection which properties are southbound. Population before serving is
 the requirement. Population before wiring is not enough on its own.
 """
-
-from kapps_semantic_middleware.connectors.knowledge_graph_connector import (
-    KnowledgeGraphConnector,
-)
 
 # Imported for its registration side effect. `MQTTBinding` and `RESTBinding` are re-exported
 # so a caller can reference either directly (to build a restricted registry, or to override
@@ -28,7 +24,6 @@ from kapps_semantic_middleware.connectors.semantic import (
 )
 
 __all__ = [
-    "KnowledgeGraphConnector",
     "MQTTBinding",
     "RESTBinding",
     "BindingDescriptor",

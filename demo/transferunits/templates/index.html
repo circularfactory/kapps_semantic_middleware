@@ -120,7 +120,9 @@ function box(key, id, title, node, wide) {
         : `<span>${node.address}</span>`) +
       (node.source ? `<span class="src" data-src="${node.source}">${node.source}</span>` : '') +
       activityLink
-    : `<span class="none">${node.state === 'stopped' ? 'stopped' : 'no address yet'}</span>`;
+    : key === 'watchdog'
+      ? `<span class="none">${node.state === 'stopped' ? 'stopped' : 'no address — it registers no service'}</span>`
+      : `<span class="none">${node.state === 'stopped' ? 'stopped' : 'no address yet'}</span>`;
   const failedAttrs = node.state === 'failed' ? ` onclick="toggleOutput('${id}')"` : '';
   const stateText = node.state === 'slow' ? 'slow — check the output' : node.state;
   return `<div class="box ${node.state} ${wide ? 'wide' : ''}" id="${id}"
@@ -137,6 +139,7 @@ const openOutputs = new Set();
 
 function outputTarget(id) {
   if (id === 'controller') return [0, 'controller'];
+  if (id === 'watchdog') return [0, 'watchdog'];
   const [kind, n] = id.split('-');
   // A broker is a thread inside its unit's own middleware process -- it captures no
   // output of its own, so a failed broker box opens that middleware's output instead.
@@ -192,7 +195,9 @@ function render(s) {
     <div class="layer" style="${cols}">${mws}</div>
     <div class="layer one">${box('graph', 'graph', 'knowledge graph', s.graph, true)}</div>
     <div class="layer one">
-      ${box('controller', 'controller', 'control station', s.controller, true)}</div>`;
+      ${box('controller', 'controller', 'control station', s.controller, true)}</div>
+    ${s.watchdog ? `<div class="layer one">
+      ${box('watchdog', 'watchdog', 'watchdog', s.watchdog, true)}</div>` : ''}`;
 
   document.getElementById('launcher-addr').innerHTML =
     `<a href="${hrefFor(s.launcher.address)}">${s.launcher.address}</a>`;

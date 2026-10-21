@@ -9,7 +9,7 @@ This page describes every path by which a consumer causes data to change — wha
 
 ## All Graph Writes Go Through the OGM
 
-Every knowledge-graph write must go through `kapps_ogm.OGM`. Use `OGM.create` for new typed individuals. Use `OGM.commit` for adding, removing, or replacing properties. No write issues raw SPARQL UPDATE. No write calls `kapps_triplestore_interface` mutation methods directly. Reads may use the access module (`ogm.db`) directly; only writes are constrained.
+Every knowledge-graph write must go through `kapps_ogm.OGM`. Use `OGM.create` for new typed individuals. Use `OGM.commit` for adding, removing, or replacing properties. An `Append` in a commit adds one value to a multi-valued property and keeps the others: registration links the resource to each Capability it provides this way, in the same commit that writes the Capability, so no commit holds a Capability without its resource, and two instances that register on one resource at the same moment both keep their link. No write issues raw SPARQL UPDATE. No write calls `kapps_triplestore_interface` mutation methods directly, except seeding, which provisions a dataset before any service runs; a static test (`tests/test_no_direct_writes.py`) keeps it so. Reads may use the access module (`ogm.db`) directly; only writes are constrained.
 
 Writes that bypass the OGM skip validation and break atomicity guarantees. A replacement of a cardinality-constrained property requires the removal and insertion to apply in one transaction. The intermediate state — zero possessors during a handover, for example — fails validation without atomicity.
 
@@ -29,8 +29,8 @@ def status(value):
 async with mw.commit(
     op, class_scope=scope, entry=status("running"), exit=status("done"), error=status("failed")
 ) as transition:
-    torque = await robot.screw(transition.node.instance)  # the work; no transaction is held
-    transition.update(op, {str(SVC.executionResult): [torque]})  # written at the clean exit
+    reading = await tool.apply(transition.node.instance)  # the work; no transaction is held
+    transition.update(op, {str(SVC.executionResult): [reading]})  # written at the clean exit
 ```
 
 `entry`, `exit` and `error` are lists of kapps_ogm `Create` and `Update` changes. Each is written as one commit, so each may span several instances. `mw.commit()` knows no vocabulary of its own: any datamodel and any state transition fit. The object it yields is the transition.
@@ -51,9 +51,9 @@ async with mw.commit(
 
 `exit` may be a function that returns the changes, called at the clean exit, so the exit transition can depend on what the body did. `error` may be a function that takes the exception. A cancellation of the body under `async with` (a deadline of `anyio.fail_after` or `move_on_after` that runs out, a cancelled task) is an error of the work: the error transition is committed in a shielded cancel scope, then the cancellation is raised again. An interrupt or an exit (`KeyboardInterrupt`, `SystemExit`, `GeneratorExit`) writes no transition: the entry transition stays, as after a crash.
 
-**The write goes to the graph only.** Every change goes to the middleware's named graph. The datamodel that the instance serves over REST does not change, and no synced connector hears of the write, so no device is written. In this library only a PUT on a parameter route notifies the synced connectors (see the next section). One notification may follow a commit: when it moves an Operation that has an issuer to `running`, `done` or `failed`, the middleware notifies the issuer (see {doc}`05-operation-coordination`).
+**The write goes to the graph only.** Every change goes to the middleware's named graph. The datamodel that the instance serves over REST does not change, and no synced connector hears of the write, so no device is written. Nothing in this library notifies the synced connectors from a commit. The served datamodel is read-only, so no request writes persistence either: a workflow body that must move a device acts on the device itself. Only a device read writes persistence, and that write names its field (see the next section). One notification may follow a commit: when it moves an Operation that has an issuer to `running`, `done` or `failed`, the middleware notifies the issuer (see {doc}`05-operation-coordination`).
 
-**What a caller catches.** A refusal by the store, a SHACL refusal included, is `TripleStoreResponseError`, a `TripleStoreInterfaceError` (both from `kapps_triplestore_interface.exceptions`). kapps_ogm raises `ValueError` when a change does not fit its class, and when two changes of one transition write one instance. The store refuses a write whose precondition is false with `PreconditionFailedError`, a `TripleStoreInterfaceError` from the same module, and nothing of that commit is written. That is a `Create` of an instance that the store already holds, and a change that removes a value that is no longer there. `mw.commit()` does not catch it: for a `Create`, it signals a reused IRI. The merge reaches only the instance that a change names: when two changes both write a named instance that they nest with properties, kapps_ogm raises `ValueError` at the exit, after the error transition is committed. `mw.commit()` raises `ValueError` itself for a `Create` that carries data but no `class_scope` (a field of `Create`), before it is written: without one, kapps_ogm would drop a data property that the class does not know, with only a warning. An unreachable store raises `requests.exceptions.RequestException`. The middleware's own errors live in `kapps_semantic_middleware.errors`.
+**What a caller catches.** A refusal by the store, a SHACL refusal included, is `TripleStoreResponseError`, a `TripleStoreInterfaceError` (both from `kapps_triplestore_interface.exceptions`). kapps_ogm raises `ValueError` when a change does not fit its class, and when two changes of one transition write one instance. The store refuses a write whose precondition is false with `PreconditionFailedError`, a `TripleStoreInterfaceError` from the same module, and nothing of that commit is written. That is a `Create` of an instance that the store already holds, and a change that removes a value that is no longer there. `mw.commit()` does not catch it: for a `Create`, it signals a reused IRI. The merge reaches only the instance that a change names: when two changes both write a named instance that they nest with properties, kapps_ogm raises `ValueError` at the exit, after the error transition is committed. `mw.commit()` raises `ValueError` itself for a `Create` that carries data but no `class_scope` (a field of `Create`), before it is written: without one, the data has no class scope to be checked against, and kapps_ogm refuses a property that the class does not declare, and raises `OGMDataError` (from `kapps_ogm.utils.errors`, a `ValueError`) before anything is sent. An unreachable store raises `requests.exceptions.RequestException`. The middleware's own errors live in `kapps_semantic_middleware.errors`.
 
 **A write whose precondition no longer holds is refused.** The OGM reads each instance that a commit changes, and the store removes only the values that the read found. When a value that a change replaces is already gone when the write arrives, the store writes nothing of that commit, and the call raises `PreconditionFailedError`. A write of another writer that lands before the read is not refused: the commit replaces its value.
 
@@ -63,7 +63,7 @@ Something new is `mw.create()`; something that exists is `mw.commit()`. A new Op
 
 ```python
 with mw.create(EX.DecisionSnapshot, snapshot_scope) as snapshot:
-    snapshot.update({str(EX.decision): ["unscrew"]})  # written at the clean exit
+    snapshot.update({str(EX.decision): ["rework"]})  # written at the clean exit
 ```
 
 | Step | What happens |
@@ -74,13 +74,13 @@ with mw.create(EX.DecisionSnapshot, snapshot_scope) as snapshot:
 | Clean exit, nested | Inside the body of a `mw.commit()` or of another `mw.create()` of the same middleware whose write is still to come, the same changes join that write instead. The store admits or refuses them together with it, and an error in that body drops them. |
 | Error in the body | Nothing is written or joined, and the error is raised again. Nothing exists yet that could carry an error transition. |
 
-**A creation inside a body whose commit has already happened commits on its own.** The body of `mw.handover()` is such a body: its commit is its entry, and its clean exit writes nothing more. A creation inside a `mw.commit()` inside that body joins that `mw.commit()`. **A creation joins only a write of its own middleware**: one that goes through the same OGM into the same named graph. Inside a write of another middleware, such as a planner's creation inside a resource's commit in one process, it commits on its own. **`issue_operation()` commits its Operation on its own**, also inside another body, because its receiver reads the Operation after the notification. A creation in the body of `issue_operation()` joins the Operation's commit.
+**A creation inside a body whose commit has already happened commits on its own.** The body of the possession extension's `handover(mw, ...)` is such a body: its commit is its entry, and its clean exit writes nothing more. A creation inside a `mw.commit()` inside that body joins that `mw.commit()`. **A creation joins only a write of its own middleware**: one that goes through the same OGM into the same named graph. Inside a write of another middleware, such as a planner's creation inside a resource's commit in one process, it commits on its own. **`issue_operation()` commits its Operation on its own**, also inside another body, because its receiver reads the Operation after the notification. A creation in the body of `issue_operation()` joins the Operation's commit. So does a change of an existing instance, made with `op.update(instance_iri, data)`, the `update` of a `mw.commit()` transition: it is staged after every creation in the body, folds into the `Create` of an instance created there, and never joins an outer `mw.commit()`.
 
 **A failed notification of `issue_operation()` undoes nothing.** The Operation, `queued`, and every instance created with it stay as the request's commit wrote them, and `issue_operation()` raises `NotificationUndelivered`. The receiver takes up its `queued` Operations when it starts.
 
 After the clean exit, the creation's `changes` are the changes that it committed or joined: its own `Create` first, then those of its predefined scope and of the creations nested in it.
 
-**The `Create` names every property that the scope names and every property that the body sets**, so kapps_ogm drops none of them. An assignment to an attribute of the creation, such as `transport.hasBox = box`, raises `AttributeError` instead of being lost. A `Create` of an IRI that the store already holds raises `PreconditionFailedError` at the commit, and nothing is written. **Inside a coroutine, use `async with`**, as for `mw.commit()`.
+**The `Create`'s class scope names every property that the scope names and every property that the body sets**, and kapps_ogm refuses a value outside it. An assignment to an attribute of the creation, such as `transport.hasBox = box`, raises `AttributeError` instead of being lost. A `Create` of an IRI that the store already holds raises `PreconditionFailedError` at the commit, and nothing is written. **Inside a coroutine, use `async with`**, as for `mw.commit()`.
 
 ### Predefined scopes
 
@@ -109,23 +109,23 @@ with mw.claim_next(operation_scope) as claimed:
 
 ### Opening a transport
 
-The WMS opens a transport in one commit: the transport Operation, the box, and the box's first possession, by the WMS itself:
+The source resource opens a transport in one commit: the transport Operation, the workpiece, and the workpiece's first possession, by the source itself:
 
 ```python
 from kapps_semantic_middleware.operation import operation
 from kapps_semantic_middleware.possession import workpiece
 
 transport_rule = operation(transport_scope, capability=transport_capability)
-with mw.create(EX.BoxTransport, transport_rule) as transport:
+with mw.create(EX.Transport, transport_rule) as transport:
     transport.update({str(SVC.operationStatus): ["queued"]})
-    with mw.create(EX.Box, workpiece(box_scope, possessor=mw.resource)) as box:
+    with mw.create(EX.Workpiece, workpiece(workpiece_scope, possessor=mw.resource)) as piece:
         pass
-    transport.update({str(EX.hasBox): [box.iri]})
-# One commit: the transport, the box, and the WMS's possession state if it had none.
-# Then the WMS hands the box to the origin with mw.handover().
+    transport.update({str(EX.hasWorkpiece): [piece.iri]})
+# One commit: the transport, the workpiece, and the source's possession state if it had none.
+# Then the source hands the workpiece to the origin with possession.handover(mw, ...).
 ```
 
-**Known limit.** A Workpiece's first possession can race another write that creates the same possession state. The store then refuses the commit with `PreconditionFailedError`, and nothing of it is written; unlike `mw.handover()`, `mw.create()` does not try again.
+**Known limit.** A Workpiece's first possession can race another write that creates the same possession state. The store then refuses the commit with `PreconditionFailedError`, and nothing of it is written; unlike `handover(mw, ...)`, `mw.create()` does not try again.
 
 ## Persistence Writes Name the Changed Field
 
@@ -152,7 +152,7 @@ Matching is by prefix, not equality. An unspecified level in a `ConnectionInfo` 
 A consumer action determines which direction fires:
 - Calling `OGM.commit` on a Parameter → northbound only
 - Calling `consume` on a synced connector → southbound only  
-- A PUT to the REST API → both (writes graph, then notifies connectors)
+- A write verb on the served datamodel → nothing: it answers 405, because the served datamodel is read-only
 
 ## Inbound Messages Replace Whole Parameter Nodes
 

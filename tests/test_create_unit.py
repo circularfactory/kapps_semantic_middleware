@@ -25,7 +25,7 @@ from kapps_triplestore_interface.exceptions import TripleStoreResponseError
 from kapps_semantic_middleware import SemanticMiddleware
 from kapps_semantic_middleware.errors import NotificationUndelivered
 from kapps_semantic_middleware.operation import operation
-from kapps_semantic_middleware.possession import workpiece
+from kapps_semantic_middleware.possession import handover, workpiece
 from kapps_semantic_middleware.vocabulary import CFC, MES, SVC
 
 EX = "https://example.org/test#"
@@ -116,6 +116,24 @@ def test_a_creation_nested_in_a_commit_joins_its_clean_exit():
             ("Create", snapshot.iri, {DECISION: ["unscrew"]}),
         ],
     ]
+
+
+def test_an_update_of_a_nested_creation_folds_into_its_create_and_names_its_property():
+    """The ``Create`` names the property that the transition's update adds, so kapps_ogm does
+    not drop it."""
+    ogm = _FakeOGM()
+    mw = _middleware(ogm)
+    with mw.commit() as transition:
+        with mw.create(SNAPSHOT, ClassScope()) as snapshot:
+            snapshot.update({DECISION: ["unscrew"]})
+        transition.update(snapshot.iri, {STATUS: ["checked"], DECISION: ["keep"]})
+    ((create,),) = ogm.written
+    assert isinstance(create, Create)
+    assert {str(k): v for k, v in create.data.items()} == {
+        DECISION: ["keep"],
+        STATUS: ["checked"],
+    }
+    assert set(create.class_scope) == {DECISION, STATUS}
 
 
 def test_a_creation_nested_in_an_async_commit_joins_its_clean_exit():
@@ -311,7 +329,7 @@ def test_a_creation_in_the_body_of_a_handover_commits_on_its_own():
         {"ps": f"{EX}detector_possession", "a": str(MES.Retrieve), "state": str(COUNTERPART_STATE)}
     ]
     mw = _middleware(ogm)
-    with mw.handover(mode=MES.Pass, workpiece=WORKPIECE, counterpart=COUNTERPART):
+    with handover(mw, mode=MES.Pass, workpiece=WORKPIECE, counterpart=COUNTERPART):
         assert len(ogm.written) == 1  # the possession change
         with mw.create(SNAPSHOT, ClassScope()) as snapshot:
             snapshot.update({DECISION: ["handed on"]})

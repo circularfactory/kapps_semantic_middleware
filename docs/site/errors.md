@@ -139,12 +139,13 @@ The same map as a table:
 | OGM | `OGMUsageError`, a `ValueError`, and its subclass `OGMUsageTypeError`, also a `TypeError`: the API was called incorrectly. | Fix the call |
 | OGM | `RuntimeError`: an internal invariant failed. A bare `ValueError`: a `PropertySpec` has an unknown value kind, or the Skolem namespace given to the OGM is invalid. | Repair |
 | OGM | `pydantic.ValidationError`, raw: the data does not fit the generated model. | Refused |
-| middleware | `HandoverPreconditionError` | Refused |
-| middleware | `PossessionSwitchConflict`, `OperationQueueEmpty` | Refresh |
+| middleware | `HandoverPreconditionError`, raised by the possession extension's `handover(mw, ...)` | Refused |
+| middleware | `PossessionSwitchConflict`, raised by the possession extension's `handover(mw, ...)` and `switch_possession`; `OperationQueueEmpty` | Refresh |
 | middleware | `OperationReceiverUnavailableError`, a subtype of `OperationResolutionError`: a Workflow realizes the Capability, but no Service of it is live now. `NotificationReceiverUnavailableError`, a subtype of `NotificationUndelivered`: the resource has no live Service, or it did not take the notification. | Retry |
 | middleware | `DeploymentError`, the base of the middleware's own Repair types: `DeploymentValueError`, also a `ValueError` (a store variable that is not set, an unknown mode or a mode without the arguments that it requires, a Resource with more than one possession state, an instance with no asserted domain type); `DeploymentRuntimeError`, also a `RuntimeError` (the bundled examples cannot be found, an Operation reached the intake of an instance without a notification handler); `CapabilityNotRealizedError`, also an `OperationResolutionError` (no Workflow realizes the Capability); `NotificationReceiverAmbiguousError`, also a `NotificationUndelivered` (the resource has more than one live Service) | Repair |
 | middleware | `TimeoutError` of a wait for an Operation | Retry |
 | middleware | `OntologyGroundTruthError`, `ProjectionError`, `ImportError` of an optional extra, `NotImplementedError` of a mode | Repair |
+| middleware | `ValueError` "REST wiring is read-only: drive a peer through its workflows": at construction, a settable parameter binds over REST under driving wiring (`BIDIRECTIONAL`); also when a write reaches the REST parameter connector. Wire it `TO_PERSISTENCE`, and drive the peer through its workflows. | Fix the call |
 | middleware | `ValueError`, `RuntimeError`, `AttributeError` | mostly Fix the call (gap 4) |
 | middleware | an error answer of its REST routes | always 500 (gap 7) |
 
@@ -250,5 +251,6 @@ original message; and `report`, the raw store report or `null`. A bare built-in,
 `ValueError`, will answer 500, because its type does not tell the action. No answer will carry a
 `Retry-After` header.
 
-The routes that the framework generates do not follow this map. Its CRUD routes answer 400 with a
-message of their own, and its workflow routes answer 409 for any `RuntimeError`.
+The routes that the framework generates do not follow this map. Its read routes on the datamodel
+answer 400 with a message of their own, and its workflow routes answer 409 for any `RuntimeError`.
+The served datamodel mounts no write route, so a write verb on it answers 405.

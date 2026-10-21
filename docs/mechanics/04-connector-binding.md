@@ -89,7 +89,7 @@ An instance is described by its connector's **protocol** and **direction**, and 
 | **Observing** | `True` | `TO_PERSISTENCE` | Reads live values, structurally unable to write |
 | **Inspecting** | `False` | (ignored) | Nothing connected; structure and graph content only |
 
-Direction is the most restrictive of two constraints: a parameter's `inf:accessMode` and the instance's wiring. A read registration is always emitted. A write registration is emitted only when the parameter is `readwrite` **and** the wiring permits a write. A monitor can never drive a writable belt, and a controller can never write a sensor — structurally, not by convention. An absent or unrecognized `accessMode` yields read-only.
+Direction is the most restrictive of two constraints: a parameter's `inf:accessMode` and the instance's wiring. A read registration is always emitted. A write registration is emitted only when the parameter is `readwrite` **and** the wiring permits a write. A monitor can never drive a writable belt, and a controller can never write a sensor — structurally, not by convention. An absent or unrecognized `accessMode` yields read-only. The REST binding only observes: a settable parameter that binds over REST under driving wiring raises `ValueError` at construction, before anything is sent.
 
 ## Shipped Protocols
 
@@ -97,7 +97,7 @@ Two bindings ship in the library:
 
 **MQTT** (`connectors/mqtt_binding.py`) — reaches a device. Recognized by `inf:hasMQTTTopic` on the parameter blanknode. Metadata: `inf:hasMQTTBrokerIP`, `inf:hasMQTTTopic`, `inf:hasMQTTSetTopic` (present iff `accessMode` is `readwrite`), optional `inf:hasMQTTValuePath`, optional `inf:hasMQTTBrokerPort` (absent means 1883). Topic scheme: `TransferUnit<n>/<component>/<position>/<param>`, and a setpoint appends `_set`. Payload is raw scalar by default; the parameter's ontology datatype parses it. With `inf:hasMQTTValuePath`, a JSON envelope is read and written at that path.
 
-**REST** (`connectors/rest_binding.py`) — reaches another middleware instance over its generated REST routes. Recognized by the resource's Service carrying an `svc:address`; no parameter-local marker is needed. A peer middleware is a device as far as the seam is concerned. The route is structural: address plus structural path derived from the datamodel tree is a complete binding. See `06-views-and-projection.md` for the route shape.
+**REST** (`connectors/rest_binding.py`) — reads another middleware instance over its generated REST routes, by polling GET. It never writes: a peer's served datamodel has no write route, so a peer resource is driven through its workflows (an operation, or a direct workflow call), and its middleware commits before its device acts. Recognized by the resource's Service carrying an `svc:address`; no parameter-local marker is needed. A peer middleware is a device as far as the seam is concerned. The route is structural: address plus structural path derived from the datamodel tree is a complete binding. See `06-views-and-projection.md` for the route shape.
 
 ## Connection Metadata and Projection
 
@@ -119,13 +119,8 @@ mw = SemanticMiddleware(..., ensure_transport=my_starter)
 
 The hook is called once per distinct `(host, port)` during construction. The library never starts a broker, never probes one, never stops one, and never reads a return value. It states a need; the deployment meets it.
 
-## The Graph-Facing Connector
+## Graph Access from Framework Constructs
 
-Framework constructs (workflows, synced connectors) read and write the knowledge graph through `KnowledgeGraphConnector`, not by calling `ogm.fetch`/`ogm.commit` directly. This connector implements `transitional_sync_middleware`'s `Connector` protocol (`connect`/`disconnect`/`provide`/`consume`), wrapping OGM operations. Any future MES-style synchronization pattern (`SyncedConnector`, `SyncRole`/`SyncDirection`) that `transitional_sync_middleware` provides for other connectors becomes available for knowledge-graph synchronization without new plumbing.
+Framework constructs (workflows, synced connectors) reach the knowledge graph through the middleware's `commit`, `create` and `fetch`, which call the OGM. There is no separate graph connector: the OGM is the one validated write path, and the middleware's methods are how a construct gets to it. Seeding (`clear_dataset` and `load_shared_ontologies`) is the one direct writer.
 
-```python
-# Internal: all graph access goes through this connector
-from kapps_semantic_middleware.connectors.knowledge_graph_connector import KnowledgeGraphConnector
-```
-
-This also becomes the extension point for `@state`'s value source. Any `transitional_sync_middleware` connector can back a StateProperty's getter — an `OpcUaConnector` reads a PLC register, an `MqttClientConnector` subscribes to a topic. Reuse the existing IT/OT bridge directly.
+Any `transitional_sync_middleware` connector can back a StateProperty's getter: an `OpcUaConnector` reads a PLC register, an `MqttClientConnector` subscribes to a topic. Reuse the existing IT/OT bridge directly.

@@ -52,10 +52,20 @@ TEACH = {
     },
     "controller": {
         "title": "The control station",
-        "what": "It lists every resource it finds in the graph, and it drives any of them. "
-        "No endpoint is configured into it. It carries the same live activity feed as a "
+        "what": "It lists every resource it finds in the graph, and it reads any of them. It "
+        "changes none: a unit changes only through a workflow of its service, and this demo "
+        "has none yet. No endpoint is configured into it. It carries the same live activity feed as a "
         "middleware -- the \"activity\" link beside its address opens it.",
         "file": "src/kapps_semantic_middleware/rest_router.py",
+    },
+    "watchdog": {
+        "title": "The watchdog",
+        "what": "One middleware instance in watchdog mode. It sweeps the graph every few "
+        "seconds: a service whose heartbeat has gone stale loses its address, and the "
+        "operations of its resource that no live service will finish are marked failed. It "
+        "registers no service of its own, so it has no address. Kill a unit's middleware "
+        "(not stop: a stop deregisters cleanly) and watch the address go.",
+        "file": "demo/transferunits/watchdog.py",
     },
     "broker": {
         "title": "This unit's own MQTT broker",
@@ -103,9 +113,9 @@ TEACH = {
         "file": "src/kapps_semantic_middleware/registration.py",
     },
     "arrow-ctrl-mw": {
-        "title": "The controller drives a unit",
-        "what": "It sets a speed over REST, at an address it read from the graph. One "
-        "parameter has one address.",
+        "title": "The controller reads a unit",
+        "what": "It polls each parameter over REST, at an address it read from the graph, and "
+        "sends nothing back. One parameter has one address.",
         "file": "src/kapps_semantic_middleware/rest_router.py",
     },
 }

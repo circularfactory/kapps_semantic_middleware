@@ -1,4 +1,12 @@
-"""The REST semantic connector: the connector seam reaches a peer middleware.
+"""The REST semantic connector: the connector seam reaches a peer middleware, read-only.
+
+**The binding observes; it never drives.** It polls a peer middleware's served datamodel by
+GET, and what it reads is evidence about the peer. A peer's served datamodel mounts no write
+route: a device changes only through a workflow of its service, so that the peer's middleware
+commits before its device acts. A REST write leg would have no route to reach, and would be the
+same bypass if it had one. So ``RESTBinding.build`` refuses a direction that would write, and
+the connector's ``consume`` refuses too, before anything is sent. To drive a peer resource, call
+its workflows: an operation, or a direct workflow call.
 
 A parameter binds a REST connector when two things hold, neither of them a marker on the
 parameter itself. First, the parameter is interface-accessible at all — a subproperty of
@@ -19,10 +27,9 @@ callers — this binding, reaching outward at recognition time, and the ``Contro
 reaching outward from a fetched JSON tree — need the identical algorithm, and a domain-level
 module is the wrong place to own something the middleware itself defines.
 
-**Payload shape.** The payload is a *list* of parameter dicts, not a bare scalar, and a PUT
-must send back exactly what a GET returned. Unlike MQTT, which bridges a bare device scalar
-and the one-element list the framework holds, a peer's own generated parameter route already
-serves and accepts that exact list — there is no scalar to rewrap. So
+**Payload shape.** The payload is a *list* of parameter dicts, not a bare scalar. Unlike MQTT,
+which bridges a bare device scalar and the one-element list the framework holds, a peer's own
+generated parameter route already serves that exact list — there is no scalar to rewrap. So
 ``RESTParameterFormatter`` is a plain type adapter between the wire JSON and
 ``node_model_type`` instances, nothing more (contrast ``mqtt_binding.MQTTParameterFormatter``,
 which reassembles static facets a bare scalar would otherwise blank).
@@ -35,9 +42,8 @@ which reassembles static facets a bare scalar would otherwise blank).
   otherwise couple, for a cost (extra GETs on a resource with few parameters) that no
   evidence yet justifies.
 - *What interval?* ``DEFAULT_POLL_INTERVAL_SECONDS`` below, conservative and not measured.
-  The demo's measured control lap does not include it: that lap is a unit's own MQTT round
-  trip, and this poll is a controller reading a peer over REST. ``DEFAULT_TICK_SECONDS`` in
-  the demo's ``control_station.py`` records that measurement.
+  It is a controller reading a peer over REST, and has nothing to do with a unit's own MQTT
+  round trip.
 - *Configurable?* Yes, per connector instance (``poll_interval=``), which
   ``RESTBinding.build`` could source from a future ``inf:`` term if one ever proves
   necessary. None is minted here; the route needs no new term, and a cadence is not
@@ -92,6 +98,14 @@ from kapps_semantic_middleware.connectors.semantic import (
 from kapps_semantic_middleware.vocabulary import INF, SVC
 
 logger = logging.getLogger(__name__)
+
+READ_ONLY_REFUSAL = (
+    "REST wiring is read-only: drive a peer through its workflows (an operation, or a direct "
+    "workflow call). A peer's served datamodel has no write route."
+)
+"""The opening of every refusal of a REST write. ``RESTBinding.build`` raises it for a
+direction that would write, and ``RESTParameterConnector.consume`` raises it for a write that
+reaches the connector all the same."""
 
 DEFAULT_POLL_INTERVAL_SECONDS = 2.0
 """Default cadence of the northbound read leg's poll loop. See the module docstring's
@@ -190,8 +204,8 @@ class RESTParameterFormatter:
     """Adapts between a peer's parameter-route JSON body and the persistence value.
 
     Unlike a bare MQTT scalar, the REST payload already carries the whole parameter node --
-    value, unit, access mode, whatever the range declares -- because the peer's own GET/PUT
-    routes serve and accept exactly that shape. There is no scalar to rewrap, so this is a
+    value, unit, access mode, whatever the range declares -- because the peer's own GET route
+    serves exactly that shape. There is no scalar to rewrap, so this is a
     type adapter between a JSON list of dicts and ``model_type`` instances, nothing more.
     """
 
@@ -225,36 +239,26 @@ class RESTParameterFormatter:
         return nodes
 
     def serialize(self, data: Any) -> List[Dict[str, Any]]:
-        """The persistence value to the JSON body of an outbound PUT.
+        """The persistence value back to the wire shape ``deserialize`` accepted.
 
-        Echo semantics: this is the same shape ``deserialize`` accepted, so a read-modify-write
-        round trips through this pair with no reshaping in between.
+        The framework's formatter contract has both directions. Nothing here sends the result:
+        the binding builds no write leg, and the connector refuses a write.
         """
 
         items = data if isinstance(data, (list, tuple)) else [data]
-        body = [
+        return [
             item.model_dump(mode="json") if hasattr(item, "model_dump") else item
             for item in items
         ]
-        logger.info(
-            "%s -> PUT %s = %r", self.parameter_label or "parameter", self.url or "peer", body
-        )
-        return body
 
 
 class RESTParameterConnector:
-    """Reaches one generated parameter route on a peer middleware over HTTP.
+    """Reads one generated parameter route on a peer middleware over HTTP.
 
     ``connect``/``disconnect`` are no-ops. HTTP is stateless here, one ``httpx.AsyncClient``
     per call, the same style ``Controller`` and ``transitional_sync_middleware``'s own
     ``HttpRequestConnector`` already use -- there is no persistent connection worth pooling
     across the polling interval this runs at.
-
-    ``poll`` gates whether ``receive()`` actually polls. The write leg of a bidirectional
-    parameter gets ``poll=False``: its ``sync_direction`` is ``FROM_PERSISTENCE``, so the
-    framework's ``SyncedConnector.receive()`` would never act on anything it yielded anyway
-    (see ``synced_connector.py``), and polling the same URL a second time from the write leg
-    would only double the request rate for no effect.
     """
 
     def __init__(
@@ -263,13 +267,11 @@ class RESTParameterConnector:
         path: str,
         *,
         poll_interval: float = DEFAULT_POLL_INTERVAL_SECONDS,
-        poll: bool = True,
         timeout: float = 30.0,
     ) -> None:
         self.base_url = base_url.rstrip("/")
         self.path = path if path.startswith("/") else f"/{path}"
         self.poll_interval = poll_interval
-        self.poll = poll
         self.timeout = timeout
 
     @property
@@ -291,11 +293,8 @@ class RESTParameterConnector:
             return response.json()
 
     async def consume(self, body: Any) -> None:
-        """PUT ``body`` to the parameter route. ``body`` already has the list shape it wants."""
-        httpx_module = _httpx_module()
-        async with httpx_module.AsyncClient(timeout=self.timeout) as client:
-            response = await client.put(self.url, json=body)
-            response.raise_for_status()
+        """Refuse, and send nothing. The peer's route only reads; drive the peer by a workflow."""
+        raise ValueError(f"{READ_ONLY_REFUSAL} Refused a write to {self.url}.")
 
     async def receive(self) -> AsyncGenerator[Any, None]:
         """Poll the parameter route, yielding a reading each time it changes.
@@ -303,11 +302,8 @@ class RESTParameterConnector:
         REST has no push (see the module docstring). This is the polled substitute for
         MQTT's subscription queue, and what the framework's background sync task
         (``run_receive`` in ``transitional_sync_middleware``'s ``middleware.py``) actually drives northbound
-        sync from. A connector with ``poll=False`` never yields, so the framework spawns and
-        immediately retires its receive task with no network traffic.
+        sync from.
         """
-        if not self.poll:
-            return
         last_value: Any = _UNSET
         while True:
             await asyncio.sleep(self.poll_interval)
@@ -323,7 +319,7 @@ class RESTParameterConnector:
 
 @semantic_connector
 class RESTBinding:
-    """Binds a live, generically interface-accessible parameter to a REST connector.
+    """Binds a live, generically interface-accessible parameter to a read-only REST connector.
 
     Registers at the interface **root**, not a protocol-specific subproperty -- REST has no
     parameter-local marker (see the module docstring). ``wiring.py``'s ``_descriptor_for``
@@ -350,68 +346,73 @@ class RESTBinding:
         *,
         ensure_transport: Optional[Callable[[str, int], None]] = None,
     ) -> Iterable[Registration]:
-        """One read registration when the resource is live. One write registration too,
-        when ``direction`` permits it.
+        """One read registration when the resource is live. Refuse a direction that would write.
 
         ``direction`` has already been reduced to the most restrictive of the parameter's
-        ``inf:accessMode`` and the instance's connector wiring, so this only honours it.
+        ``inf:accessMode`` and the instance's connector wiring. A read-only parameter
+        therefore arrives as ``TO_PERSISTENCE`` under any wiring. A settable one under driving
+        wiring arrives as ``BIDIRECTIONAL``, and that is refused here, in the call itself, before
+        any connector exists: a peer's served datamodel has no write route, and the fix is
+        observing wiring plus the peer's workflows. The refusal does not wait for the peer to
+        be live, so a misconfigured instance fails the same way whatever the graph holds.
 
         ``ensure_transport`` is unused. REST reaches a peer middleware, not a broker this
         deployment needs to bring up -- there is nothing here to ensure.
         """
 
-        address = binding.get(SVC.address)
-        if not address:
-            # A generically interface-accessible parameter whose resource has no live
-            # Service is not a REST-recognition failure -- it is the ordinary state of a
-            # resource that has not (yet) registered itself. Name it, the same way MQTT
-            # names a missing broker, so a parameter does not come up silently dead.
-            logger.warning(
-                "Do not bind %s on %s over REST. The resource carries no live %s. The "
-                "parameter will be served but no value will flow.",
-                binding.parameter_property,
-                binding.resource_iri,
-                SVC.address,
+        if direction is not SyncDirection.TO_PERSISTENCE:
+            raise ValueError(
+                f"{READ_ONLY_REFUSAL} {binding.parameter_property} on {binding.resource_iri} "
+                f"resolved to {direction.name}; construct the middleware with "
+                "connector_sync_direction=SyncDirection.TO_PERSISTENCE."
             )
-            return
-        if binding.root_iri is None or binding.root_class_local_name is None:
-            # Recognition always fills these in (wiring.py's _recognise). Absence means a
-            # ParameterBinding was built by hand outside that path -- nothing to derive a
-            # route from.
-            logger.warning(
-                "Do not bind %s on %s over REST. No root resource context to derive a "
-                "structural route from.",
-                binding.parameter_property,
-                binding.resource_iri,
-            )
-            return
+        return _read_registrations(binding)
 
-        path = build_parameter_path(
-            binding.root_class_local_name,
-            binding.root_iri,
-            binding.path_steps,
-            binding.field_id,
+
+def _read_registrations(binding: ParameterBinding) -> Iterable[Registration]:
+    """The read leg of one parameter, or nothing when there is no route to read."""
+
+    address = binding.get(SVC.address)
+    if not address:
+        # A generically interface-accessible parameter whose resource has no live
+        # Service is not a REST-recognition failure -- it is the ordinary state of a
+        # resource that has not (yet) registered itself. Name it, the same way MQTT
+        # names a missing broker, so a parameter does not come up silently dead.
+        logger.warning(
+            "Do not bind %s on %s over REST. The resource carries no live %s. The "
+            "parameter will be served but no value will flow.",
+            binding.parameter_property,
+            binding.resource_iri,
+            SVC.address,
         )
-        formatter = _formatter_for(binding, url=f"{address}{path}")
-
-        yield Registration(
-            connector=RESTParameterConnector(address, path),
-            sync_direction=SyncDirection.TO_PERSISTENCE,
-            model_type=list,
-            formatter=formatter,
-            suffix="read",
+        return
+    if binding.root_iri is None or binding.root_class_local_name is None:
+        # Recognition always fills these in (wiring.py's _recognise). Absence means a
+        # ParameterBinding was built by hand outside that path -- nothing to derive a
+        # route from.
+        logger.warning(
+            "Do not bind %s on %s over REST. No root resource context to derive a "
+            "structural route from.",
+            binding.parameter_property,
+            binding.resource_iri,
         )
+        return
 
-        if direction is not SyncDirection.BIDIRECTIONAL:
-            return
+    path = build_parameter_path(
+        binding.root_class_local_name,
+        binding.root_iri,
+        binding.path_steps,
+        binding.field_id,
+    )
+    formatter = _formatter_for(binding, url=f"{address}{path}")
 
-        yield Registration(
-            connector=RESTParameterConnector(address, path, poll=False),
-            sync_direction=SyncDirection.FROM_PERSISTENCE,
-            model_type=list,
-            formatter=formatter,
-            suffix="write",
-        )
+    yield Registration(
+        connector=RESTParameterConnector(address, path),
+        sync_direction=SyncDirection.TO_PERSISTENCE,
+        model_type=list,
+        formatter=formatter,
+        suffix="read",
+    )
 
 
 def _formatter_for(binding: ParameterBinding, url: str) -> RESTParameterFormatter:

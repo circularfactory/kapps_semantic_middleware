@@ -94,8 +94,8 @@ Storing the endpoint on the Workflow itself means any caller with just a Workflo
 
 Your domain ontology must fit into a three-module stack:
 
-- **`cfc:` (Core)** — Published, external, superior. Includes `cfc:Operation`, `cfc:Capability`, `cfc:Resource`, `cfc:Task`. Import and specialize Core; never modify it. Possession uses Core's `cfc:hasPossessor` / `cfc:hasPossessedWorkpiece` directly.
-- **`mes:` (MES)** — Domain-facing. This is where your manufacturing-execution vocabulary lives. Domain experts author terms here. Currently carries handover-ability predicates (`mes:hasHandoverAbility` and its enumerated individuals).
+- **`cfc:` (Core)** — Published, external, superior. Includes `cfc:Operation`, `cfc:Capability`, `cfc:Resource`, `cfc:Task`. Import and specialize Core; never modify it. Possession uses Core's `cfc:hasPossessor` / `cfc:hasPossessedWorkpiece` directly, in the possession extension `kapps_semantic_middleware.possession`; registration itself writes only the Capability link `cfc:hasCapability`.
+- **`mes:` (MES)** — Domain-facing. This is where your manufacturing-execution vocabulary lives. Domain experts author terms here. Currently carries handover-ability predicates (`mes:hasHandoverAbility` and its enumerated individuals), which the possession extension's `handover(mw, mode=...)` reads; the generic core names none of them.
 - **`svc:` (Service)** — Middleware-facing. Includes `svc:Service`, `svc:Workflow`, `svc:StateProperty`, `svc:address`, `svc:endpoint`, `svc:lastHeartbeat`, and Operation status/provenance vocabulary. Domain code does not touch this layer.
 
 When you introduce new domain terms (a new device type, a new capability kind), author them in `mes:`. Reference Core types from `cfc:`. Never add domain vocabulary to `svc:` — that module is reserved for reachability and coordination state only.

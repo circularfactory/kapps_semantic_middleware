@@ -20,7 +20,11 @@ from kapps_semantic_middleware.connectors.rest_binding import (
     RESTParameterFormatter,
     build_parameter_path,
 )
-from kapps_semantic_middleware.connectors.semantic import ParameterBinding, normalize_metadata
+from kapps_semantic_middleware.connectors.semantic import (
+    ParameterBinding,
+    normalize_metadata,
+    resolve_direction,
+)
 from kapps_semantic_middleware.vocabulary import INF, SVC, AccessMode
 
 UNIT_IRI = "https://example.org/tui#TransferUnit1"
@@ -94,40 +98,51 @@ class TestBuildParameterPath:
 
 
 class TestRESTBindingBuild:
-    """A live resource, generically interface-accessible, binds a REST connector."""
+    """A live resource, generically interface-accessible, binds a read-only REST connector."""
 
-    def test_settable_parameter_yields_read_and_write_registrations(self):
-        registrations = list(RESTBinding.build(_binding(), SyncDirection.BIDIRECTIONAL))
-
-        assert [r.sync_direction for r in registrations] == [
-            SyncDirection.TO_PERSISTENCE,
-            SyncDirection.FROM_PERSISTENCE,
-        ]
-        expected_path = f"/TransferUnit/{IRI(UNIT_IRI).lined}/{HAS_BELT}/{IRI(LEFT_BELT_IRI).lined}/{SPEED.lined}"
-        assert all(r.connector.path == expected_path for r in registrations)
-        assert all(r.connector.base_url == ADDRESS for r in registrations)
-
-    def test_the_write_leg_does_not_poll(self):
-        """The write leg's sync_direction is FROM_PERSISTENCE. A poll loop there would never
-        act on anything (SyncedConnector.receive gates on TO_PERSISTENCE/BIDIRECTIONAL) --
-        just double the request rate."""
-        read, write = RESTBinding.build(_binding(), SyncDirection.BIDIRECTIONAL)
-
-        assert read.connector.poll is True
-        assert write.connector.poll is False
-
-    def test_read_only_direction_yields_only_the_read_leg(self):
+    def test_the_observing_wiring_yields_the_read_leg_alone(self):
         registrations = list(RESTBinding.build(_binding(), SyncDirection.TO_PERSISTENCE))
 
+        assert [r.sync_direction for r in registrations] == [SyncDirection.TO_PERSISTENCE]
+        [read] = registrations
+        expected_path = f"/TransferUnit/{IRI(UNIT_IRI).lined}/{HAS_BELT}/{IRI(LEFT_BELT_IRI).lined}/{SPEED.lined}"
+        assert read.connector.path == expected_path
+        assert read.connector.base_url == ADDRESS
+
+    @pytest.mark.parametrize("address", [ADDRESS, None])
+    def test_driving_wiring_is_refused_before_anything_is_built(self, address):
+        """A peer's served data model is read-only, so a REST write leg has no route to reach.
+
+        The refusal comes from the call itself, not from iterating its result, and it does not
+        depend on whether the peer is live: the wiring is wrong either way.
+        """
+        with pytest.raises(ValueError, match="REST wiring is read-only") as refused:
+            RESTBinding.build(_binding(address=address), SyncDirection.BIDIRECTIONAL)
+
+        assert "workflows" in str(refused.value)
+        assert str(SPEED) in str(refused.value)
+
+    def test_a_read_only_parameter_under_driving_wiring_is_never_refused(self):
+        """``build`` receives the narrower of the access mode and the wiring, as ``plan_wiring``
+        reduces it. A read-only parameter under driving wiring therefore reaches it as
+        TO_PERSISTENCE, and only a settable one is refused."""
+        read_only = resolve_direction(AccessMode.READ, SyncDirection.BIDIRECTIONAL)
+
+        registrations = list(RESTBinding.build(_binding(access_mode=AccessMode.READ), read_only))
+
         assert len(registrations) == 1
-        assert registrations[0].sync_direction is SyncDirection.TO_PERSISTENCE
+        with pytest.raises(ValueError, match="REST wiring is read-only"):
+            RESTBinding.build(
+                _binding(),
+                resolve_direction(AccessMode.READWRITE, SyncDirection.BIDIRECTIONAL),
+            )
 
     def test_a_resource_with_no_live_service_binds_nothing_and_says_so(self, caplog):
         """A generically interface-accessible parameter whose resource never registered --
         the acceptance criterion this ticket names explicitly."""
         binding = _binding(address=None)
 
-        assert list(RESTBinding.build(binding, SyncDirection.BIDIRECTIONAL)) == []
+        assert list(RESTBinding.build(binding, SyncDirection.TO_PERSISTENCE)) == []
         assert "no live" in caplog.text
         assert str(SPEED) in caplog.text
 
@@ -136,7 +151,7 @@ class TestRESTBindingBuild:
         a route from. Defensive: wiring.py's _recognise always fills this in."""
         binding = _binding(root_iri=None, root_class_local_name=None)
 
-        assert list(RESTBinding.build(binding, SyncDirection.BIDIRECTIONAL)) == []
+        assert list(RESTBinding.build(binding, SyncDirection.TO_PERSISTENCE)) == []
         assert "no root" in caplog.text.lower() or "root resource" in caplog.text
 
     def test_a_root_level_parameter_needs_no_steps(self):
@@ -195,9 +210,8 @@ class TestRESTParameterFormatter:
             }
         ]
 
-    def test_round_trips_a_put_echo(self):
-        """PUT sends exactly what GET returned. deserialize then serialize must
-        be the identity on the wire shape."""
+    def test_round_trips_the_wire_shape(self):
+        """deserialize then serialize must be the identity on the wire shape."""
         formatter = self._formatter()
         wire = [{INF.hasValue.lined: [3.5], INF.accessMode.lined: ["readwrite"]}]
 
@@ -294,14 +308,14 @@ class TestRESTParameterConnector:
         assert _FakeAsyncClient.instances[-1].calls == [("GET", "http://peer/x")]
 
     @pytest.mark.asyncio
-    async def test_consume_puts_the_body_to_the_url(self):
+    async def test_consume_refuses_and_sends_nothing(self):
+        """The connector only reads. A write reaching it is a wiring defect, so it says so."""
         connector = RESTParameterConnector("http://peer", "/x")
-        body = [{"a": 1}]
 
-        await connector.consume(body)
+        with pytest.raises(ValueError, match="REST wiring is read-only"):
+            await connector.consume([{"a": 1}])
 
-        [client] = _FakeAsyncClient.instances
-        assert client.calls == [("PUT", "http://peer/x", body)]
+        assert _FakeAsyncClient.instances == []
 
     @pytest.mark.asyncio
     async def test_connect_and_disconnect_are_no_ops(self):
@@ -310,15 +324,6 @@ class TestRESTParameterConnector:
         await connector.connect()
         await connector.disconnect()
 
-    @pytest.mark.asyncio
-    async def test_a_non_polling_connector_never_yields(self):
-        connector = RESTParameterConnector("http://peer", "/x", poll=False, poll_interval=0.01)
-
-        results = []
-        async for value in connector.receive():
-            results.append(value)  # pragma: no cover - must never run
-
-        assert results == []
 
     @pytest.mark.asyncio
     async def test_polling_yields_once_per_change_and_skips_repeats(self):

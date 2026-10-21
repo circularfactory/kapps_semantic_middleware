@@ -31,12 +31,13 @@ from kapps_ogm import OGM, Create, Update
 from _explicit import explicit_ask, explicit_select
 from kapps_semantic_middleware import SemanticMiddleware
 from kapps_semantic_middleware.credentials import triplestore_env_present, triplestore_for
-from kapps_semantic_middleware.possession import possession_change, possession_state
-from kapps_semantic_middleware.registration import (
-    HandoverPreconditionError,
-    PossessionSwitchConflict,
+from kapps_semantic_middleware.errors import HandoverPreconditionError, PossessionSwitchConflict
+from kapps_semantic_middleware.possession import (
     create_possession,
     find_possession_state,
+    handover,
+    possession_change,
+    possession_state,
     switch_possession,
 )
 from kapps_semantic_middleware.seeding import load_shared_ontologies
@@ -211,7 +212,8 @@ def test_handover_rejects_without_possession(store):
     not_possessed = IRI(f"{seed.DEMO_NS}box_999")
     db.triple_add((not_possessed, RDF.type, seed.BOX_CLASS))
     with pytest.raises(HandoverPreconditionError):
-        with _source_middleware(store).handover(
+        with handover(
+            _source_middleware(store),
             mode=MES.Pass, workpiece=not_possessed, counterpart=seed.HANDOVER_DEST
         ):
             pass
@@ -225,7 +227,8 @@ def test_handover_rejects_without_counterpart_ability(store):
     no_ability = IRI(f"{seed.DEMO_NS}transfer_module_C")
     db.triple_add((no_ability, RDF.type, seed.TRANSFER_MODULE_CLASS))  # no hasHandoverAbility
     with pytest.raises(HandoverPreconditionError):
-        with _source_middleware(store).handover(
+        with handover(
+            _source_middleware(store),
             mode=MES.Pass, workpiece=seed.HANDOVER_BOX, counterpart=no_ability
         ):
             pass
@@ -245,7 +248,8 @@ def test_a_handover_moves_possession_to_the_counterpart(store):
     assert find_possession_state(ogm, seed.HANDOVER_BOX, seed.HANDOVER_SOURCE) is not None
     assert find_possession_state(ogm, seed.HANDOVER_BOX, seed.HANDOVER_DEST) is None
 
-    with _source_middleware(store).handover(
+    with handover(
+        _source_middleware(store),
         mode=MES.Pass, workpiece=seed.HANDOVER_BOX, counterpart=seed.HANDOVER_DEST
     ):
         pass  # domain-owned physical transport
@@ -256,6 +260,25 @@ def test_a_handover_moves_possession_to_the_counterpart(store):
     # The workpiece points to exactly ONE current PossessionState (Core cardinality preserved).
     states = list(db.triples_get(sub=seed.HANDOVER_BOX, pred=CFC.hasPossessedWorkpiece))
     assert len(states) == 1
+
+
+@requires_store
+def test_the_deprecated_method_warns_and_hands_over_as_the_extension_does(store):
+    """``mw.handover(...)`` is the alias of ``possession.handover(mw, ...)`` for one release."""
+    db = store
+    seed.seed_handover(db, OGM(db=db))
+    ogm = OGM(db=db)
+    bodies = []
+
+    with pytest.warns(DeprecationWarning, match="possession.handover") as caught:
+        with _source_middleware(store).handover(
+            mode=MES.Pass, workpiece=seed.HANDOVER_BOX, counterpart=seed.HANDOVER_DEST
+        ):
+            bodies.append(find_possession_state(ogm, seed.HANDOVER_BOX, seed.HANDOVER_DEST))
+
+    assert len([w for w in caught if w.category is DeprecationWarning]) == 1
+    assert bodies != [None]  # the possession changed before the body ran
+    assert find_possession_state(ogm, seed.HANDOVER_BOX, seed.HANDOVER_SOURCE) is None
 
 
 @requires_store
@@ -273,7 +296,8 @@ def test_a_handover_changes_only_the_workpieces_link_its_update_and_its_operatio
     operation = _running_operation(db)
     before = _explicit_statements(db)
 
-    with _source_middleware(store).handover(
+    with handover(
+        _source_middleware(store),
         mode=MES.Pass,
         workpiece=seed.HANDOVER_BOX,
         counterpart=seed.HANDOVER_DEST,
@@ -308,7 +332,8 @@ def test_handover_carries_a_workpiece_update_with_the_possession_change(store):
     ogm = OGM(db=db)
     _box_at_the_source_in_its_transport_state(db)
 
-    with _source_middleware(store).handover(
+    with handover(
+        _source_middleware(store),
         mode=MES.Pass,
         workpiece=seed.HANDOVER_BOX,
         counterpart=seed.HANDOVER_DEST,
@@ -332,7 +357,8 @@ def test_a_workpiece_update_that_names_the_possession_link_is_refused_before_any
     body_ran = False
 
     with pytest.raises(ValueError, match="must not set"):
-        with _source_middleware(store).handover(
+        with handover(
+            _source_middleware(store),
             mode=MES.Pass,
             workpiece=seed.HANDOVER_BOX,
             counterpart=seed.HANDOVER_DEST,
@@ -352,7 +378,8 @@ def test_an_iri_value_in_a_workpiece_update_is_written_as_a_reference(store, as_
     seed.seed_handover(db, OGM(db=db))
     _box_at_the_source_in_its_transport_state(db)
 
-    with _source_middleware(store).handover(
+    with handover(
+        _source_middleware(store),
         mode=MES.Pass,
         workpiece=seed.HANDOVER_BOX,
         counterpart=seed.HANDOVER_DEST,
@@ -377,7 +404,8 @@ def test_a_plain_string_for_an_object_property_is_refused_before_anything_is_wri
     body_ran = False
 
     with pytest.raises(ValueError, match="expected Node instances"):
-        with _source_middleware(store).handover(
+        with handover(
+            _source_middleware(store),
             mode=MES.Pass,
             workpiece=seed.HANDOVER_BOX,
             counterpart=seed.HANDOVER_DEST,
@@ -403,7 +431,8 @@ def test_handover_preserves_counterpart_existing_possession(store):
     other_box = _another_box(db, seed.HANDOVER_DEST)
     assert find_possession_state(ogm, other_box, seed.HANDOVER_DEST) is not None
 
-    with _source_middleware(store).handover(
+    with handover(
+        _source_middleware(store),
         mode=MES.Pass, workpiece=seed.HANDOVER_BOX, counterpart=seed.HANDOVER_DEST
     ):
         pass
@@ -432,7 +461,8 @@ def test_the_first_handover_to_a_resource_creates_its_state_and_the_next_reuses_
     assert _explicit_objects(db, seed.HANDOVER_DEST, CFC.hasPossessor) == []
 
     for box in (seed.HANDOVER_BOX, second_box):
-        with _source_middleware(store).handover(
+        with handover(
+            _source_middleware(store),
             mode=MES.Pass, workpiece=box, counterpart=seed.HANDOVER_DEST
         ):
             pass
@@ -463,7 +493,8 @@ def test_two_first_handovers_to_one_resource_at_the_same_moment_leave_one_state(
 
     def hand_over(middleware: SemanticMiddleware, box: IRI) -> None:
         try:
-            with middleware.handover(
+            with handover(
+                middleware,
                 mode=MES.Pass, workpiece=box, counterpart=seed.HANDOVER_DEST
             ):
                 pass
@@ -501,7 +532,8 @@ def test_a_first_handover_whose_counterpart_got_its_state_meanwhile_is_admitted_
     other_box = _another_box(db, seed.HANDOVER_SOURCE)
 
     def the_other_handover() -> None:
-        with _source_middleware(store).handover(
+        with handover(
+            _source_middleware(store),
             mode=MES.Pass, workpiece=other_box, counterpart=seed.HANDOVER_DEST
         ):
             pass
@@ -509,7 +541,7 @@ def test_a_first_handover_whose_counterpart_got_its_state_meanwhile_is_admitted_
     late = _source_middleware(
         store, ogm=_LateOGM(triplestore_for(store.dataset), the_other_handover)
     )
-    with late.handover(mode=MES.Pass, workpiece=seed.HANDOVER_BOX, counterpart=seed.HANDOVER_DEST):
+    with handover(late, mode=MES.Pass, workpiece=seed.HANDOVER_BOX, counterpart=seed.HANDOVER_DEST):
         pass
 
     counterpart_state = f"{seed.HANDOVER_DEST}_possession"
@@ -532,7 +564,8 @@ def test_one_box_handed_twice_at_once_to_a_counterpart_without_a_state_is_admitt
     bodies: list[str] = []
 
     def the_first_handover() -> None:
-        with _source_middleware(store).handover(
+        with handover(
+            _source_middleware(store),
             mode=MES.Pass, workpiece=seed.HANDOVER_BOX, counterpart=seed.HANDOVER_DEST
         ):
             bodies.append("first")
@@ -541,7 +574,8 @@ def test_one_box_handed_twice_at_once_to_a_counterpart_without_a_state_is_admitt
         store, ogm=_LateOGM(triplestore_for(store.dataset), the_first_handover)
     )
     with pytest.raises(HandoverPreconditionError):
-        with late.handover(
+        with handover(
+            late,
             mode=MES.Pass, workpiece=seed.HANDOVER_BOX, counterpart=seed.HANDOVER_DEST
         ):
             bodies.append("second")
@@ -569,7 +603,8 @@ def test_a_handover_whose_box_moved_inside_its_commit_raises_the_conflict_before
     bodies: list[str] = []
 
     def the_other_handover() -> None:
-        with _source_middleware(store).handover(
+        with handover(
+            _source_middleware(store),
             mode=MES.Pass, workpiece=seed.HANDOVER_BOX, counterpart=seed.HANDOVER_DEST
         ):
             bodies.append("other")
@@ -578,7 +613,8 @@ def test_a_handover_whose_box_moved_inside_its_commit_raises_the_conflict_before
         store, ogm=_RacedOGM(triplestore_for(store.dataset), the_other_handover)
     )
     with pytest.raises(PossessionSwitchConflict) as conflict:
-        with raced.handover(
+        with handover(
+            raced,
             mode=MES.Pass, workpiece=seed.HANDOVER_BOX, counterpart=seed.HANDOVER_DEST
         ):
             bodies.append("raced")
@@ -613,7 +649,8 @@ def test_a_handover_onto_an_occupied_counterpart_is_refused_before_its_body_runs
     db.shapes_set(_ONE_WORKPIECE_PER_MODULE, "text/turtle")
     try:
         with pytest.raises(TripleStoreInterfaceError) as refusal:
-            with _source_middleware(store).handover(
+            with handover(
+                _source_middleware(store),
                 mode=MES.Pass,
                 workpiece=seed.HANDOVER_BOX,
                 counterpart=seed.HANDOVER_DEST,
@@ -638,7 +675,8 @@ def test_an_error_in_the_body_undoes_nothing_and_writes_nothing_more(store):
     seed.seed_handover(db, OGM(db=db))
     ogm = OGM(db=db)
     with pytest.raises(RuntimeError, match="boom"):
-        with _source_middleware(store).handover(
+        with handover(
+            _source_middleware(store),
             mode=MES.Pass, workpiece=seed.HANDOVER_BOX, counterpart=seed.HANDOVER_DEST
         ):
             admitted = _explicit_statements(db)
@@ -689,7 +727,7 @@ def test_a_handover_admits_its_entry_in_the_commit_of_the_possession_change(stor
     ogm = _RecordingOGM(triplestore_for(store.dataset))
     before = _explicit_statements(db)
 
-    with _source_middleware(store, ogm).handover(
+    with handover(_source_middleware(store, ogm),
         mode=MES.Pass,
         workpiece=seed.HANDOVER_BOX,
         counterpart=seed.HANDOVER_DEST,
@@ -731,7 +769,8 @@ def test_a_refused_possession_change_writes_no_entry_change(store):
     db.shapes_set(_ONE_WORKPIECE_PER_MODULE, "text/turtle")
     try:
         with pytest.raises(TripleStoreInterfaceError):
-            with _source_middleware(store).handover(
+            with handover(
+                _source_middleware(store),
                 mode=MES.Pass,
                 workpiece=seed.HANDOVER_BOX,
                 counterpart=seed.HANDOVER_DEST,
@@ -758,7 +797,8 @@ def test_a_refused_entry_change_writes_no_possession_change(store):
     )
 
     with pytest.raises(ValueError):
-        with _source_middleware(store).handover(
+        with handover(
+            _source_middleware(store),
             mode=MES.Pass,
             workpiece=seed.HANDOVER_BOX,
             counterpart=seed.HANDOVER_DEST,

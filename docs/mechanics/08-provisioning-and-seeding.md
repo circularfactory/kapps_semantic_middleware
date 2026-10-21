@@ -9,6 +9,11 @@ first registration. It is the bootstrap order the other pages assume you are alr
 The order is fixed: construct the store, wrap it in an OGM, load the shared ontologies,
 author and seed the domain data, then construct the middleware.
 
+The examples keep to this order and add one rule: each notebook is self-contained. It runs against its
+own dummy user and dataset, clears it first, and seeds the ontology modules and instance data its
+scenario starts from, so a re-run never writes to production state and a newcomer needs no local
+setup of their own. See *Self-contained* in `examples/CONTEXT.md`.
+
 ```python
 from kapps_triplestore_interface import IRI
 from kapps_ogm import OGM

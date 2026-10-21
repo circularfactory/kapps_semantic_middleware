@@ -31,7 +31,7 @@ from kapps_semantic_middleware import SemanticMiddleware
 from kapps_semantic_middleware.credentials import triplestore_for
 from kapps_semantic_middleware.errors import NotificationUndelivered
 from kapps_semantic_middleware.operation import operation
-from kapps_semantic_middleware.possession import workpiece
+from kapps_semantic_middleware.possession import handover, workpiece
 from kapps_semantic_middleware.registration import (
     create_operation,
     mint_capability_iri,
@@ -412,7 +412,7 @@ def test_a_failed_notification_keeps_a_workpiece_created_in_the_request(store):
 def test_a_workpiece_created_in_the_body_of_a_handover_commits_on_its_own(store):
     seed.seed_handover(store, OGM(db=store))
     mw = _middleware(store, seed.HANDOVER_SOURCE)
-    with mw.handover(mode=MES.Pass, workpiece=seed.HANDOVER_BOX, counterpart=seed.HANDOVER_DEST):
+    with handover(mw, mode=MES.Pass, workpiece=seed.HANDOVER_BOX, counterpart=seed.HANDOVER_DEST):
         with mw.create(
             seed.BOX_CLASS, workpiece(ClassScope(), possessor=mw.resource)
         ) as second_box:

@@ -8,7 +8,7 @@ Five rules live here, none of which the controller-level tests can hold on their
    *not* the monitor's collapsed row, which genuinely holds no data because it has
    not fetched -- so the payload must never shrink and the server must not track which
    cards are open.
-2. **The expert toggle's three jobs** -- full IRI, the real assignment expression, and
+2. **The expert toggle's three jobs** -- full IRI, the real value expression, and
    what ``prune_southbound`` stripped -- are three fields on every parameter row. The
    toggle itself is client-side; what is testable is that the data is there, per
    parameter, which is exactly what "discoverable at runtime, per parameter"
@@ -22,10 +22,10 @@ Five rules live here, none of which the controller-level tests can hold on their
    leaves; a ``kill -9``'d one keeps its address, so it stays selected and its card reads
    ``unreachable`` with its last-known values and an age.
 
-No real peer process here. A ``svc:address`` that nothing listens on is enough to make a
-PUT fail for a genuine reason (connection refused) -- the "unit down" case ``rejected``
-exists to name -- without paying for a subprocess. A real PUT landing is covered against
-a real peer in ``test_controller_view.py::TestDrivingAView``.
+No real peer process here. A ``svc:address`` that nothing listens on is enough for the
+board to wire a unit and serve its loaded values without paying for a subprocess. A value
+travelling from a real peer is covered in ``test_controller_view.py``. The board's read view
+without any store is covered in ``test_station_board_read_view.py``.
 """
 
 from __future__ import annotations
@@ -110,8 +110,8 @@ async def _board(store, ogm, unit_scope, *, name: str, live: tuple, query: str):
     ``query`` and graft the board onto a bare app.
 
     Returns ``(client, controller)``. Every test here needs this same eight-line dance,
-    and the algorithm is always paused: this file tests the board's own routes, and the
-    board disables every set control while the algorithm runs.
+    and the algorithm is always paused: this file tests the board's own routes, not the
+    algorithm's reactions.
     """
     seed.seed_factory(store, ogm, units=2)
     for index in live:
@@ -128,7 +128,7 @@ async def _board(store, ogm, unit_scope, *, name: str, live: tuple, query: str):
     station_board.mount_onto(
         app,
         controller=controller,
-        algorithm_state=algorithm.AlgorithmState(tick_seconds=999.0, paused=True),
+        algorithm_state=algorithm.AlgorithmState(paused=True),
         default_query=query,
     )
     return TestClient(app), controller
@@ -216,7 +216,7 @@ class TestTheExpertToggle:
                 f"{row['field_iri']!r} is not a full IRI -- a label or CURIE leaked into the field"
             )
 
-    async def test_every_row_carries_its_real_assignment_expression(
+    async def test_every_row_carries_its_real_value_expression(
         self, store, ogm, unit_scope
     ):
         """Job two: the REST binding accepted the skolemized parameter's awkward shape as-is, and this makes that
@@ -229,9 +229,9 @@ class TestTheExpertToggle:
 
         assert rows, "no parameter rows to check"
         for row in rows:
-            expression = row["assignment_expression"]
-            assert '["inf:hasValue"][0] =' in expression, (
-                f"{expression!r} does not show the real nested assignment"
+            expression = row["value_expression"]
+            assert '["inf:hasValue"][0] ==' in expression, (
+                f"{expression!r} does not show the real nested value"
             )
             assert row["field_id"] in expression
 
@@ -435,48 +435,6 @@ class TestABadHeuristicIsReportedInPlace:
         body = client.get("/api/state").json()
         assert body["query"] == default_query
         assert _unit_iris(body) == {unit1}, "reset did not bring the default's units back"
-
-
-@requires_store
-@pytest.mark.asyncio
-class TestAWriteStatusReachesTheBoard:
-    """The classifier itself is unit-tested in ``test_write_status.py``; what matters here
-    is that a rejection recorded by the set route is on the very next poll, which is what
-    makes ``rejected`` visible on screen and distinct from ``diverged``."""
-
-    async def test_a_rejected_write_shows_as_rejected_on_the_next_poll(
-        self, store, ogm, unit_scope
-    ):
-        """Nothing listens on the unit's address, so the PUT genuinely fails -- the "unit
-        down" case. The reason is recorded on the controller rather than in the page, so
-        it survives a reload and is visible here."""
-        client, controller = await _board(
-            store, ogm, unit_scope, name="CS-reject1", live=(1,), query=_query_selecting(1)
-        )
-        unit1 = str(seed._mint_transfer_unit_iri(1))
-        speed_field = seed.TU_HAS_CONVEYOR_SPEED.lined
-        belt_iri = str(getattr(controller.units[unit1], seed.TU_HAS_CONVEYOR_BELT.lined)[0].id)
-
-        set_response = client.post(
-            "/api/set",
-            json={
-                "resource_iri": unit1,
-                "holder_iri": belt_iri,
-                "field_id": speed_field,
-                "value": 4.2,
-            },
-        )
-        assert set_response.json()["ok"] is False
-
-        rows = [
-            r
-            for r in _rows(client.get("/api/state").json())
-            if r["holder_iri"] == belt_iri and r["field_id"] == speed_field
-        ]
-
-        assert rows, "the belt speed row vanished from the board after a failed write"
-        assert rows[0]["status"] == "rejected"
-        assert rows[0]["status_error"], "a rejected row must carry the reason on screen"
 
 
 def _set_heartbeat(store, resource_iri, *, seconds_ago: float) -> None:

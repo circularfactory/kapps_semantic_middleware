@@ -64,14 +64,16 @@ its three dependencies, by that dependency's own path. Use this table rather tha
 | `ConnectionInfo` | `transitional_sync_middleware.middleware.registries` |
 | `INF` (the interface vocabulary) | `kapps_semantic_middleware.vocabulary` |
 | `triplestore_for`, `endpoint_for` | `kapps_semantic_middleware.credentials` |
-| `mw.commit()`, `mw.create()`, `mw.fetch()`, `mw.notify()`, `mw.on_notification()`, `mw.resource` (members of `SemanticMiddleware`, nothing more to import; `mw.create(cls, scope)` creates one new instance, `mw.resource` is the middleware's own Resource, `mw.notify(operation=op, resource=r)` sends a notification, an Operation's IRI with no payload and no write, and `mw.on_notification(handler, class_scope=...)` takes the notified Operations through the intake, one at a time, each as the Operation object, to the exposed workflow that realizes its Capability or else to the handler, with no lifecycle; the feedback of an Operation that the instance's Resource issued and that is no longer `queued` goes to the handler, also when a workflow of the instance realizes its Capability) | `kapps_semantic_middleware` |
-| `Create`, `Update` (the changes that a transition of `mw.commit()` is made of, and the `entry` of `mw.handover()`) | `kapps_ogm` |
+| `mw.commit()`, `mw.create()`, `mw.fetch()`, `mw.notify()`, `mw.on_notification()`, `mw.resource` (members of `SemanticMiddleware`, nothing more to import; the keyword-only `verb` of `mw.commit()`, `"commit"` or `"handover"`, labels a refused write in `mw.refused_writes`; `mw.create(cls, scope)` creates one new instance, `mw.resource` is the middleware's own Resource, `mw.notify(operation=op, resource=r)` sends a notification, an Operation's IRI with no payload and no write, and `mw.on_notification(handler, class_scope=...)` takes the notified Operations through the intake, one at a time, each as the Operation object, to the exposed workflow that realizes its Capability or else to the handler, with no lifecycle; the feedback of an Operation that the instance's Resource issued and that is no longer `queued` goes to the handler, also when a workflow of the instance realizes its Capability) | `kapps_semantic_middleware` |
+| `Create`, `Update` (the changes that a transition of `mw.commit()` is made of, and the `entry` of `possession.handover()`) | `kapps_ogm` |
 | `Node` (the Operation object that the intake passes to a workflow or a notification handler; type a workflow's parameter with it) | `kapps_ogm` |
 | `workpiece` (the scope of a new Workpiece for `mw.create()`: `workpiece(scope, possessor=mw.resource)`) | `kapps_semantic_middleware.possession` |
+| `handover` (the change of possession, then the move: `with handover(mw, mode=MES.Pass, workpiece=workpiece, counterpart=peer, operation=op, entry=[...]):`, a context manager built on `mw.commit()`. `SemanticMiddleware.handover()` is its deprecated alias for one release.) | `kapps_semantic_middleware.possession` |
+| `create_possession`, `switch_possession` (a workpiece's first possession, and a change of possession with no move, each in one `OGM.commit`, for a seed or a caller that holds no middleware), `find_possession_state`, `counterpart_has_complementary_ability` (the reads of a handover's preconditions), `mint_possession_state_iri` | `kapps_semantic_middleware.possession` |
 | `operation` (the scope of a new Operation for `mw.create()`: `operation(scope, capability=cap)`) | `kapps_semantic_middleware.operation` |
 | `PredefinedScope`, `ScopeChanges` (the hook through which a domain module brings its rules to `mw.create()`, and what its `changes()` returns) | `kapps_semantic_middleware.commit` |
 | `SVC`, `OperationStatus` (the service vocabulary, and an Operation's status values) | `kapps_semantic_middleware.vocabulary` |
-| `MES` (the handover abilities, such as `MES.Pass`, that `mw.handover()` takes as its `mode`) | `kapps_semantic_middleware.vocabulary` |
+| `MES` (the handover abilities, such as `MES.Pass`, that `possession.handover()` takes as its `mode`) | `kapps_semantic_middleware.vocabulary` |
 | `HandoverPreconditionError`, `PossessionSwitchConflict`, `OperationQueueEmpty`, `OperationResolutionError`, `OntologyGroundTruthError`, `NotificationUndelivered`; the types that tell the action: `OperationReceiverUnavailableError` and `NotificationReceiverUnavailableError` (Retry), `DeploymentError` with `DeploymentValueError` and `DeploymentRuntimeError`, `CapabilityNotRealizedError` and `NotificationReceiverAmbiguousError` (Repair) | `kapps_semantic_middleware.errors` |
 | `TripleStoreInterfaceError`, `TripleStoreResponseError` (a refusal by the store, SHACL included) | `kapps_triplestore_interface.exceptions` |
 | `AnonymousNodeFetchError`, `AmbiguousNodeAlignmentError`, `UnresolvableNodeAddressError` (each a `ValueError`) | `kapps_ogm.utils.errors` |
@@ -79,7 +81,7 @@ its three dependencies, by that dependency's own path. Use this table rather tha
 
 Binding internals, if you are adding a protocol, live under
 `kapps_semantic_middleware.connectors` — `semantic`, `mqtt_binding`, `rest_binding`,
-`knowledge_graph_connector`, `wiring`.
+`wiring`.
 
 > `kapps_semantic_middleware/ontology/` is **not** a Python module. It is the directory holding the
 > three vocabulary files (`core.ttl`, `mes.ttl`, `service.ttl`). Importing from it fails.
@@ -91,6 +93,13 @@ specific to the circular factory, which is Core's `cfc:` vocabulary, lives in sm
 Each topic module is built on the generic core: `mw.commit()`, `mw.create()`, `mw.fetch()` and
 kapps_ogm's changes. It never writes past them. A domain that is not modelled on Core uses the
 generic modules and none of the cfc-specific ones.
+
+Possession and the handover are such an extension, `kapps_semantic_middleware.possession`. The
+core still knows Core's Capability, Resource and Operation (registration writes
+`cfc:hasCapability`), but `middleware` and `registration` name no possession term and no `mes:`
+handover ability, except two deprecated aliases that only delegate to the extension: the method
+`SemanticMiddleware.handover()` and the `__getattr__` of `registration`, which resolves the old
+names of the moved helpers and errors. `tests/test_core_names_no_possession.py` checks it.
 
 Some generic modules still have cfc-specific parts inside. The table names those parts: the
 functions, methods, classes and module-level names where a `cfc:` term may appear. Nowhere else in
@@ -108,7 +117,6 @@ part listed with `cfc:` no longer has any.
 | `kapps_semantic_middleware.activity` | generic | |
 | `kapps_semantic_middleware.commit` | generic | |
 | `kapps_semantic_middleware.connectors` | generic | |
-| `kapps_semantic_middleware.connectors.knowledge_graph_connector` | generic | |
 | `kapps_semantic_middleware.connectors.mqtt_binding` | generic | |
 | `kapps_semantic_middleware.connectors.rest_binding` | generic | |
 | `kapps_semantic_middleware.connectors.semantic` | generic | |
@@ -121,10 +129,10 @@ part listed with `cfc:` no longer has any.
 | `kapps_semantic_middleware.rest_router` | generic | |
 | `kapps_semantic_middleware.shacl_interop` | generic | |
 | `kapps_semantic_middleware.shacl_interop.shape_from_typehints` | generic | |
-| `kapps_semantic_middleware.possession` | cfc-specific | Possession: one possession state per Resource, the change of possession that `handover()` commits, and the `workpiece` scope |
+| `kapps_semantic_middleware.possession` | cfc-specific | Possession, an extension built on the generic core: one possession state per Resource, the `handover()` with its preconditions and its change of possession, the `workpiece` scope, and the possession helpers that a seed uses |
 | `kapps_semantic_middleware.operation` | cfc-specific | The Operation: its link to the Capability that it implements, the `operation` scope, and the scope and the Capabilities of a received Operation |
-| `kapps_semantic_middleware.middleware` | generic, with cfc-specific parts | `SemanticMiddleware.handover`, `SemanticMiddleware.issue_operation`, `SemanticMiddleware._read_received`: the change of possession of a handover, the Operation of a request, created under the operation scope, and the intake's read of a received Operation with the Capabilities it implements |
-| `kapps_semantic_middleware.registration` | generic, with cfc-specific parts | `register_workflow`, `register_state_property`, `create_operation`, `resolve_operation_workflow`, `find_resource_operations`, `find_possession_state`, `switch_possession`: the Capability links of registration and dispatch, the possession read of a handover's precondition, and the possession helpers that a seed uses |
+| `kapps_semantic_middleware.middleware` | generic, with cfc-specific parts | `SemanticMiddleware.handover`, `SemanticMiddleware.issue_operation`, `SemanticMiddleware._read_received`: the deprecated alias of the possession extension's handover, which calls it, the Operation of a request, created under the operation scope, and the intake's read of a received Operation with the Capabilities it implements |
+| `kapps_semantic_middleware.registration` | generic, with cfc-specific parts | `register_workflow`, `register_state_property`, `_register_capability`, `create_operation`, `_resolve_claim`, `find_resource_operations`, `find_stranded_operations`: the Capability links of registration and dispatch (the resource's link is one OGM append, in the commit that writes the Capability) |
 | `kapps_semantic_middleware.seeding` | generic, with cfc-specific parts | `CORE_GRAPH`: the graph into which the shared ontologies load Core |
 | `kapps_semantic_middleware.vocabulary` | generic, with cfc-specific parts | `CORE_NS`, `CORE_ONTOLOGY`, `CFC`: the one home of every IRI holds Core's terms too |
 
@@ -198,7 +206,10 @@ realizes, must all pre-exist. Startup fails immediately, naming the missing clas
 **All knowledge-graph writes go through the OGM.** Raw SPARQL `UPDATE` or direct
 `kapps_triplestore_interface` mutation calls bypass the validated write path, so the written node passes no
 shape check and a property replacement loses its atomicity — the intermediate state fails
-validation. Reads may use the access module directly; only writes are constrained.
+validation. Reads may use the access module directly; only writes are constrained. The resource's
+link to each Capability it provides is one `Append` in an OGM commit, which keeps the other links,
+so instances that register on one resource at the same moment keep every link. Only seeding, which
+provisions a dataset before any service runs, writes to the store directly.
 
 **`@mw.workflow` and `@mw.state` are resource-mode only.** Each raises `RuntimeError` when called
 on an instance in any other mode, and `ValueError` when a required class IRI is missing.

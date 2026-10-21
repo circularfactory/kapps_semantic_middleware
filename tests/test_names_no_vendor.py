@@ -83,6 +83,7 @@ EXEMPT = {
 REGIONS = {
     "src/kapps_semantic_middleware/credentials.py": "the deprecated names and variables",
     "src/kapps_semantic_middleware/seeding.py": "the deprecated name",
+    "src/kapps_semantic_middleware/observation.py": "the older name of the store's error type, which the released interface still has",
     "tests/test_credentials.py": "the tests of the deprecated names and variables, and the local Docker store's configuration",
     "tests/test_seeding.py": "the test of the deprecated name",
     "demo/transferunits/launcher.py": "the deprecated variables, which a PLC must not receive",

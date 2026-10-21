@@ -19,7 +19,7 @@ from kapps_triplestore_interface import IRI
 from kapps_ogm.utils.class_scope import ClassScope
 from rdflib.namespace import RDF
 
-from kapps_semantic_middleware.registration import create_possession
+from kapps_semantic_middleware.possession import create_possession
 from kapps_semantic_middleware.seeding import (
     # Re-exported, not used here. A scenario asserts against the named graphs it
     # seeded, and reaches them through this module rather than through the library

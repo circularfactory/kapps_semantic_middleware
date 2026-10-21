@@ -12,6 +12,227 @@ work lands, not at release time.
 finding exactly one of it, and prose naming it is a second occurrence — which stopped a release
 the first time this file was written.)
 
+## 0.2.2 — 2026-10-21
+
+- **kapps_semantic_middleware requires kapps-ogm 0.3.2 and kapps-triplestore-interface 2.2.2 or
+  later within their minor versions** (`kapps-ogm~=0.3.2`, `kapps-triplestore-interface~=2.2.2`).
+  They are the releases this version is tested against; the registration's `Append` needs
+  kapps-ogm 0.3.2.
+
+### Added
+
+- **The handover is a function of the possession extension: `possession.handover(mw, *, mode,
+  workpiece, counterpart, workpiece_update=None, operation=None, entry=None)`.** It is the context
+  manager that `SemanticMiddleware.handover()` was, with the same behaviour: the two preconditions
+  are read first, the change of possession and `entry` are committed before the body, a refusal
+  writes nothing and skips the body, a `PreconditionFailedError` of a commit that created the
+  counterpart's state is read, checked and committed once more, and an error in the body undoes
+  nothing. It uses only `mw.commit()`, `mw.ogm`, `mw.resource` and `mw.mode`, so the generic core
+  names no possession term. `create_possession`, `switch_possession`, `find_possession_state` and
+  `counterpart_has_complementary_ability` are in `kapps_semantic_middleware.possession` too.
+
+- **`mw.commit()` takes the keyword-only `verb`, `"commit"` (the default) or `"handover"`.** It
+  labels a refused write in `mw.refused_writes` and in the dashboard's "Refused writes" box, so a
+  refused handover is still shown as `handover`. Any other value raises `ValueError` before
+  anything is written.
+
+- **`op.update(instance_iri, data)` changes an existing instance in the commit that creates the
+  Operation.** In the block of `mw.issue_operation()`, the Issued Operation takes the `update` of a
+  `mw.commit()` transition: each property of `data` replaces the stored values, `[]` removes one,
+  and an IRI value becomes a reference. The store admits or refuses the Operation and the updates
+  together, and the receiver is notified only after that commit, so a planner writes a Screw's
+  back-link to its Operation without a second commit that can leave a one-sided pair. The updates
+  are staged after `op.data` and after every creation nested in the block: an update of an
+  instance created there folds into its `Create`, the update's value winning; two updates of one
+  instance merge. An error in the block drops them; inside another `mw.commit()` they land in the
+  Operation's own commit. An update that names the Operation raises `ValueError`, one after the
+  block `RuntimeError`.
+
+- **The instance records what it has seen of its connections and of its graph binding, and the
+  dashboard shows it.** Each connector that the instance wires reaches the framework through an
+  observing wrapper, and the store behind the OGM through an observing store, so nothing is
+  added to the traffic. `mw.connections` gives one `ConnectionRecord` per wired connector, with its
+  state, last provide, consume, receive and sync, and last error; `mw.graph_binding` gives the
+  `GraphBindingRecord`, with the last read, last write and last error of the store. Both are read
+  from memory and carry the instance's resource and service IRI. The types, `CallError` and the
+  predicate `is_connection_metadata` are in `kapps_semantic_middleware.observation`. The boxes
+  "Held data" and "Connectors" show each value's state and the age of its last sync, and the box
+  "Instance" the graph binding's last read, last write and last error.
+
+- **`enable_dashboard(mw, dev=False)` makes a page without connection metadata.** It leaves out
+  the MQTT topic column, the list of the properties that the projection stripped, and the message
+  of a last error; `registry.dev` says which page it is. The default, `dev=True`, shows them as
+  before.
+
+- **The factory demo starts a watchdog.** `python -m demo.transferunits` now runs seven
+  processes with two units: a new `watchdog` child (`demo/transferunits/watchdog.py`), one
+  watchdog-mode middleware on the demo dataset with the default staleness threshold and a
+  5-second sweep interval, listed on the launcher page with its state and no address.
+  `--no-watchdog` turns it off. The demo README gains "Watch the watchdog", and the smoke test
+  kills a unit's middleware and observes the sweep.
+
+- **The factory launcher takes its dataset on the command line.** `python -m demo.transferunits`
+  (and `kapps-transferunit-factory`) accepts `--dataset NAME`, default `kapps-demo`, and passes it
+  to every graph-side child: the middlewares, the watchdog and, new, the control station, which
+  has its own `--dataset` option. The PLCs do not touch the graph and take none. The environment
+  still cannot name the dataset.
+
+### Deprecated
+
+- **`SemanticMiddleware.handover()`** is the deprecated alias of
+  `kapps_semantic_middleware.possession.handover(mw, ...)`. Each call emits one
+  `DeprecationWarning` that names the successor, then returns the successor's context manager
+  with the same arguments, so it behaves as before. The contract step after the next release
+  removes it.
+
+- **The possession names of `registration`**: `create_possession`, `switch_possession`,
+  `find_possession_state`, `counterpart_has_complementary_ability`, and the re-exports of
+  `mint_possession_state_iri`, `HandoverPreconditionError` and `PossessionSwitchConflict`. They
+  moved to `kapps_semantic_middleware.possession`, and the errors live in
+  `kapps_semantic_middleware.errors`. Each old name still resolves: each use emits one
+  `DeprecationWarning` that names the new home and returns the same object. Importing
+  `registration` does not import the possession module; the first use of a moved helper does.
+  Outside these aliases, `registration` names no possession term. The release after this one
+  removes them.
+
+### Removed
+
+- **The write routes of a resource's served datamodel.** Resource mode serves its datamodel
+  read-only: GET routes on the model, its contained models and each interface-accessible
+  parameter. The framework's POST on the model, PUT and DELETE on an item, PUT, DELETE and POST
+  on a contained model, and the PUT on each read-write parameter route are no longer mounted, and
+  a write verb on these paths answers 405. They go without a deprecated alias: a write through
+  them set the device, or the graph, with no commit around it. Drive a resource through its
+  service's workflows instead: an operation, or a direct workflow call.
+
+- **`KnowledgeGraphConnector` and its module `connectors.knowledge_graph_connector`.** They go
+  without a deprecated alias: nothing used the class, and its docstring claimed that all graph
+  access went through it and that registration never called the OGM directly, which was never
+  true. Framework constructs reach the graph through the middleware's `commit`, `create` and
+  `fetch`, which call the OGM. The connector-binding page is now "Graph Access from Framework
+  Constructs".
+
+- **The TransferUnit factory demo writes nothing to a device; it observes.** In KAPPS a device
+  changes only through a workflow of its service, and the demo has no unit workflows yet, so its
+  write paths go: the station board's set controls and its `/api/set` and `/api/algorithm/mode`
+  routes, the commanded value and write status on each row, the controller's `push` and
+  `push_parameter` and its write tracker, the controller's REST write legs (it now wires read legs
+  only), the algorithm's timed mode, its write step and the control station's `--tick` option.
+  The algorithm still reacts to a light barrier's change, and only reads. The board shows what
+  the units report; a belt still moves at its own PLC panel. The demo's control returns with
+  workflows.
+
+### Fixed
+
+- **The documentation says what the code does.** A PUT on a parameter route is southbound only and
+  writes nothing to the graph. Server mode is reserved and not built. The concepts page names the
+  ruleset `rdfsplus-optimized` and says which reads are inferred and which asserted. Operation
+  dispatch is described as it works: the dispatcher posts the Operation's IRI to the Service's
+  event trigger, and the Service claims it and runs the Workflow in-process. The contact setting of
+  the served API is a role and a URL, not a person. The closed-vocabulary rule of the OGM (a write
+  of a property that the class does not declare is refused) is stated on the views-and-projection
+  page.
+
+- **Shipped text carries no decision provenance.** Dates, persons, ticket numbers and a server
+  name are gone from the validation-report, credentials and repository-configuration comments;
+  each rule and its reason stays.
+
+- **The watchdog fails only the Operations that no surviving Service will finish.** The sweep
+  used to fail every `queued` and `running` Operation of a resource with a stale Service, so a
+  dead monitor took its live controller sibling's queue down with it. It now fails, and notifies
+  the issuer of, only the stranded ones, live meaning a Service with an `svc:address` and a
+  heartbeat within the staleness threshold: a `queued` Operation is stranded when its Capability
+  is realized by no live Service of its resource; a `running` Operation when the Service of its
+  executor is not live, or it has no recorded executor. The stale Service is still deregistered.
+  `claim_next()` now records the executor: its claim commits `svc:executedByWorkflow`, the
+  claiming instance's own Workflow of the Operation's Capability, with `running`, in one commit,
+  when the instance exposes a workflow for that Capability; the end writes the same Workflow
+  (before, the end wrote the Workflow that the graph names as the Capability's realizer, which
+  is the same one unless a sibling on the resource registered the same workflow later). Claims
+  that use `mw.commit()` with an entry of their own record no executor, and their running
+  Operations are failed by the sweep as before. The new
+  `registration.find_stranded_operations(ogm, resource_iri, statuses, max_age_seconds, now,
+  named_graph, *, excluding=())` is the predicate, in one query. The startup
+  reconstruction of a queue uses it for its orphaned `running` Operations, with its own Service
+  excluded; its `queued` Operations are taken up as before, without the predicate. An instance
+  that restarts at a new address within the threshold leaves its orphan `running` until the
+  watchdog sweeps its old Service. The mechanics pages on instantiation and lifecycle and on
+  operation coordination state these limits. Behaviour change: a deployment that relied on a dead
+  resource's whole queue being failed now keeps the queued Operations a live sibling realizes, and
+  the running Operations a live sibling claimed.
+
+- **The heartbeat and the watchdog's sweep survive a store error.** One failed call to the store
+  (the store unreachable, a dropped connection, an error answer, a value changed by another
+  write) used to end the loop silently: a watchdog stopped sweeping, so a killed instance kept
+  its address, and an instance stopped beating, so a watchdog swept it while it ran. Each failure
+  is now logged as one warning that names the error, and the loop tries again at its next
+  interval. Cancellation still ends both loops; any other error ends them, logged at ERROR, and
+  is raised. Known limits: a running instance is safe from the sweep only while a store outage
+  is shorter than the staleness threshold minus one heartbeat interval; a swept instance that
+  still runs keeps beating without an address until it restarts.
+
+- **One stale Service no longer blocks the sweep of the others.** A store error inside a sweep is
+  logged with the Service or Operation it hit, and the sweep goes on with the next stale Service.
+  A Service whose stranded Operations were not all failed keeps its address for the next sweep,
+  and `sweep()` / `sweep_stale_services` return only the Services actually deregistered. An
+  ambiguous write that marks an Operation `failed` (applied by the store, answer lost) can skip
+  the notification of its issuer.
+
+- **A deregistration removes the address last.** `deregister_service` clears the Workflow and
+  StateProperty endpoints first and `svc:address` last, so a deregistration that a store error
+  stops halfway leaves a Service that the watchdog finds again and finishes, not endpoints that
+  nothing finds.
+
+- **Registration writes the first heartbeat with the address.** `register_service` writes
+  `svc:address` and `svc:lastHeartbeat` in one commit. Before, a sweep that ran between the
+  registration and the heartbeat loop's first beat found an address without a fresh heartbeat
+  and deregistered the starting instance, failing its stranded Operations (a sweep already in
+  flight when the registration commits can still remove the new address). A Service registered
+  with no heartbeat loop (`heartbeat_interval=None`) is now stale after the threshold instead of
+  at the first sweep.
+
+- **An update folded into a `Create` keeps its properties.** When a `transition.update()` of
+  `mw.commit()` changed an instance that a nested `mw.create()` made, the update folded into the
+  `Create` but the `Create`'s class scope did not name the update's properties, so kapps_ogm could
+  drop them with only a warning. The folded `Create` now names every property it carries.
+
+### Changed
+
+- **The REST binding is read-only.** It polls a peer's served datamodel by GET and builds no write
+  leg. A settable parameter that binds over REST under bidirectional wiring raises `ValueError`
+  ("REST wiring is read-only: drive a peer through its workflows") at construction, before
+  anything is sent; wire it `TO_PERSISTENCE`. `RESTParameterConnector.consume` refuses with the
+  same error, and its `poll` argument is gone.
+
+- **Registration writes each Capability and the resource's link to it in one commit, through the
+  OGM.** `register_workflow` and `register_state_property` write the Capability, its link to its
+  Workflow or StateProperty, and the resource's link to it (`cfc:hasCapability`) in one
+  `OGM.commit`, to the registration's named graph: a `Create` of the Capability and one `Append`
+  of the link. A Capability that an earlier run left in the graph is adopted in the same way, an
+  `Update` and the `Append` in one commit. Before, the link was a write of its own, the access
+  module's `triple_add`, after the Capability's commit, so the store held a Capability without
+  its resource in between, and a shape that requires a Capability's resource refused every
+  registration. Nothing is read of the resource's stored capabilities. An `Append` adds the link
+  and removes none, so two instances that register on one resource at the same moment both keep
+  their capability. The link now passes the OGM's checks, the property and its range, as every
+  other registration fact. One difference: a resource that the store does not hold is refused
+  with the OGM's `OGMNotFoundError`, and nothing is written; the direct insert wrote the link
+  anyway. It needs the kapps_ogm release that brings `Append`.
+
+- A static test, `tests/test_no_direct_writes.py`, fails when any module of the package other than
+  `seeding` calls a mutation operation of the store's contract (`triple_add`, `triples_update`,
+  `graph_clear`, a `query` that may send an update, and the others), and when the contract has a
+  public member that it does not classify as a read or a write.
+
+- **The library's examples name no consumer.** The docstring examples of `handover`, `notify`,
+  `commit`, `create` and `issue_operation`, the dashboard's explanation of the tab-name rule, a
+  comment in `registration`, the glossary and the mechanics pages now use generic terms, such as a
+  workpiece, a peer, a tool and a tab named "Line monitor", in place of another project's
+  vocabulary. No behaviour changes.
+
+- **The smoke tier boots the factory on the suite's dataset**, the one the `store` fixture
+  names, not on `kapps-demo`, so it can run on a disposable dataset. The factory deregistration test does the same.
+
 ## 0.2.1 — 2026-10-16
 
 ### Added

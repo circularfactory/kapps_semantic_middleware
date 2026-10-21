@@ -27,18 +27,15 @@ plc: TransferUnit | None = None
 DEFAULT_STILL_SECONDS = 6.0
 """How long a belt may sit unmoved, short of its setpoint, before it reads ``diverged``.
 
-Deliberately the same number as ``controller.py``'s constant of the same name, and
-deliberately *not* imported from it: ``controller.py`` pulls in ``SemanticMiddleware``, and
-The process-per-participant design keeps the PLC tier free of middleware knowledge -- the guard test in
-``tests/test_plc_guard.py`` exists to hold exactly that line. The scenario rule prefers
-duplication to sharing in ``demo/`` for this reason.
+Owned here: the process-per-participant design keeps the PLC tier free of middleware
+knowledge -- the guard test in ``tests/test_plc_guard.py`` exists to hold exactly that line.
 """
 
 
 class ConvergenceTracker:
     """Whether each belt is still closing on its setpoint, or has stopped short of it.
 
-    ``diverged`` means what ``controller.WriteStatus.DIVERGED`` defines.
+    ``diverged`` means: the belt sat unmoved for ``still_seconds`` while short of its setpoint.
 
     Judged on the clock, not on polls: a poll is a browser asking. Counting polls lets two
     open tabs call a belt stuck in half the time,

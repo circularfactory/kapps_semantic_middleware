@@ -48,8 +48,7 @@ async def main() -> None:
     parser.add_argument("--panel-port", type=int, default=0, help="Panel HTTP port (0 = free)")
     # A belt ramps toward its setpoint rather than snapping to it; this is the "slow PID
     # controller" rate, in speed-units/s^2. Exposed as a flag -- unlike publish_interval -- so a
-    # presentation can slow it down or a lap-time measurement can speed it up with no code
-    # change.
+    # presentation can slow it down or a test can speed it up with no code change.
     parser.add_argument(
         "--ramp-rate",
         type=float,

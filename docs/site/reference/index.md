@@ -21,6 +21,7 @@ Which action an error type asks for, in this package and in the two packages bel
 middleware
 modes
 activity
+observation
 validation_report
 ```
 
@@ -29,6 +30,7 @@ validation_report
 :maxdepth: 1
 
 registration
+possession
 seeding
 projection
 vocabulary
@@ -42,7 +44,6 @@ connectors/semantic
 connectors/wiring
 connectors/mqtt_binding
 connectors/rest_binding
-connectors/knowledge_graph_connector
 ```
 
 ```{toctree}

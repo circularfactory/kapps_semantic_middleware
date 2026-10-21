@@ -45,9 +45,25 @@ body sets it too.
 ```python
 with mw.issue_operation(capability_class=cap, operation_class=op_cls) as op:
     # The Operation's domain properties, if any, as {property IRI: [values]}.
-    op.data[str(EX.hasScrew)] = [{"id": str(screw)}]
+    op.data[str(EX.hasPart)] = [{"id": str(part)}]
+    # An existing instance, changed in the same commit: here the Part's back-link.
+    op.update(part, {str(EX.hasOperation): [op.iri]})
 # The exit creates the Operation in one commit, then notifies the receiver
 ```
+
+**`op.update(instance_iri, data)` changes an existing instance in the Operation's commit.** It is
+the `update` of a `mw.commit()` transition: each property of `data` replaces the stored values, and
+`[]` removes one. A value that is an IRI, such as `op.iri`, becomes a reference, as in the update of
+a `mw.create()`. The store admits or refuses the Operation and the updates together, and the
+receiver is notified only after that commit, so a back-link from an existing instance to the new
+Operation never stands one-sided. The updates are staged after `op.data` and after every creation
+nested in the block: an update of an instance created in the block folds into its `Create`, and
+the update's value wins. Two updates of one instance merge. An error in the block drops them, a
+refused commit writes nothing and notifies nobody, and a failed notification undoes nothing.
+Inside another `mw.commit()`, the updates land in the Operation's own commit, never in the outer
+one, and a change that the outer commit makes to the same instance is written later, over them.
+An update that names the Operation itself raises `ValueError` (set its properties in `op.data`),
+and one after the block raises `RuntimeError`.
 
 ## The Issuer and the Issued Operation
 
@@ -68,7 +84,7 @@ middleware: its event trigger must take the notification that ends the wait.
 The middleware that claims the Operation notifies the issuer after its claim commit (`queued` to
 `running`), and after its terminal commit (`done` or `failed`). It does so after every commit that
 the store admitted and that moves an Operation with an issuer to one of those statuses, whichever
-function made it: `claim_next`, `mw.commit()`, `mw.create()`, `mw.handover(operation=...)`, the
+function made it: `claim_next`, `mw.commit()`, `mw.create()`, `handover(mw, operation=...)`, the
 crash recovery at startup, or a watchdog's sweep. It sees such a move in the commit's own changes,
 so every status commit notifies, also one that sets the status that the Operation already has; the
 issuer ignores a repeat itself. If the issuer has no live Service, or more than one, or the post
@@ -90,7 +106,7 @@ The notification runs in the background. After the commit, the middleware hands 
 its own and goes on at once, so a slow or hanging issuer never delays the claimer. The worker sends
 the notifications in the order of their commits, so the claim's notification of an Operation
 leaves before the end's when one instance commits both. When another instance commits the end, for
-example with `mw.handover(operation=...)`, each instance sends its own, and the two notifications
+example with `handover(mw, operation=...)`, each instance sends its own, and the two notifications
 have no order. The handle reads the status from the graph, so the order does not change what a
 wait returns. A stop of the instance, and the end of the process, send what still waits for up to
 one second, then drop the rest and log one WARNING line with their number. The status is in the
@@ -157,12 +173,12 @@ from kapps_ogm import Node
 
 
 @mw.workflow(capability_class=BOX_TRANSPORT_CAPABILITY, workflow_class=BOX_TRANSPORT_WORKFLOW)
-def box_transport(transport: Node) -> None:
-    ...  # move the box; commit the transport's own transitions with mw.commit()
+def workpiece_transport(transport: Node) -> None:
+    ...  # move the workpiece; commit the transport's own transitions with mw.commit()
 
 
 def on_transport_ended(transport: Node) -> None:
-    ...  # an Operation of no own Capability, such as the WMS's "this transport ended"
+    ...  # an Operation of no own Capability, such as a peer's "this transport ended"
 
 
 mw.on_notification(on_transport_ended, class_scope=transport_scope)
@@ -185,7 +201,7 @@ callback.
 Each resource maintains an in-memory queue of Operations addressed to it. This queue is durable
 because the Operation and its status are written to the graph before the trigger fires. On startup,
 a middleware reconstructs its queue by querying the graph for its own `queued` Operations. It also
-reclaims any orphaned `running` Operations left from a previous session. A missed trigger loses no
+fails its orphaned `running` Operations from a previous session: those its own Service claimed, and those with no recorded claimer; one that a live sibling claimed is left to the sibling (the predicate and its limits are on the instantiation and lifecycle page, Heartbeat and Staleness). A missed trigger loses no
 work; the baseline is self-healing. Resources do not poll the graph continuously for new work.
 A resource with a notification handler has no queue: its notifications and, at startup, its own
 `queued` Operations go into its intake instead, and it still fails its own orphaned `running`
@@ -228,20 +244,27 @@ with mw.claim_next(scope=view_scope) as claimed:
 
 Inside the block, `claimed.operation` is the read side — the Operation materialized under your `ClassScope` — and `claimed.result` is the write side. Setting `claimed.result` is optional; a body that only actuates need not set it.
 
+The claimer ends what it claimed. The claim records this instance's Workflow as the executor, and the exit writes `done` or `failed` whatever the body did with the Operation, so a body must not move the Operation to another Resource's Capability (as a handover's `entry` does for a transport): after such a move, a claimer that crashes and restarts leaves the Operation `running` for as long as its Service lives, because the new Resource's sweep and reconstruction see a live executor and the claimer's own restart no longer sees the Operation as its Resource's. An Operation that travels between Resources goes through the intake, which writes no status. Two instances on one Resource that both use `claim_next` both take up the Resource's `queued` Operations at startup and can both claim one: the store admits the second claim, the executor recorded is the last claimer's, and when that claimer dies the sweep fails the Operation while the first still runs it, whose end then overwrites `failed`. The middleware does not tell two claimants apart.
+
 ## Handover Primitive
 
-Bilateral coordination between participants uses the `mw.handover` primitive rather than a plain
+Bilateral coordination between participants uses the handover primitive rather than a plain
 dispatch. A handover has a timeless administrative part, the change of possession, and a timed
-physical part, the move. The primitive is a context manager built on `mw.commit()`, and the
-possession changes first: the entry checks two preconditions (the caller possesses the Workpiece,
-and the counterpart has the complementary handover ability), then commits the possession change.
-The store admits or refuses it before the move begins. If the store refuses it, the error is
-raised, nothing is written, and the body does not run.
+physical part, the move. Possession is not part of the generic core: the primitive is
+`handover(mw, ...)` in the possession extension, `kapps_semantic_middleware.possession`, which
+ships with the middleware. It is a context manager built on the middleware's public surface only:
+it reads through `mw.ogm`, names the giver by `mw.resource`, and writes with `mw.commit()`. The
+possession changes first: the entry checks two preconditions (the middleware's Resource possesses
+the Workpiece, and the counterpart has the complementary handover ability), then commits the
+possession change. The store admits or refuses it before the move begins. If the store refuses
+it, the error is raised, nothing is written, and the body does not run; `mw.refused_writes`
+records a SHACL refusal with the verb `handover`.
 
 ```python
+from kapps_semantic_middleware.possession import handover
 from kapps_semantic_middleware.vocabulary import MES
 
-with mw.handover(mode=MES.Put, workpiece=wp, counterpart=other, operation=op):
+with handover(mw, mode=MES.Put, workpiece=wp, counterpart=other, operation=op):
     # The store has admitted the possession change.
     # Physical transport and preparation
     # Coordinate with counterpart if needed
@@ -259,8 +282,8 @@ Resource's `cfc:hasPossessor`: neither the giver's nor that of a counterpart tha
 
 More changes that must be admitted together with the possession change go into `entry`, a list of
 kapps_ogm `Create` and `Update` changes that the caller builds. They are written in the same commit,
-refused together with it, and before the body. A transport that carries a box along a line of
-conveyor modules, for example, is reassigned to the next module at each hop, and that module is
+refused together with it, and before the body. A transport that carries a workpiece along a line of
+stations, for example, is reassigned to the next station at each hop, and that station is
 then notified:
 
 ```python
@@ -269,16 +292,16 @@ from kapps_ogm import Update
 moved_on = Update(
     instance_iri=transport,
     data={
-        str(CFC.executedOn): [{"id": str(next_module)}],
-        str(CFC.implementsCapability): [{"id": str(next_transport_capability)}],
+        str(CFC.executedOn): [{"id": str(peer)}],
+        str(CFC.implementsCapability): [{"id": str(peer_transport_capability)}],
     },
 )
-with mw.handover(mode=MES.Pass, workpiece=box, counterpart=next_module, entry=[moved_on]):
-    conveyor.pass_box()
-mw.notify(operation=transport, resource=next_module)
+with handover(mw, mode=MES.Pass, workpiece=workpiece, counterpart=peer, entry=[moved_on]):
+    machine.move_workpiece()
+mw.notify(operation=transport, resource=peer)
 ```
 
-The next module's intake then reads a transport that implements its own transport Capability, and
+The peer's intake then reads a transport that implements its own transport Capability, and
 runs the workflow that realizes it. A change of the Workpiece belongs in `workpiece_update`, and
 the completed Operation in `operation`: the OGM refuses two changes of one instance in one commit.
 
@@ -291,7 +314,7 @@ itself; that logic belongs in the context manager body.
 
 Core says that a Resource and a Workpiece each have exactly one possession state. That is OWL, which
 refuses no write. What refuses a handover at commit is the domain's SHACL shape, such as one that
-allows one box on a conveyor module.
+allows one workpiece at a station.
 
 Two handovers of the same Workpiece at the same moment are not always refused. Both pass the
 preconditions before either commits. Inside its commit, the OGM compares the Workpiece with a fresh
@@ -300,10 +323,25 @@ handovers succeed, and both bodies run. If it landed between that read and the w
 refuses the later commit and writes nothing of it, and the later handover raises
 `PossessionSwitchConflict` before its body runs.
 
+A first handover to a counterpart that has no possession state yet can race another write that
+creates that state. When the other write lands between this handover's read and its commit, the
+store refuses the second creation of the state with `PreconditionFailedError` and writes nothing.
+The handover then reads the state again, checks both preconditions again and commits once more.
+A second refusal, or any other `PreconditionFailedError`, raises `PossessionSwitchConflict`, and a
+precondition that no longer holds raises `HandoverPreconditionError`. Both errors come from
+`kapps_semantic_middleware.errors`.
+
+The possession extension also gives the helpers that a seed, or a caller without a middleware,
+uses: `create_possession` and `switch_possession` write a first possession and a change of
+possession with no move, each in one `OGM.commit`, and `find_possession_state` and
+`counterpart_has_complementary_ability` are the reads of the two preconditions.
+
 ## Failure Recovery
 
 If a resource dies, its stranded `queued` and `running` Operations are handled centrally. A
-watchdog-mode instance sweeps stale resources, transitions their stranded Operations to `failed`,
+watchdog-mode instance sweeps stale resources, transitions their stranded Operations (queued ones
+whose Capability no live Service of the resource realizes, running ones whose claimer is not live)
+to `failed`,
 and notifies the issuer of each one that has an issuer. The failed status
 carries any dumped resource state available at the time of failure. Recovery is never a silent
 physical replay. The planner or domain decides whether to dispatch a fresh Operation. Physical

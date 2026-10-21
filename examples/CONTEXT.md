@@ -45,3 +45,12 @@ Then they insert exactly the ontology this Scenario needs: the relevant Core sub
 module, and the Scenario's own domain ontology. This includes whatever pre-authored
 Capability/Workflow/Service classes the Core Middleware ontology-as-ground-truth policy
 requires. Only after that can any `SemanticMiddleware` instance in the Scenario start.
+
+**Self-contained**:
+Every example notebook runs against its own dummy user and dataset, clears it first, and seeds
+the ontology modules and instance data its scenario starts from. Without this a notebook either
+writes to production state on every re-run, so it is neither reproducible nor safe for a newcomer,
+or it assumes a local setup that the reader has to rebuild by hand. Each notebook therefore doubles
+as a runnable specification of the ground-truth ontology its scenario needs, and the seed step is
+where the scenario's Capability, Workflow and Service classes are authored into the graph. The
+ontology-as-ground-truth policy for pre-existing classes is exercised there.

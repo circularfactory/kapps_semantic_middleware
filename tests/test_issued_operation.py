@@ -36,11 +36,13 @@ import pytest
 import uvicorn
 from kapps_ogm import Create, Node, Update
 from kapps_triplestore_interface import IRI
+from kapps_triplestore_interface.exceptions import ShaclValidationError
 
 from kapps_semantic_middleware import SemanticMiddleware
 from kapps_semantic_middleware.errors import NotificationUndelivered, OperationQueueEmpty
 from kapps_semantic_middleware.middleware import IssuedOperation
-from kapps_semantic_middleware.registration import mint_capability_iri
+from kapps_semantic_middleware.possession import handover
+from kapps_semantic_middleware.registration import mint_capability_iri, mint_workflow_iri
 from kapps_semantic_middleware.vocabulary import CFC, MES, SVC, OperationStatus
 
 MIDDLEWARE_LOGGER = "kapps_semantic_middleware.middleware"
@@ -340,6 +342,235 @@ def test_a_draft_that_sets_the_issuer_is_refused_before_anything_is_written():
 
 
 # --------------------------------------------------------------------------- #
+# op.update(): a change of an existing instance in the Operation's commit.
+# --------------------------------------------------------------------------- #
+
+SCREW = IRI(f"{EX}screw_1")
+HAS_OPERATION = IRI(f"{EX}hasOperation")
+SCREW_CLASS = IRI(f"{EX}Screw")
+
+
+def _target(graph: _Graph, address: str = "http://127.0.0.1:9") -> None:
+    graph.target = (CAPABILITY, IRI(f"{EX}screwer_service"), address)
+
+
+def _commits(graph: _Graph) -> list[list]:
+    return [changes for kind, changes in graph.log if kind == "commit"]
+
+
+def test_an_update_lands_in_the_commit_that_creates_the_operation_before_the_notification():
+    graph = _Graph()
+    notified: list = []
+    with _trigger(graph, notified) as address:
+        _target(graph, address)
+        with _middleware(PLANNER, graph).issue_operation(
+            capability_class=CAPABILITY_CLASS, operation_class=OPERATION_CLASS
+        ) as op:
+            op.update(SCREW, {str(HAS_OPERATION): [op.iri]})
+
+    assert _kinds(graph) == ["read", "commit"]
+    creation, update = graph.log[1][1]
+    assert isinstance(creation, Create) and creation.instance_iri == op.iri
+    assert _data(creation)[str(SVC.issuedBy)] == [{"id": str(PLANNER)}]
+    assert isinstance(update, Update) and update.instance_iri == SCREW
+    assert _data(update) == {str(HAS_OPERATION): [{"id": str(op.iri)}]}  # a reference
+    assert notified == [(op.iri, "queued")]
+
+
+def test_two_updates_of_one_instance_merge_and_the_later_value_wins():
+    graph = _Graph()
+    _target(graph)
+    with pytest.raises(NotificationUndelivered):
+        with _middleware(PLANNER, graph).issue_operation(
+            capability_class=CAPABILITY_CLASS, operation_class=OPERATION_CLASS
+        ) as op:
+            op.update(SCREW, {str(HAS_OPERATION): [op.iri], str(TORQUE): ["1 Nm"]})
+            op.update(str(SCREW), {str(TORQUE): ["2 Nm"]})
+
+    (commit,) = _commits(graph)
+    _, update = commit
+    assert _data(update) == {
+        str(HAS_OPERATION): [{"id": str(op.iri)}],
+        str(TORQUE): ["2 Nm"],
+    }
+
+
+def test_an_update_of_an_instance_created_in_the_block_folds_into_its_create():
+    graph = _Graph()
+    _target(graph)
+    planner = _middleware(PLANNER, graph)
+    with pytest.raises(NotificationUndelivered):
+        with planner.issue_operation(
+            capability_class=CAPABILITY_CLASS, operation_class=OPERATION_CLASS
+        ) as op:
+            # The update comes first in the block, but stages after the nested creation.
+            with planner.create(SCREW_CLASS, {}, instance_iri=str(SCREW)) as screw:
+                screw.update({str(TORQUE): ["1 Nm"]})
+            op.update(SCREW, {str(TORQUE): ["2 Nm"], str(HAS_OPERATION): [op.iri]})
+
+    (commit,) = _commits(graph)
+    assert [type(change) for change in commit] == [Create, Create]
+    folded = commit[1]
+    assert folded.instance_iri == SCREW
+    assert _data(folded) == {
+        str(TORQUE): ["2 Nm"],
+        str(HAS_OPERATION): [{"id": str(op.iri)}],
+    }
+    # The Create names every property it carries, so kapps_ogm drops none of them.
+    assert {TORQUE, HAS_OPERATION} <= set(folded.class_scope)
+
+
+def test_an_update_inside_another_commit_lands_in_the_operations_own_commit():
+    graph = _Graph()
+    _target(graph)
+    planner = _middleware(PLANNER, graph)
+    other = IRI(f"{EX}other")
+    with pytest.raises(NotificationUndelivered):
+        with planner.commit(exit=[Update(instance_iri=other, data={str(TORQUE): ["3 Nm"]})]):
+            with planner.issue_operation(
+                capability_class=CAPABILITY_CLASS, operation_class=OPERATION_CLASS
+            ) as op:
+                op.update(SCREW, {str(HAS_OPERATION): [op.iri]})
+
+    (own,) = _commits(graph)  # the notification failed, so the outer commit never exits clean
+    assert [change.instance_iri for change in own] == [op.iri, SCREW]
+
+
+def test_an_outer_commit_exits_on_its_own_after_the_operations_commit_and_its_notification():
+    graph = _Graph()
+    notified: list = []
+    other = IRI(f"{EX}other")
+    with _trigger(graph, notified) as address:
+        _target(graph, address)
+        planner = _middleware(PLANNER, graph)
+        outer = [Update(instance_iri=other, data={str(TORQUE): ["3 Nm"]})]
+        with planner.commit(exit=outer):
+            with planner.issue_operation(
+                capability_class=CAPABILITY_CLASS, operation_class=OPERATION_CLASS
+            ) as op:
+                op.update(SCREW, {str(HAS_OPERATION): [op.iri]})
+            assert notified == [(op.iri, "queued")]  # before the outer commit exits
+
+    own, theirs = _commits(graph)
+    assert [change.instance_iri for change in own] == [op.iri, SCREW]
+    assert [change.instance_iri for change in theirs] == [other]
+
+
+def test_an_update_that_names_the_operation_raises_before_any_write():
+    graph = _Graph()
+    _target(graph)
+    with pytest.raises(ValueError, match=r"op\.data"):
+        with _middleware(PLANNER, graph).issue_operation(
+            capability_class=CAPABILITY_CLASS,
+            operation_class=OPERATION_CLASS,
+            operation_iri=str(OPERATION),
+        ) as op:
+            # The Operation's IRI as a plain str, not the IRI that op.iri is: one spelling.
+            op.update(f"{EX}Unscrewing_1", {str(TORQUE): ["1 Nm"]})
+
+    assert _kinds(graph) == ["read"]
+
+
+def test_values_that_are_not_a_list_raise_before_any_write():
+    graph = _Graph()
+    _target(graph)
+    with pytest.raises(ValueError, match="list"):
+        with _middleware(PLANNER, graph).issue_operation(
+            capability_class=CAPABILITY_CLASS, operation_class=OPERATION_CLASS
+        ) as op:
+            op.update(SCREW, {str(HAS_OPERATION): op.iri})
+
+    assert _kinds(graph) == ["read"]
+
+
+def test_an_error_in_the_block_drops_the_updates_and_a_later_update_raises():
+    graph = _Graph()
+    _target(graph)
+    with pytest.raises(KeyError):
+        with _middleware(PLANNER, graph).issue_operation(
+            capability_class=CAPABILITY_CLASS, operation_class=OPERATION_CLASS
+        ) as op:
+            op.update(SCREW, {str(HAS_OPERATION): [op.iri]})
+            raise KeyError("domain work failed")
+
+    assert _kinds(graph) == ["read"]
+    with pytest.raises(RuntimeError, match="block"):
+        op.update(SCREW, {str(HAS_OPERATION): []})
+
+
+def test_an_update_after_the_block_raises():
+    graph = _Graph()
+    notified: list = []
+    with _trigger(graph, notified) as address:
+        _target(graph, address)
+        with _middleware(PLANNER, graph).issue_operation(
+            capability_class=CAPABILITY_CLASS, operation_class=OPERATION_CLASS
+        ) as op:
+            pass
+
+    with pytest.raises(RuntimeError, match="block"):
+        op.update(SCREW, {str(HAS_OPERATION): [op.iri]})
+    assert len(_commits(graph)) == 1
+
+
+def test_a_refused_commit_writes_nothing_and_notifies_nobody():
+    graph = _Graph()
+    notified: list = []
+    planner = _middleware(PLANNER, graph)
+    refusal = ShaclValidationError("refused", report="the report")
+
+    def refuse(**kwargs):
+        raise refusal
+
+    planner.ogm.commit = refuse  # type: ignore[method-assign]
+    with _trigger(graph, notified) as address:
+        _target(graph, address)
+        with pytest.raises(ShaclValidationError):
+            with planner.issue_operation(
+                capability_class=CAPABILITY_CLASS, operation_class=OPERATION_CLASS
+            ) as op:
+                op.update(SCREW, {str(HAS_OPERATION): [op.iri]})
+
+    assert _kinds(graph) == ["read"]
+    assert graph.status == {}
+    assert notified == []
+
+
+def test_a_failed_notification_leaves_the_update_in_the_store():
+    graph = _Graph()
+    notified: list = []
+    with _trigger(graph, notified, status=503) as address:
+        _target(graph, address)
+        with pytest.raises(NotificationUndelivered):
+            with _middleware(PLANNER, graph).issue_operation(
+                capability_class=CAPABILITY_CLASS, operation_class=OPERATION_CLASS
+            ) as op:
+                op.update(SCREW, {str(HAS_OPERATION): [op.iri]})
+
+    (commit,) = _commits(graph)
+    assert [change.instance_iri for change in commit] == [op.iri, SCREW]
+    assert graph.status[op.iri] == OperationStatus.QUEUED
+
+
+def test_an_update_that_moves_another_operation_notifies_its_issuer():
+    graph = _Graph()
+    receiver: list = []
+    feedback: list = []
+    with _trigger(graph, receiver) as address, _trigger(graph, feedback) as issuer_address:
+        _target(graph, address)
+        _issued(graph, issuer_address)  # OPERATION, queued, issued by the planner
+        screwer = _middleware(SCREWER, graph)
+        with screwer.issue_operation(
+            capability_class=CAPABILITY_CLASS, operation_class=OPERATION_CLASS
+        ) as op:
+            op.update(OPERATION, {str(SVC.operationStatus): [OperationStatus.DONE]})
+        _wait_for(lambda: feedback)
+
+    assert receiver == [(op.iri, "queued")]
+    assert feedback == [(OPERATION, "done")]
+
+
+# --------------------------------------------------------------------------- #
 # The claimer's middleware tells the issuer, after the claim and after the end.
 # --------------------------------------------------------------------------- #
 
@@ -454,7 +685,8 @@ def test_a_handover_that_completes_an_operation_notifies_its_issuer():
         _issued(graph, address)
         graph.status[OPERATION] = OperationStatus.RUNNING
         screwer = _middleware(SCREWER, graph)
-        with screwer.handover(
+        with handover(
+            screwer,
             mode=MES.Pass, workpiece=box, counterpart=next_module, operation=OPERATION
         ):
             assert screwer._flush_notifications(timeout=5)
@@ -571,6 +803,79 @@ def test_a_stop_drops_what_is_still_waiting_after_its_time_and_says_so(caplog):
     assert dropped.args[1] == 1
 
 
+def _claim_data(changes) -> dict:
+    (change,) = changes
+    return {str(key): values for key, values in change.data.items()}
+
+
+def test_a_claim_records_the_claimers_own_workflow_as_its_executor():
+    """The claim commits `running` and the executor, this instance's own Workflow of the
+    Operation's Capability, in one change, even when the graph names another Service's Workflow
+    as the Capability's realizer; the end records the same Workflow."""
+    graph = _Graph()
+    graph.status[OPERATION] = OperationStatus.QUEUED
+
+    def rows(sparql: str, answer=graph._rows) -> list[dict]:
+        if str(SVC.realizedByWorkflow) in sparql:  # the claim's read, with the Capability
+            return [{"wf": WORKFLOW, "cap": CAPABILITY}]
+        return answer(sparql)
+
+    graph._rows = rows  # type: ignore[method-assign]
+    screwer = _queued(graph)
+
+    @screwer.workflow(capability_class=CAPABILITY_CLASS, workflow_class=WORKFLOW_CLASS)
+    def unscrew(operation: Node) -> None:
+        """Unscrew."""
+
+    own = mint_workflow_iri(screwer.service_iri, "unscrew")
+    assert own != WORKFLOW
+    with screwer.claim_next() as claimed:
+        claimed.result = "4 screws out"
+    assert screwer._flush_notifications(timeout=5)
+
+    claim, end = [entry[1] for entry in graph.log if entry[0] == "commit"]
+    assert _claim_data(claim) == {
+        str(SVC.operationStatus): [OperationStatus.RUNNING],
+        str(SVC.executedByWorkflow): [{"id": str(own)}],
+    }
+    assert _claim_data(end)[str(SVC.executedByWorkflow)] == [{"id": str(own)}]
+
+
+def test_a_claim_without_an_own_workflow_records_no_executor():
+    """An instance that exposes no workflow for the Capability claims with the status alone, and
+    the end records the realizing Workflow, as before."""
+    graph = _Graph()
+    graph.status[OPERATION] = OperationStatus.QUEUED
+    screwer = _queued(graph)
+    with screwer.claim_next() as claimed:
+        claimed.result = "4 screws out"
+    assert screwer._flush_notifications(timeout=5)
+
+    claim, end = [entry[1] for entry in graph.log if entry[0] == "commit"]
+    assert _claim_data(claim) == {str(SVC.operationStatus): [OperationStatus.RUNNING]}
+    assert _claim_data(end)[str(SVC.executedByWorkflow)] == [{"id": str(WORKFLOW)}]
+
+
+def test_a_claim_through_a_generic_commit_records_no_executor():
+    """The use cases' pattern, a `commit` whose entry sets `running`, writes the status alone,
+    also on an instance that exposes a workflow for the Capability, so the sweep fails such an
+    Operation as before."""
+    graph = _Graph()
+    graph.status[OPERATION] = OperationStatus.QUEUED
+    screwer = _queued(graph)
+
+    @screwer.workflow(capability_class=CAPABILITY_CLASS, workflow_class=WORKFLOW_CLASS)
+    def unscrew(operation: Node) -> None:
+        """Unscrew."""
+
+    with screwer.commit(entry=_status(OPERATION, "running"), exit=_status(OPERATION, "done")):
+        pass
+    assert screwer._flush_notifications(timeout=5)
+
+    claim = [entry[1] for entry in graph.log if entry[0] == "commit"][0]
+    assert str(SVC.executedByWorkflow) not in _claim_data(claim)
+
+
 def test_an_operation_without_an_issuer_notifies_nobody():
     graph = _Graph()
     graph.status[OPERATION] = OperationStatus.QUEUED
@@ -619,12 +924,12 @@ def test_the_watchdog_notifies_the_issuer_of_an_operation_that_it_fails():
     stale = IRI(f"{EX}screwer_service")
 
     def rows(sparql: str, answer=graph._rows) -> list[dict]:
+        if str(CFC.hasCapability) in sparql:  # the Resource's stranded Operations
+            return [{"op": OPERATION}]
         if str(SVC.lastHeartbeat) in sparql:  # the stale Services
             return [{"s": stale}]
         if f"<{stale}> <{SVC.isServiceOf}>" in sparql:  # the Resource of the stale Service
             return [{"r": SCREWER}]
-        if str(CFC.hasCapability) in sparql:  # the Resource's stranded Operations
-            return [{"op": OPERATION}]
         return answer(sparql)
 
     graph._rows = rows  # type: ignore[method-assign]

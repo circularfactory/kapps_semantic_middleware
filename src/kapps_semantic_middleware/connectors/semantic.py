@@ -139,7 +139,7 @@ class ParameterBinding:
     """The root resource's class IRI, mangled (``IRI(...).lined``), the ``{Model}``
     segment of a recursive REST route. Not the bare fragment: ``kapps_ogm``'s
     ``ClassSpec.to_pydantic_model`` names the materialized class after the whole mangled
-    IRI (``class_spec.py``), so this must match that or a REST connector's own PUT/GET
+    IRI (``class_spec.py``), so this must match that or a REST connector's GET
     404s against the real served route. Paired with
     ``root_iri``; see its docstring."""
 

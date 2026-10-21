@@ -7,20 +7,26 @@ verified live, by hand, and recorded in a commit message:
 2. Two brokers listen, on 18831 and 18832. Nothing listens on 1883 because of this demo.
 3. A unit's PLC, middleware and broker all die together, and stopping one unit leaves the
    other unit's MQTT traffic untouched.
-4. The ``/activity`` feed shows real lines during a run -- at minimum an outbound setpoint.
+4. The ``/activity`` feed shows real lines during a run -- at minimum a device reading.
+
+Claim 5 came with the demo becoming observation only: no unit's middleware takes a write to
+its served data model during a run. In KAPPS a device changes only through a workflow of its
+service, and this demo has none yet.
 
 Nothing in this codebase re-checked any of them. Every other test in this suite runs one
 process, and this map's real breakage has only ever been visible *between* processes: a broker
 that never came up, a feed switched off everywhere, a stop that took a sibling's transport with
-it. Those are facts about six processes and two sockets, and a test that builds a middleware
+it. Those are facts about seven processes and two sockets, and a test that builds a middleware
 in-process cannot hold any of them down.
 
 So this file runs the factory the way the acceptance boxes are written -- ``--units 2``, the real
 launcher, the real graph, real brokers -- and asserts what a person would look for on screen.
 
-It is slow, it needs a reachable store, it **seeds the dataset ``kapps-demo`` of the store the
-``TRIPLESTORE_*`` variables point at**, and it needs the launcher's fixed port free. Marked ``smoke`` and deselected by
-default for exactly those reasons:
+It is slow, it needs a reachable store, it **seeds the suite's dataset, the one the ``store``
+fixture names** (the factory is started with ``--dataset`` set to it, so the demo's own
+dataset stays untouched), and it
+needs the launcher's fixed port free. Marked ``smoke`` and deselected by default for exactly
+those reasons:
 
     python -m pytest tests/test_factory_smoke.py -m smoke
 """
@@ -28,6 +34,7 @@ default for exactly those reasons:
 from __future__ import annotations
 
 import asyncio
+import inspect
 import json
 import os
 import signal
@@ -46,7 +53,10 @@ import pytest
 from _sse import follow
 from conftest import requires_store
 
+from kapps_semantic_middleware import SemanticMiddleware
+
 from demo.transferunits import seed
+from demo.transferunits.launcher import WATCHDOG_SWEEP_SECONDS, _check_service_address
 from demo.transferunits.__main__ import LAUNCHER_HOST, LAUNCHER_PORT
 from demo.transferunits.middleware import _listening
 
@@ -63,16 +73,17 @@ SURVIVING_UNIT = 2
 """Which unit gets killed, and which has to be unharmed by it.
 
 Not interchangeable. The control station's view selects even-indexed units, so at this scale
-unit 2 is the only one the board can drive -- which makes it both the unit a setpoint can be
-sent to and the unit whose traffic has to survive unit 1's death."""
+unit 2 is the only one the board shows -- which makes it both the unit whose reading the board
+must show and the unit whose traffic has to survive unit 1's death."""
 
 SETPOINT = 1.75
 """A speed the seed never writes and no belt ever settles on by itself, so this value appearing
 in the feed cannot be an echo of the initial state or of a ramp passing through."""
 
 SECOND_SETPOINT = 2.5
-"""The value the loop test drives, distinct from ``SETPOINT`` so that a board already showing
-the first one cannot pass the second test without the belt having moved again."""
+"""The value the board test sets at the device, distinct from ``SETPOINT`` so that a board
+already showing the first one cannot pass the second test without the belt having moved
+again."""
 
 EXPECTED_BROKER_PORTS = {STOPPED_UNIT: 18831, SURVIVING_UNIT: 18832}
 """The claim names two literal numbers: "Two brokers listen, on 18831 and 18832."
@@ -99,19 +110,35 @@ every 0.5 s, so this is not a measurement -- it is a bound loose enough that a s
 cannot make a live belt read as a silent one."""
 
 FEED_TIMEOUT_SECONDS = 30.0
-"""How long the activity feed gets to report a setpoint. The stream replays its whole buffer to
+"""How long the activity feed gets to report a reading. The stream replays its whole buffer to
 a new reader before streaming anything new, so a record logged before the test connected still
-arrives; this covers the PUT's own trip through persistence and out to the write leg."""
+arrives; this covers the belt's ramp and the PLC's publish up to the read leg."""
 
 LOOP_TIMEOUT_SECONDS = 60.0
-"""How long the return half gets, from an accepted command to the unit's middleware observing
-the belt at it. Dominated by the belt's ramp, which is distance over rate -- 2.5 m/s is about 2.5 s
-at ``DEFAULT_RAMP_RATE`` -- plus the PLC's 0.5 s republish. ``test_lap_measurement.py`` measures
-this properly and tabulates it; this is a bound around it, not a measurement."""
+"""How long the board gets, from a setpoint at the device to showing the belt at it. Dominated
+by the belt's ramp, which is distance over rate -- 2.5 m/s is about 2.5 s at
+``DEFAULT_RAMP_RATE`` -- plus the PLC's 0.5 s republish and the controller's 2 s REST poll.
+This is a bound around it, not a measurement."""
 
 STOP_TIMEOUT_SECONDS = 20.0
 """How long a stopped unit gets to actually be gone. ``Factory.stop_unit`` already waits on its
 children before returning, so this covers reaping and socket teardown, not the kill itself."""
+
+SWEPT_UNIT = SURVIVING_UNIT
+"""The unit whose middleware is killed outright for the watchdog's sweep. Unit 1 is already
+stopped cleanly by then, and a clean stop deregisters by itself, which proves nothing about a
+watchdog."""
+
+STALENESS_THRESHOLD_SECONDS = float(
+    inspect.signature(SemanticMiddleware.__init__).parameters["staleness_threshold"].default
+)
+"""The middleware's default threshold, which the demo's watchdog runs with. Read off the
+constructor so that a changed default moves the test's bound with it."""
+
+SWEEP_TIMEOUT_SECONDS = STALENESS_THRESHOLD_SECONDS + WATCHDOG_SWEEP_SECONDS + 15.0
+"""A killed middleware's last heartbeat is at most one heartbeat interval older than the kill, so
+its address is gone within the threshold plus one sweep interval of the kill. The extra seconds
+cover one store round trip per sweep and the poll."""
 
 POLL_INTERVAL_SECONDS = 0.25
 
@@ -146,7 +173,7 @@ def _url(address: str, path: str) -> str:
 def _first(candidates: List[Any], message: str) -> Any:
     """The first thing in a list, or a failure that says what was actually there.
 
-    Every lookup in this file runs against a live snapshot of six processes, so "it was not
+    Every lookup in this file runs against a live snapshot of seven processes, so "it was not
     there" is an ordinary outcome, and a bare ``IndexError`` at some line number is the least
     useful way to report it.
     """
@@ -164,6 +191,11 @@ def _lagging(snapshot: dict) -> List[str]:
     controller = snapshot.get("controller", {})
     if controller.get("state") != "live":
         behind.append(f"control station is {controller.get('state')}")
+    watchdog = snapshot.get("watchdog")
+    if watchdog is None:
+        behind.append("the snapshot lists no watchdog")
+    elif watchdog.get("state") != "live":
+        behind.append(f"the watchdog is {watchdog.get('state')}")
     for unit in snapshot.get("unit", []):
         for kind in ("middleware", "plc"):
             state = unit.get(kind, {}).get("state")
@@ -281,7 +313,7 @@ class FactoryHandle:
 
 
 @pytest.fixture(scope="module")
-def factory() -> Iterator[FactoryHandle]:
+def factory(store) -> Iterator[FactoryHandle]:
     """Boot the factory once for this whole file, then take it down.
 
     The wait at the end of this fixture *is* claim 1: a factory that never comes up
@@ -318,9 +350,18 @@ def factory() -> Iterator[FactoryHandle]:
 
     # --force because the graph may still carry a live factory from a previous run, and
     # start_new_session because teardown wants a process group to fall back on: the launcher
-    # spawns five children of its own, and a launcher killed mid-spawn would orphan them.
+    # spawns six children of its own, and a launcher killed mid-spawn would orphan them.
     proc = subprocess.Popen(
-        [sys.executable, "-m", "demo.transferunits", "--units", str(UNITS), "--force"],
+        [
+            sys.executable,
+            "-m",
+            "demo.transferunits",
+            "--units",
+            str(UNITS),
+            "--force",
+            "--dataset",
+            store.dataset,
+        ],
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         text=True,
@@ -406,7 +447,7 @@ def factory() -> Iterator[FactoryHandle]:
         # Only then the net -- and unconditionally, which is the correction. This used to be
         # guarded by `if proc.poll() is None`, so it fired only while the *launcher* was
         # still alive. Orphans arise in exactly the opposite case: the launcher exits
-        # cleanly and its five children, in their own session, do not. Measured after a run
+        # cleanly and its six children, in their own session, do not. Measured after a run
         # that skipped the `/api/stop` above -- the launcher was gone, the guard was
         # therefore false, and three children kept unit 1's broker port bound. That port is
         # also conftest.py's MQTT_TEST_PORT, so twelve unrelated tests in the *non-live*
@@ -425,10 +466,10 @@ class TestTheFactoryComesUp:
     running beforehand, and each unit ends up with its own broker and no shared one."""
 
     def test_every_participant_is_live_and_addressable(self, factory: FactoryHandle) -> None:
-        """Six processes, each one live, each one reachable, each one its own.
+        """Seven processes, each one live, each one reachable, each one its own.
 
-        The pid set is what makes this "six processes" rather than "six boxes on a page": the
-        launcher, the control station, and a middleware and a PLC per unit are separate
+        The pid set is what makes this "seven processes" rather than "seven boxes on a page": the
+        launcher, the control station, the watchdog, and a middleware and a PLC per unit are separate
         operating-system processes, and a factory that quietly served two of them from
         one process would still render identically.
         """
@@ -440,7 +481,7 @@ class TestTheFactoryComesUp:
             f"the launcher reports {len(snapshot['unit'])} unit(s), not the {UNITS} it seeded"
         )
 
-        pids = {factory.proc.pid, snapshot["controller"]["pid"]}
+        pids = {factory.proc.pid, snapshot["controller"]["pid"], snapshot["watchdog"]["pid"]}
         addresses = [snapshot["controller"]["address"]]
         for unit in snapshot["unit"]:
             for kind in ("middleware", "plc"):
@@ -450,8 +491,11 @@ class TestTheFactoryComesUp:
         assert None not in addresses, (
             f"a participant came up live with no address of its own: {addresses}"
         )
-        assert len(pids) == 2 + 2 * UNITS, (
-            f"the factory is not {2 + 2 * UNITS} separate processes; its pids are {pids}"
+        assert len(pids) == 3 + 2 * UNITS, (
+            f"the factory is not {3 + 2 * UNITS} separate processes; its pids are {pids}"
+        )
+        assert snapshot["watchdog"]["address"] is None, (
+            "the watchdog registers no Service, so the page has no address to show for it"
         )
 
     def test_each_unit_brought_up_its_own_broker(self, factory: FactoryHandle) -> None:
@@ -491,45 +535,36 @@ class TestTheFactoryComesUp:
 
 
 @dataclass(frozen=True)
-class DrivenBelt:
-    """One belt, commanded from the control station, and the addresses that reach it again."""
+class ObservedBelt:
+    """One belt of the surviving unit, as the board shows it, and the addresses around it."""
 
     station: str
     """The control station's address -- where the board's own routes live."""
 
-    unit_iri: str
     holder_iri: str
     field_id: str
-    """What the board needs back to identify the same parameter on a later call."""
+    """What identifies the same parameter on a later poll of the board."""
+
+    position: str
+    """``left`` or ``right``: the PLC panel's own name for this belt."""
 
     label: str
     """How this belt's speed names itself in a feed line -- ``ConnectionMetadata.label``'s
     ``"<holder fragment> <property fragment>"``, derived from what the board reported rather
-    than guessed. Both directions of this one parameter carry it, so it identifies *which*
-    belt a line is about; the ``<-`` / ``->`` marker is what says which way the value went."""
+    than guessed. The ``<-`` marker is what says the value came up from the device."""
 
     middleware: str
-    """The unit's own middleware -- the process whose feed carries both directions."""
+    """The unit's own middleware -- the process whose feed carries what it observed."""
+
+    panel: str
+    """The unit's simulated PLC panel. It sets the device's own setpoint directly, as an
+    operator at the machine would; it is not a served data-model route."""
 
 
-def _drive_a_belt(factory: FactoryHandle, value: float) -> DrivenBelt:
-    """Command one belt of the surviving unit from the control station, as a person would.
-
-    Shared by the two tests below, which assert different things about the same act: that the
-    command reaches the device's topic (claim 4), and that the device's own reading comes
-    back to the screen the command was given on (milestone 1's own sentence). Driving twice
-    from one helper keeps them independent -- neither reads the other's leftovers -- while the
-    lookup, which is the fiddly half, is written once.
-    """
+def _observe_a_belt(factory: FactoryHandle) -> ObservedBelt:
+    """Find one belt of the surviving unit on the board, and the addresses that reach it."""
     snapshot = factory.state()
     station = snapshot["controller"]["address"]
-
-    # The board refuses a hand-driven set while the algorithm runs, and says so with a
-    # 409 rather than by writing anyway.
-    paused = httpx.post(
-        _url(station, "api/algorithm/pause"), json={"paused": True}, timeout=10.0
-    )
-    paused.raise_for_status()
 
     board = httpx.get(_url(station, "api/state"), timeout=30.0)
     board.raise_for_status()
@@ -541,52 +576,36 @@ def _drive_a_belt(factory: FactoryHandle, value: float) -> DrivenBelt:
         f"unit {SURVIVING_UNIT} is not on the board; it holds "
         f"{[u['resource_iri'] for u in units_on_board]}",
     )
-
     speed = _first(
         [p for p in unit["parameters"] if p["field_id"] == seed.TU_HAS_CONVEYOR_SPEED.lined],
         f"no conveyor speed among unit {SURVIVING_UNIT}'s parameters: "
         f"{[p['field_id'] for p in unit['parameters']]}",
     )
 
-    # ConveyorBelt2_left. The board reports which belt it is offering, and a feed line names
-    # that belt exactly as `ConnectionMetadata.label` builds it -- the holder's fragment, a
-    # space, the property's fragment -- so the expected line is derived rather than guessed.
+    # ConveyorBelt2_left. The board reports which belt it shows, and a feed line names that
+    # belt exactly as `ConnectionMetadata.label` builds it -- the holder's fragment, a space,
+    # the property's fragment -- so the expected line is derived rather than guessed.
     holder = speed["holder_iri"]
     local_name = holder.rsplit("#", 1)[-1]
-    label = f"{local_name} {seed.TU_HAS_CONVEYOR_SPEED.fragment}"
+    [entry] = [u for u in snapshot["unit"] if u["index"] == SURVIVING_UNIT]
 
-    driven = httpx.post(
-        _url(station, "api/set"),
-        json={
-            "resource_iri": unit_iri,
-            "holder_iri": holder,
-            "field_id": speed["field_id"],
-            "value": value,
-        },
-        timeout=30.0,
-    )
-    assert driven.status_code == 200, (
-        f"the board refused to drive {local_name}: {driven.status_code} {driven.text}"
-    )
-    assert driven.json().get("ok") is True, (
-        f"the board accepted the write but it did not reach the unit: {driven.json()}"
-    )
-
-    return DrivenBelt(
+    return ObservedBelt(
         station=station,
-        unit_iri=unit_iri,
         holder_iri=holder,
         field_id=speed["field_id"],
-        label=label,
-        middleware=_first(
-            [
-                u["middleware"]["address"]
-                for u in snapshot["unit"]
-                if u["index"] == SURVIVING_UNIT
-            ],
-            f"unit {SURVIVING_UNIT} has no middleware address in the launcher's snapshot",
-        ),
+        position=local_name.rsplit("_", 1)[-1],
+        label=f"{local_name} {seed.TU_HAS_CONVEYOR_SPEED.fragment}",
+        middleware=entry["middleware"]["address"],
+        panel=entry["plc"]["address"],
     )
+
+
+def _set_at_the_device(belt: ObservedBelt, value: float) -> None:
+    """Move the belt from its own PLC panel, the one place the device changes in this demo."""
+    response = httpx.post(
+        _url(belt.panel, f"api/speed/{belt.position}"), json={"value": value}, timeout=10.0
+    )
+    response.raise_for_status()
 
 
 class TestTheFeedCarriesRealLines:
@@ -595,118 +614,113 @@ class TestTheFeedCarriesRealLines:
     The feed once shipped switched off everywhere in the factory -- a built and tested
     feature dark in the only place it was built for -- and the box that closed it was checked
     by opening the page. A page that renders is not the property; a page that carries the line
-    a write just produced is.
+    a device reading just produced is.
     """
 
-    def test_an_outbound_setpoint_reaches_that_unit_s_feed(
-        self, factory: FactoryHandle
-    ) -> None:
-        """Drive one belt from the control station, and find that command in the unit's feed.
+    def test_a_device_reading_reaches_that_unit_s_feed(self, factory: FactoryHandle) -> None:
+        """Move one belt at its PLC panel, and find the reading in the unit's feed.
 
-        The path under test spans four processes: the board's PUT, the unit middleware's
-        persistence, its MQTT write leg, and the feed that middleware serves. The setpoint
-        line is logged unconditionally at INFO (``mqtt_binding.py``: "a setpoint is always
-        news"), so its absence is a break in that path rather than a quiet feed.
+        The path under test spans three processes: the PLC's ramp and publish, the unit
+        middleware's MQTT read leg, and the feed that middleware serves. ``<-`` is written in
+        one place, ``MQTTParameterFormatter.deserialize``, which runs only on a message
+        arriving *from* the broker, so a matching line is the device's own reading.
+
+        **The topic is deliberately absent from what this matches.** It was moved to DEBUG
+        precisely so it cannot reach this feed, which is served over HTTP -- the projection
+        strips a broker topic from the datamodel, and a log line one URL along was handing it
+        back. The label pins which belt, and the marker pins the leg.
+
+        `1.75` rather than a parsed float: the ramp snaps exactly onto its target on the last
+        step ("float-exact at rest"), so the settled publish reprs as the setpoint itself.
         """
-        belt = _drive_a_belt(factory, SETPOINT)
+        belt = _observe_a_belt(factory)
+        _set_at_the_device(belt, SETPOINT)
 
-        # `->` is the outbound marker mqtt_binding writes; the same feed carries `<-` lines
-        # for every value the belt publishes back, and the ramp passes through this setpoint on
-        # its way there, so the direction is what separates the command from its echo.
-        #
-        # **The topic is deliberately absent from what this matches.** It was moved to DEBUG
-        # precisely so it cannot reach this feed, which is served over HTTP -- the projection strips
-        # a broker topic from the datamodel, and a log line one URL along was handing it back.
-        # The label pins which belt, and the marker pins the leg on its own: `->` is written in
-        # one place, `MQTTParameterFormatter.serialize`, and `<-` in one other. The topic was
-        # never what separated them -- this test's earlier probe had already found the pair
-        # matching loosely in either direction, because `.../speed` is a prefix of
-        # `.../speed_set`.
-        #
-        # Probed by mutation at the value instead, which is the mutation that means something
-        # here: both markers legitimately carry this label in a healthy run, so flipping one in
-        # the test asserts the other true fact rather than a false one. Matched against a value
-        # nobody drove, both this and the loop test below fail with the message written for
-        # them.
-        #
-        # That the value really travels on the right *topic* is asserted elsewhere in this
-        # file, by `_traffic_flows` subscribing to the real broker rather than by reading a log.
-        carried, seen = _feed_search(
+        observed, seen = _feed_search(
             belt.middleware,
-            (f"{belt.label} -> {SETPOINT}",),
+            (f"{belt.label} <- {SETPOINT}",),
             FEED_TIMEOUT_SECONDS,
         )
-        assert carried, (
-            f"unit {SURVIVING_UNIT}'s feed never carried the setpoint {SETPOINT} for "
+        assert observed, (
+            f"unit {SURVIVING_UNIT}'s feed never carried the reading {SETPOINT} for "
             f"{belt.label}. In {FEED_TIMEOUT_SECONDS}s it carried {len(seen)} line(s): "
             f"{seen[-10:]}"
         )
 
 
-class TestTheLoopCloses:
-    """This class tests the return half of milestone 1's own sentence:
+class TestTheBoardObservesTheDevice:
+    """This class tests the observing half of milestone 1's own sentence, the half the demo
+    keeps until its control returns with workflows:
 
-    > *"The loop runs end to end: PLC, MQTT, middleware, graph, controller, REST, back to the
-    > PLC."*
+    > *"The loop runs end to end: PLC, MQTT, middleware, graph, controller, REST, ..."*
 
-    The class above proves a command leaves the control station and reaches the device's
-    topic. This one proves the device's *own* reading comes back and is observed -- the belt
-    really moved, and its middleware really saw it move.
-
-    **It stops at the unit's middleware, and that is a property of the design rather than a
-    gap in the test.** Under the locator pattern a parameter has one value slot, and a
-    PUT writes the commanded value straight into it -- at the unit's middleware, and (because
-    ``/api/set`` assigns in place before pushing) at the controller too. So the value the board
-    renders reads as the setpoint the instant the command is accepted, whatever the belt is
-    doing, and "the controller sees the device" is not distinguishable at the board from "the
-    controller sees its own command". ``test_lap_measurement.py`` records the same limit and
-    times its lap against the device and the inbound publish for exactly this reason.
-
-    The first version of this test did read the board back, and passed in 0.12 s against its
-    own write. The inbound log line is the last point on this path where the two are still
-    telling apart.
+    The device moves at its own panel; the board shows the value it settled on. Now that
+    nothing writes from the control station, the value on the board can only have come from
+    the device, through the unit's middleware and the controller's REST read leg.
     """
 
-    def test_the_device_s_own_speed_comes_back_and_is_observed(
+    def test_a_belt_moved_at_the_device_shows_on_the_board(
         self, factory: FactoryHandle
     ) -> None:
-        """Command a belt, and wait for the unit's middleware to report observing it there.
+        belt = _observe_a_belt(factory)
+        _set_at_the_device(belt, SECOND_SETPOINT)
 
-        Every hop is in this one wait: the PUT reaches the unit's middleware, its write leg
-        publishes to the device's set topic, the PLC ramps toward it (the belt's momentum, so the
-        belt climbs rather than jumps), it publishes its *actual* speed on its own topic, and
-        the unit middleware's read leg observes that and logs it.
+        deadline = time.monotonic() + LOOP_TIMEOUT_SECONDS
+        shown = None
+        while time.monotonic() < deadline:
+            board = httpx.get(_url(belt.station, "api/state"), timeout=30.0)
+            board.raise_for_status()
+            rows = [
+                p
+                for u in board.json()["units"]
+                for p in u["parameters"]
+                if p["holder_iri"] == belt.holder_iri and p["field_id"] == belt.field_id
+            ]
+            shown = rows[0]["value"] if rows else None
+            if shown == SECOND_SETPOINT:
+                return
+            time.sleep(1.0)
 
-        **``<-`` is what makes this the device's reading rather than the command.** That
-        marker is written in one place, ``MQTTParameterFormatter.deserialize``, which runs
-        only on a message arriving *from* the broker -- so a matching line cannot have been
-        produced by the PUT that started this. A second setpoint, distinct from the one the
-        class above drove, so a line already in the feed cannot satisfy this either.
-
-        This used to match the belt's **actual** topic as well, and take some care not to
-        match the set topic, since ``.../speed`` is a prefix of ``.../speed_set``. The topic was
-        taken out of the feed -- it is southbound metadata, and the feed is HTTP -- and
-        the care went with it: the marker identifies the leg on its own, because one function
-        writes each. The label pins which belt. See the probe recorded on the test above:
-        flipping the marker is not the discriminating mutation here, since both legs carry
-        this label in a healthy run; driving a value nobody commanded is, and it fails.
-        """
-        belt = _drive_a_belt(factory, SECOND_SETPOINT)
-
-        # `2.5` rather than a parsed float: the ramp snaps exactly onto its target on the
-        # last step ("float-exact at rest"), so the settled publish reprs as the setpoint
-        # itself, while every value on the way there is visibly short of it.
-        observed, seen = _feed_search(
-            belt.middleware,
-            (f"{belt.label} <- {SECOND_SETPOINT}",),
-            LOOP_TIMEOUT_SECONDS,
+        raise AssertionError(
+            f"the board never showed {belt.label} at {SECOND_SETPOINT} within "
+            f"{LOOP_TIMEOUT_SECONDS}s; it last showed {shown!r}. The break is on the way up: "
+            f"the PLC's ramp, the unit's read leg, or the controller's REST poll."
         )
-        assert observed, (
-            f"unit {SURVIVING_UNIT}'s middleware never observed {belt.label} reach "
-            f"{SECOND_SETPOINT}. The command was accepted, so the break is on the way back: "
-            f"the publish out, the PLC's ramp, or the read leg. In "
-            f"{LOOP_TIMEOUT_SECONDS}s the feed carried {len(seen)} line(s): {seen[-10:]}"
-        )
+
+
+class TestNothingWritesToAUnit:
+    """This class tests claim 5: the demo observes. No unit's served data model can take a
+    write.
+
+    A unit's served data model mounts only GET routes. Its OpenAPI document lists every route
+    the unit serves, so the check reads it: no PUT, PATCH or DELETE anywhere, and no POST under
+    a data-model prefix. A data-model prefix is the path of a framework read on an item
+    (``/{Model}/{item_id}``) without its last segment. The unit's own POST routes, its
+    workflows and its event trigger, lie outside every such prefix.
+    """
+
+    def test_no_unit_serves_a_write_on_its_data_model(self, factory: FactoryHandle) -> None:
+        snapshot = factory.state()
+        for entry in snapshot["unit"]:
+            response = httpx.get(
+                _url(entry["middleware"]["address"], "openapi.json"), timeout=10.0
+            )
+            response.raise_for_status()
+            paths = response.json()["paths"]
+            prefixes = {
+                path[: -len("{item_id}")]
+                for path, operations in paths.items()
+                if path.endswith("/{item_id}") and "get" in operations
+            }
+            assert prefixes, f"unit {entry['index']} serves no data model: {sorted(paths)}"
+            writes = sorted(
+                f"{verb.upper()} {path}"
+                for path, operations in paths.items()
+                for verb in operations
+                if verb in ("put", "patch", "delete")
+                or (verb == "post" and any(path.startswith(p) for p in prefixes))
+            )
+            assert not writes, f"unit {entry['index']} serves a write: {writes}"
 
 
 class TestStoppingOneUnit:
@@ -784,3 +798,41 @@ class TestStoppingOneUnit:
                 f"the page marked unit {SURVIVING_UNIT}'s {kind} "
                 f"{by_index[SURVIVING_UNIT][kind]['state']} when its neighbour was stopped"
             )
+
+
+class TestTheWatchdogSweepsAKilledUnit:
+    """This class tests the V6 claim: a middleware that dies without deregistering loses its
+    address within the staleness threshold plus one sweep interval, swept by the factory's
+    watchdog process.
+
+    It runs after the class above and kills the one unit that class left standing.
+    """
+
+    def test_a_killed_middleware_loses_its_address_to_the_watchdog(
+        self, factory: FactoryHandle, store
+    ) -> None:
+        snapshot = factory.state()
+        assert snapshot["watchdog"]["state"] == "live", "the watchdog was not live before the kill"
+
+        unit = _first(
+            [u for u in snapshot["unit"] if u["index"] == SWEPT_UNIT],
+            f"unit {SWEPT_UNIT} is not in the launcher's snapshot",
+        )
+        resource_iri = str(seed._mint_transfer_unit_iri(SWEPT_UNIT))
+        db = store
+        assert _check_service_address(db, resource_iri), (
+            f"unit {SWEPT_UNIT}'s middleware had no address in the graph before the kill"
+        )
+
+        # SIGKILL, not the launcher's stop: a stop lets the middleware deregister itself, and
+        # then there is nothing left for a watchdog to do.
+        os.kill(unit["middleware"]["pid"], signal.SIGKILL)
+
+        _await(
+            lambda: _check_service_address(db, resource_iri) is None,
+            SWEEP_TIMEOUT_SECONDS,
+            f"unit {SWEPT_UNIT}'s address was still in the graph {SWEEP_TIMEOUT_SECONDS:g} s "
+            f"after its middleware was killed (staleness threshold "
+            f"{STALENESS_THRESHOLD_SECONDS:g} s, sweep every {WATCHDOG_SWEEP_SECONDS:g} s). "
+            f"The launcher's last words:\n" + "\n".join(factory.lines[-15:])
+        )

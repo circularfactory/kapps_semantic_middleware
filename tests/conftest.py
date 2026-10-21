@@ -22,8 +22,7 @@ from playwright.sync_api import Browser
 from kapps_semantic_middleware.credentials import triplestore_env_present
 
 # The suite wipes the dataset it connects to, so it names that dataset itself rather
-# than inheriting TRIPLESTORE_DATASET, which may point at anything. Capitalised
-# to match the dataset on the KIT server; tests do not ship, so this name is dev-only.
+# than inheriting TRIPLESTORE_DATASET, which may point at anything.
 TEST_DATASET = "Tests"
 
 
@@ -53,8 +52,8 @@ def pytest_collection_modifyitems(items):
 def methods_at(app, path: str) -> set:
     """Every HTTP method served at `path`, unioned across routes.
 
-    A parameter route's GET and PUT are two separate `APIRoute` objects that happen to share a
-    path, so picking the first match and reading its `.methods` sees only whichever verb was
+    Each verb on a path is a separate `APIRoute` object (the framework mounts its GET and its
+    PUT on an item that way), so picking the first match and reading its `.methods` sees only whichever verb was
     mounted first. That makes a "no PUT here" assertion pass whether or not a PUT exists --
     exactly what the read-only tests are meant to prove. It has already caught one false pass;
     it lives here so the offline and live router tests cannot drift apart on it.

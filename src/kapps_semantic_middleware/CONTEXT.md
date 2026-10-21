@@ -25,7 +25,7 @@ access, used directly where `kapps_ogm` has no equivalent yet, e.g. instance dis
 
 **Service**:
 A distributed runtime entity wrapped by a single middleware instance (e.g. a door
-controller, a screwing-resource controller, a planning service). Typed via a
+controller, a tool-station controller, a planning service). Typed via a
 domain-specific subclass of `svc:Service` that must pre-exist in the ontology.
 There is **one Service per middleware instance, not per Resource**: several instances may be bound to
 one Resource, each owning its own Service node, address and heartbeat, all linked by
@@ -37,13 +37,15 @@ A configuration of the one library, not a distinct class. Resource mode is a **l
 domain expert's Python package**, never a monolithic server. A wiring is two facts: a **protocol**
 and a **direction**. This is the only axis that describes an instance.
 
-*Direction.* **Driving**: connectors wired bidirectionally, writes as well as reads. **Observing**:
+*Direction.* **Driving**: connectors wired bidirectionally, writes as well as reads (MQTT only:
+REST wiring is read-only). **Observing**:
 connectors wired `TO_PERSISTENCE`, reads live values, structurally unable to write. **Inspecting**:
 `autoregister_connectors=False`, nothing connected, structure and graph content only.
 
 *Protocol.* **MQTT** reaches a device, recognised on the parameter (`inf:hasMQTTTopic`). **REST**
-reaches another middleware instance over its recursive REST routes, recognised through the resource's
-Service (`svc:address`). A peer middleware is a device as far as the seam is concerned.
+reads another middleware instance over its recursive REST routes, recognised through the resource's
+Service (`svc:address`). It only reads: a peer's served datamodel has no write route, so driving
+wiring over REST is refused at construction, and a peer resource is driven through its workflows. A peer middleware is a device as far as the seam is concerned.
 
 Recognition and the **Projection** run identically in every combination, so connection metadata
 never reaches a **served datamodel**.
@@ -78,9 +80,15 @@ exactly one Capability. Typed via a domain-specific subclass of `svc:Workflow` t
 pre-exist in the ontology, carrying a SHACL shape describing its arguments (precondition)
 and return value (outcome) — see the SHACL Interop context for how that shape is read/
 written.
-_Avoid_: Skill, Action (AAS-tradition terms for the same invocation-interface idea; KAPPS
-reserves "Service" for the deployable middleware-wrapped entity and "Workflow" for what it
-exposes — see the paper's explicit divergence from the AAS capability-skill-service model).
+A Workflow corresponds to a **skill** of the capability–skill–service (CSS) model: an
+executable implementation of an encapsulated function that a capability specifies, reached
+through the skill interface (Köcher et al. 2023, arXiv 2209.09632, Sec. 3.4). KAPPS keeps the
+name "Workflow" in code, ontology and use cases. A KAPPS **Service** is the deployable
+middleware-wrapped entity that exposes Workflows. It is a service in the IT sense, an encapsulated
+function closer to a CSS skill (Köcher et al. 2023, Sec. 5.1). It is not a CSS service, which is a set of technical capabilities with an
+organizational and economic description (Sec. 3.2).
+_Avoid_: Skill, Action (as names in code; "skill" is the CSS term for what a Workflow
+realizes, see above).
 
 **Parameter** (interface-accessible parameter) — _supersedes StateProperty_:
 A readable and/or settable state of a Resource, modelled as **one graph node** carrying its
@@ -194,7 +202,7 @@ _Avoid_: Interface class (retained for the ontology concept, but the *match* is 
 **Known primitives**:
 The bounded form of the system's flexibility: novel *combinations* are handled, novel *vocabulary* is
 not. A task assembled from grip/move/place may never have been seen in that combination, and a product
-may combine a screw and a gear never before combined — but grip, move, place, screw and gear are all
+may combine a bolt and a gear never before combined — but grip, move, place, bolt and gear are all
 known. Views and discovery listings are configured over known classes for this reason. It is a
 deliberate boundary, not a limitation to be engineered away.
 _Avoid_: Zero-configuration, Fully generic (both overclaim — the system does not discover concepts it
@@ -259,9 +267,10 @@ copy); "the live value is never persisted" as a middleware rule (it is the locat
 Defined in Core (`cfc:Capability`, subclasses `EquippedCapability`/`FlexibilityCapability`/
 `ChangeabilityCapability`). An ability a Resource currently has. In this project's usage,
 every Capability instance is created automatically by the middleware from a pre-existing
-Capability *type* the moment a matching Workflow or StateProperty is registered — it is
+Capability *type* the moment a matching Workflow or state parameter is registered — it is
 never instantiated by hand.
-_Avoid_: Skill (AAS term for a related but not identical concept).
+_Avoid_: Skill (the CSS term for the executable implementation of what a Capability specifies,
+which is a Workflow here, not the Capability itself).
 
 **Operation**:
 Defined in Core (`cfc:Operation`, subclass of `Task`). The executable, resource-assigned
@@ -382,7 +391,9 @@ Resource, not a call).
 
 **Issued Operation**:
 The handle that `issue_operation()` yields, an `IssuedOperation`: in the block, the draft of the new
-Operation; after it, the issued Operation with its IRI and its **Issuer**. It waits until the
+Operation, which takes its domain properties in `op.data` and, with `op.update(instance_iri,
+data)`, changes of existing instances for the Operation's own commit, such as a back-link to it;
+after it, the issued Operation with its IRI and its **Issuer**. It waits until the
 Operation is claimed and until it ends: it reads the status from the graph, and reads it again
 when a notification of the Operation arrives at the Issuer's event trigger.
 _Avoid_: Future, Promise (the handle holds no result; the status and the outcome are in the graph).
@@ -400,8 +411,8 @@ confirmation of receipt), Status update (the status is in the graph; a notificat
 The pending-work list of a resource-mode middleware without a **Notification handler** — the
 Operations addressed to its Resource that await or are in progress. Held in memory as a cache and
 reconstructed at startup by querying the graph (own `queued` operations, plus own orphaned
-`running` operations to reclaim); filled live by event triggers. A dead resource's stranded operations are swept
-centrally by a watchdog, not by per-resource polling.
+`running` operations whose recorded executor is not live); filled live by event triggers. A dead resource's
+stranded operations are swept centrally by a watchdog, not by per-resource polling.
 _Avoid_: Message queue, Broker (there is no broker; the queue is a view over graph state).
 
 **Operation status**:
@@ -420,7 +431,7 @@ _Avoid_: Poll, Consume (pull-and-run is the guarded unit of work, not the delive
 
 **Resource**:
 Defined in Core (`cfc:Resource`). The physical or logical thing a Service wraps (a door, a
-transformer cell, a screwing tool). Required at construction time in resource mode.
+transformer cell, a drilling tool). Required at construction time in resource mode.
 
 **Workpiece**:
 Defined in Core (`cfc:Workpiece`). A production item that is processed, moved or stored on the
@@ -431,7 +442,7 @@ _Avoid_: item, material
 Which Resource holds a Workpiece now. A Workpiece has exactly one Possessor from its creation on:
 the middleware that creates it names that Possessor, which need not be the middleware's own
 Resource. A Resource may possess any number of Workpieces unless a domain rule limits it (a
-conveyor module holds one box, a shelf holds many).
+station holds one workpiece, a shelf holds many).
 _Avoid_: custody, ownership, holding
 
 **Possessor**:
@@ -441,7 +452,7 @@ _Avoid_: holder, owner, custodian
 
 **Indirect possessor**:
 A Resource that contains a Workpiece's Possessor, directly or through other Resources (a station
-that contains the conveyor module). Its Possession follows from the containment and is never
+that contains the machine). Its Possession follows from the containment and is never
 recorded as Possession.
 _Avoid_: co-possessor, joint possessor
 
@@ -453,14 +464,18 @@ _Avoid_: custody group, possession record; "state" in the sense of idle or busy
 
 **Handover**:
 One Workpiece passing from its Possessor to another Resource. Its change of Possession is one state
-transition, admitted before the physical move.
+transition, admitted before the physical move. It belongs to the possession extension
+(`possession.handover(mw, ...)`), built on `mw.commit()`, not to the generic core.
+Its commit names itself with the keyword `verb` of `mw.commit()`, so a refused
+handover is recorded as `handover`. `mw.handover(...)` is its deprecated alias for one release.
 _Avoid_: transfer, hand-off, possession switch
 
 **Mode**:
 A `SemanticMiddleware` construction-time choice governing what the instance is *for*:
 - `"resource"` — wraps one Resource; the REST surface is the user-registered Workflows/
-  StateProperties, the built-in `execute()` event trigger, and a CRUD REST API generated from
-  the resource's own datamodel (`generate_rest_api_for_data_model`). The
+  state parameters, the built-in `execute()` event trigger, and a read-only REST API generated
+  from the resource's own datamodel: GET routes only, because a device changes only through a
+  workflow of its service. The
   transactional context-manager surface (dispatch/`issue_operation`, pull-and-run, handover) and the
   graph-write helpers stay Python-only, not REST-exposed.
 - `"server"` — wraps no Resource. CRUD/`execute` themselves are the REST surface (e.g. a
@@ -480,21 +495,41 @@ by watchdog-mode instances to decide staleness.
 **Address vs. Endpoint**:
 `svc:address` is a Service's base URL, set on startup and removed on
 deregistration/staleness. `svc:endpoint` is the full, directly callable URL for one specific
-Workflow or StateProperty, also set on startup and removed on deregistration/staleness. Both
+Workflow or state parameter, also set on startup and removed on deregistration/staleness. Both
 being present is a deliberate divergence from the paper's literal "address on Service only"
 wording — see the "Address and endpoint" section of
 `docs/mechanics/02-workflow-registration.md`.
 _Avoid_: URL, endpoint URL used interchangeably for both — they are distinct properties on
 distinct entity types.
 
-**KnowledgeGraphConnector**:
-An `transitional_sync_middleware`-protocol `Connector` (`connect`/`disconnect`/`provide`/`consume`) whose
-`provide`/`consume` wrap `kapps_ogm.OGM.fetch`/`commit`. The mechanism by which any
-`transitional_sync_middleware` construct (workflows, synced connectors) can read/write the knowledge graph
-without going around the OGM's validated write path. See "The graph-facing connector"
-in `docs/mechanics/04-connector-binding.md`.
+**Graph binding**:
+The store behind an instance's OGM, as the instance reaches it. Its **last read** and **last
+write** are the last calls that the store answered; a refusal by a shape or a precondition is an
+answer. Its **last error** is the last call that got no answer, or that the store failed itself.
+Instances that share an OGM share its graph binding. `mw.graph_binding` gives its record.
+_Avoid_: connection (that is a wired connector).
+
+**Connection record**:
+What an instance has seen of one connector it wired, since it started: its state, its last
+provide, consume and receive, its **last sync** (the newer of the last receive and the last
+consume, never the last provide), and its last error. `mw.connections` gives one per wired
+connector. A record names the instance's resource and service; a field that may carry connection
+metadata, such as an error's message, is marked in the record's type. The record types are `ConnectionRecord` and `GraphBindingRecord`, with `CallError` (a last
+error), the predicate `is_connection_metadata`, and the dashboard's `dev` switch.
+_Avoid_: liveness (that is the heartbeat of a Service), last update.
+
+**Stranded Operation**:
+A `queued` or `running` Operation of a Resource that no live Service will finish. A `queued`
+Operation is stranded when no live Service of its Resource realizes its Capability; a `running`
+one when the Service of its recorded executor (`svc:executedByWorkflow`, written by the claim) is
+not live, or no executor is recorded. A Service is live when it has an `svc:address` and a
+heartbeat within the staleness threshold. The watchdog's sweep fails the stranded Operations, and
+a restarting instance's reconstruction of its queue fails its own orphaned `running` ones, with
+`registration.find_stranded_operations`.
+_Avoid_: orphaned (that is a `running` Operation of this instance's own earlier run, as the
+reconstruction sees it), dead Operation.
 
 **Deregistration**:
 The reverse of registration: on shutdown (or, for watchdog-mode-detected staleness), removing
-a Service's `svc:address` and its Workflows'/StateProperties' `svc:endpoint` triples while
+a Service's `svc:address` and its Workflows'/state parameters' `svc:endpoint` triples while
 preserving the individuals themselves, for provenance.

@@ -13,7 +13,7 @@ algorithm's shared runtime state, and grafts one onto the other before serving.
 
 The view mechanism runs here: ``main()`` calls
 ``controller.view()`` with the algorithm's SPARQL query, then ``controller.wire_view()``
-to recognize and register REST connectors for every hit. This must happen synchronously
+to recognize and register REST read connectors for every hit. This must happen synchronously
 before the server starts serving, because connector registration must precede the app's
 lifespan connecting everything (see ``Controller.wire_view``'s docstring for why). Once
 the app starts, each wired hit's northbound datamodel loads into ``controller.units``.
@@ -38,39 +38,6 @@ from .controller import Controller
 from .launcher import GRACEFUL_SHUTDOWN_SECONDS
 
 logger = logging.getLogger(__name__)
-
-DEFAULT_TICK_SECONDS = 8.0
-"""The timed mode's default interval. It must exceed one control lap -- PUT -> unit
-middleware -> MQTT -> PLC -> MQTT back -> connector read -- or the algorithm writes again
-before it can observe its last write, and the station board oscillates.
-
-**Measured 2026-08-07.** ``tests/test_lap_measurement.py`` (marked ``lap``, deselected by
-default) reproduces the table below against a real store, a real broker and a real
-middleware::
-
-    ramp (m/s)   device settled   observed back
-          0.05           0.06 s          0.02 s
-          0.5            0.52 s          0.52 s
-          1.5            1.54 s          1.52 s
-          3.0            3.06 s          3.05 s
-
-**A lap is ramp distance over ramp rate, plus about 20 ms.** Transport -- PUT, MQTT out,
-PLC, MQTT back, connector read -- is the 0.02 s row and is negligible. Everything else is
-the belt's momentum (``transfer_unit.DEFAULT_RAMP_RATE``, 1 m/s per second, applied by
-``TransferUnit._ramp_loop``), so the lap is a
-function of *distance* and has no single value. That is why it had to be measured rather
-than assumed, and why the criterion is "exceeds one lap" rather than "equals" it.
-
-8 s clears the slowest measured lap by 2.6x, which buys headroom for a commanded change of
-roughly 8 m/s. The ontology puts no bounds on ``tu:hasConveyorSpeed``
-(``transferunit.ttl:88``), so no tick is correct for *every* conceivable command; this one
-covers every move the demo's own seed and UI can produce. A deployment that commands larger
-jumps, or lowers the ramp rate, should raise it.
-
-The earlier reasoning from ``rest_binding.DEFAULT_POLL_INTERVAL_SECONDS`` (2 s) turned out
-to be measuring the wrong path: that is the *controller's* REST poll of a peer, not the
-unit's own MQTT round trip, and it does not appear in a lap at all."""
-
 
 def bind_free_socket(host: str) -> socket.socket:
     """Bind and listen on an OS-assigned free port, without releasing it.
@@ -144,12 +111,13 @@ async def main() -> None:
     parser.add_argument("--host", type=str, default="127.0.0.1", help="The host to bind")
     parser.add_argument("--port", type=int, default=0, help="The port to bind (0 = free)")
     parser.add_argument(
-        "--tick",
-        type=float,
-        default=DEFAULT_TICK_SECONDS,
+        "--dataset",
+        type=str,
+        default=DEMO_DATASET,
         help=(
-            "Timed mode's interval in seconds (default: %(default)s). How long it must "
-            "be is documented on DEFAULT_TICK_SECONDS in the control_station module."
+            f"The dataset of the store to join (default: {DEMO_DATASET}). A caller that "
+            "spawns this process must pass the dataset it is itself using, since the "
+            "environment deliberately cannot name one (see the Provisioning and Seeding guide)."
         ),
     )
     args = parser.parse_args()
@@ -164,7 +132,7 @@ async def main() -> None:
         args.resource_iri if args.resource_iri is not None else str(seed.CONTROL_STATION)
     )
 
-    db = triplestore_for(DEMO_DATASET)
+    db = triplestore_for(args.dataset)
     ogm = OGM(db=db)
 
     controller = Controller(
@@ -176,19 +144,19 @@ async def main() -> None:
         activity_feed=True,
     )
 
-    # The Control Expert's steps 1-4: run the view, then wire a driving REST connector for every
-    # hit. Synchronous, and before run_server -- connector registration must precede
+    # The Control Expert's steps 1-4: run the view, then wire a reading REST connector for
+    # every hit. Synchronous, and before run_server -- connector registration must precede
     # the app's lifespan connecting everything (Controller.wire_view's own docstring).
     default_query = algorithm.build_view_query()
     hits = controller.view(default_query)
     logger.info("The view found %d live, even-indexed unit(s)", len(hits))
     controller.wire_view(hits, class_scope=algorithm.unit_class_scope())
 
-    state = algorithm.AlgorithmState(tick_seconds=args.tick)
+    state = algorithm.AlgorithmState()
     _wire_algorithm(controller, state)
 
     # Graft the board's own routes and template onto this same app: the
-    # board reads controller.units and calls controller.push()/rebuild_view()
+    # board reads controller.units and calls controller.rebuild_view()
     # in-process, so it must share this app and this event loop rather than run as a
     # second server the way the PLC's panel does for its own, unrelated, device object.
     # station_board.py's own root route replaces the one SemanticMiddleware.app already

@@ -179,7 +179,7 @@ class _RefusedErrorTransition(RefusedWrite):
     It adds no field and keeps the text form of `RefusedWrite`; it equals a plain `RefusedWrite`
     with the same fields, as tuples do. The marker is for the first line only: see `_first_line`.
     A subclass, and no field or verb value, because the public record type must keep its fields
-    and their values (KSM 463).
+    and their values.
     """
 
     __slots__ = ()

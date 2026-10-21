@@ -56,12 +56,12 @@ The page opens on the first tab of the bar, which is System when System has a bo
 tab by the title that the tab bar shows:
 
 ```python
-registry = enable_dashboard(middleware, first_tab="WMS")
+registry = enable_dashboard(middleware, first_tab="Overview")
 ```
 
 `first_tab` sets the tab that the page opens on. A link overrides it with the query `tab`:
 `dashboard?tab=System` opens System, whatever `first_tab` says. Encode a name with a space as any
-query value: `dashboard?tab=UC2%20monitor`.
+query value: `dashboard?tab=Line%20monitor`.
 
 A name that no tab has is passed over. An unknown `?tab=` opens the `first_tab`, and an unknown
 `first_tab` opens the first tab of the bar, so a stale link or a typo still shows the page.
@@ -77,14 +77,16 @@ under a path prefix too, and through the redirect from `/dashboard/`.
 The library registers six boxes, all of which read only what the instance already holds: five
 in the System tab, and the Logs box in a tab of its own. The id in brackets is what `hide` takes.
 
-1. **Instance** (`header`) — identity, mode, health, and the graph binding. Only a
+1. **Instance** (`header`) — identity, mode, health, and the graph binding, with its last
+   read, last write and last error. Only a
    watchdog-mode instance runs a sweep, so only its box shows the sweep's interval and whether the
    sweep's task is alive.
 2. **Held data** (`held-data`) — the materialized datamodel, with each parameter's protocol
-   metadata.
+   metadata, its connection state and the age of its last sync.
 3. **Services** (`services`) — the workflows and state properties this instance serves, each
    with what its function's docstring says. See The Services Box below.
-4. **Connectors** (`connectors`) — what each wired connector is, as its descriptor declares it.
+4. **Connectors** (`connectors`) — what each wired connector is, as its descriptor declares it,
+   and its state, last sync and last error. See Connection State and the Graph Binding below.
 5. **Refused writes** (`refused-writes`) — the writes of this instance that the store's shapes
    refused, newest first.
 6. **Logs** (`logs`) — the newest records of every logger in the process, and a form that sets a
@@ -115,23 +117,124 @@ The box reads the instance's API description, which the process generates in mem
 no traffic. `/docs` shows the same text. A function without a docstring shows the default summary,
 such as "Execute", and no description.
 
+## Connection State and the Graph Binding
+
+The instance records what it has seen of each connector it wired and of its graph binding, the
+store behind its OGM. It records this in memory, from the moment it is constructed, and adds no
+traffic to do so. A restart empties the records.
+
+**A connection.** The framework gets an observing wrapper in place of each connector that the
+instance wires, REST, MQTT and the knowledge graph alike, and the wrapper notes each call. It
+records:
+
+- the state: *never connected* until the framework asks the connector to connect, *connected* once
+  its `connect()` has returned, and *not connected* after its `disconnect()` or a `connect()` that
+  failed. The state is what the connector's own `connect()` reports;
+- the last sync: the last value the connector received, or the last value written to it. The last
+  `provide()` is kept apart and is no sync, because a pushing connector, such as the MQTT one,
+  answers `provide()` from a value it holds and reads nothing;
+- the last error, with its type, its time and its message.
+
+The box "Connectors" shows the state, the last sync and the last error of each connector. The box
+"Held data" shows the state and the last sync of each value, over the connectors that serve it: a
+value with one connector for each direction shows the newer of their syncs. A value that no
+connector serves shows *not wired*.
+
+**The graph binding.** Every read and write of the instance reaches the store through the `db` of
+its OGM: the OGM's own calls do, and so do the queries of the library. The instance puts an
+observing store in that place when it is constructed, once for each OGM. The header box "Instance"
+shows, under *Graph binding*, the last read and the last write that the store answered, and the
+last error of the binding. A write that the store refused, by a shape or by a false precondition,
+is an answer: the binding works, and the refusal shows in "Refused writes". The last error is a
+call that got no answer, whose credentials or access the store refused, or that the store failed
+itself.
+
+Several instances in one process may share one OGM, and so one store. Each then shows the same
+reads, writes and error, because they are the store's. An `ogm.db = ...` after construction ends
+the observation.
+
+**Reading the records in code.** Two members of `SemanticMiddleware` give the records, read from
+memory:
+
+- `mw.connections` — one `ConnectionRecord` per wired connector, in the order of the wiring, and
+  empty for an instance that wires none. Each has `connected`, `last_provide`, `last_consume`,
+  `last_receive`, `last_sync` and `last_error`, and names the connector by `connector_id`,
+  `holder`, `field`, `connector` (its class) and `direction`.
+- `mw.graph_binding` — the `GraphBindingRecord`, with `dataset`, `named_graph`, `last_read`,
+  `last_write` and `last_error`.
+
+Each record also carries this instance's `resource` and `service` IRI, and is frozen. A time is
+aware, in UTC; the box computes an age from it when it renders. A `last_error` is a `CallError`
+with `time`, `type` and `message`. The types are in `kapps_semantic_middleware.observation`.
+
+```python
+for record in mw.connections:
+    print(record.field, record.connected, record.last_sync)
+print(mw.graph_binding.last_error)
+```
+
+A box of your own, and an exporter, read the records the same way.
+
+## A Page Without Connection Metadata
+
+The dashboard is a development surface. By default it shows the connection metadata of the
+instance: the MQTT topic of each parameter in "Held data", the protocol properties that the
+northbound projection stripped from it, and the message of a last error, which may name a host, a
+port, a topic or a URL. That is what a laboratory deployment needs to see whether a value was
+fetched properly.
+
+A deployment that is not a laboratory one turns it off:
+
+```python
+registry = enable_dashboard(middleware, dev=False)
+```
+
+The page then shows no topic column and no list of stripped properties; "Held data" keeps the
+count of what was stripped. A last error shows its type and its time, and not its message. The
+states and the ages stay.
+
+This page is not the northbound payload. The projection keeps connection metadata out of what
+other machines read from the instance; this page is the instance's own diagnostic surface, and the
+switch is the one control over what it shows. The log keeps an MQTT topic at DEBUG either way.
+
+Which field of a record is connection metadata is marked in the record's type, and one predicate
+reads the mark: `kapps_semantic_middleware.observation.is_connection_metadata(record, name)`. The
+library's boxes leave out what it names, and a box of your own does the same:
+
+```python
+from kapps_semantic_middleware.observation import is_connection_metadata
+
+@registry.box("last-error", title="Last error")
+def last_error(middleware: Any) -> str:
+    error = middleware.graph_binding.last_error
+    if error is None:
+        return hint("No error since the instance started.")
+    show_message = registry.dev or not is_connection_metadata(error, "message")
+    return kv_table([("Type", error.type), ("Message", error.message if show_message else None)])
+```
+
+`registry.dev` says whether the page is a development page. Pass `dev` on the first call: a
+second `enable_dashboard` returns the registry of the first and ignores its options, `dev` among
+them.
+
 ## The Box of Refused Writes
 
-When the store's SHACL shapes refuse a write of `mw.commit()`, `mw.create()` or `mw.handover()`,
+When the store's SHACL shapes refuse a write of `mw.commit()`, `mw.create()` or the possession
+extension's `handover(mw, ...)`, which commits through `mw.commit()` under the verb `handover`,
 the caller gets `ShaclValidationError`, unchanged, and the instance keeps the refusal in memory:
 the time, the verb, the rules that the store's validation report names, and the report. It keeps
 the newest 50, and writes nothing of them to the graph. `mw.refused_writes` gives them, newest
 first. The write of a `commit`'s error transition, which the shapes may refuse when the body
-failed, is kept too: its verb is `commit`, and its first line reads `commit (error transition)
-refused by ...`; the caller still gets the error of the body, with a note that the error
-transition was not committed. A write that is refused for another reason, such as a false
-precondition, is not kept.
+failed, is kept too: its verb is that of the commit, `commit` unless the call named another such
+as `handover`, and its first line reads `<verb> (error transition) refused by ...`; the caller
+still gets the error of the body, with a note that the error transition was not committed. A
+write that is refused for another reason, such as a false precondition, is not kept.
 
 The box "Refused writes", on the System tab, shows them and refreshes every 5 seconds. Each refused
 write is one line that is always visible, for example:
 
 ```text
-14:03:12 handover refused by FlexConveyorModulePossessionShape at Module3
+14:03:12 handover refused by StationPossessionShape at Station3
 ```
 
 That is the time, the verb, and each rule as its source shape at its focus node. Click the line to
@@ -156,7 +259,7 @@ comparing, and `rule_names(report)` for a log line.
 ## The Logs Tab
 
 The Logs tab shows the newest records of the whole process: every logger, the library's own,
-your subproject's, such as `jms_kapps.uc2.module`, and those of the libraries it calls, such as
+your subproject's, such as `myplant.line.station`, and those of the libraries it calls, such as
 `httpx`. The activity page at `/activity` stays as it was, a live stream of the library's own
 logger.
 
@@ -204,10 +307,10 @@ The form posts to `POST dashboard/logs/level`, and so can any other client:
 POST /dashboard/logs/level HTTP/1.1
 Content-Type: application/json
 
-{"logger": "jms_kapps.uc2", "level": "DEBUG"}
+{"logger": "myplant.line", "level": "DEBUG"}
 ```
 
-The answer is the level now in force, `{"logger": "jms_kapps.uc2", "level": "DEBUG"}`.
+The answer is the level now in force, `{"logger": "myplant.line", "level": "DEBUG"}`.
 
 - The level is one of `NOTSET`, `DEBUG`, `INFO`, `WARNING`, `ERROR` and `CRITICAL`, spelled so.
   Any other value, `debug` or `10` among them, is refused with 422 and the list of the names.
@@ -330,7 +433,7 @@ def mine(middleware: Any) -> str:
 Write a box that queries a graph, or calls a peer, with `async def`, and await the I/O inside it:
 
 ```python
-@registry.box("topology", title="Topology", tab="UC2", refresh_seconds=10)
+@registry.box("topology", title="Topology", tab="Line", refresh_seconds=10)
 async def topology(middleware: Any) -> str:
     rows = await read_the_topology(middleware)       # your own query, your own cost
     return kv_table(rows)

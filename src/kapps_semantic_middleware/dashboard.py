@@ -304,10 +304,22 @@ class DashboardRegistry:
     Registration order is preserved, so the page shows boxes in the order they were declared.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, *, dev: bool = True) -> None:
         self._boxes: Dict[str, BoxSpec] = {}
         self._tabs: List[str] = []
         self._hidden: Set[str] = set()
+        self._dev = dev
+
+    @property
+    def dev(self) -> bool:
+        """Whether this is a development page, which shows connection metadata.
+
+        ``enable_dashboard(mw, dev=False)`` makes a page without it: the library's boxes leave
+        out what is connection metadata, such as an MQTT topic or an error's message. A box of a
+        subproject reads this to do the same. ``observation.is_connection_metadata`` names the
+        fields of the instance's records that are connection metadata.
+        """
+        return self._dev
 
     def box(
         self,
@@ -509,10 +521,10 @@ def _tab_slugs(tabs: Sequence[str]) -> Dict[str, str]:
 
     A tab name is a title a subproject chooses, so it may hold a space, a slash, a dot or an
     apostrophe. `html.escape` leaves all of them alone, because it escapes text and not an
-    identifier. The result was `id="tab-UC2 monitor"` and a selector
-    `#tab-UC2 monitor:checked`, which no browser can parse: the rule is dropped, the panel
-    keeps `display: none`, and the page renders a tab strip above nothing. `UC2 monitor` is
-    the tab the use case adds, so this was reached on the first subproject tab.
+    identifier. The result was `id="tab-Line monitor"` and a selector
+    `#tab-Line monitor:checked`, which no browser can parse: the rule is dropped, the panel
+    keeps `display: none`, and the page renders a tab strip above nothing. `Line monitor` is
+    such a tab, so this was reached on the first subproject tab.
 
     The visible label keeps the original name. Only the identifier is slugged.
 
@@ -764,6 +776,7 @@ def enable_dashboard(
     *,
     register_default_boxes: bool = True,
     first_tab: Optional[str] = None,
+    dev: bool = True,
 ) -> DashboardRegistry:
     """Enable the dashboard on a middleware instance.
 
@@ -788,6 +801,13 @@ def enable_dashboard(
     of the bar. ``first_tab`` is not checked here, because a subproject registers its boxes,
     and so its tabs, after this call. The first render that cannot open it logs a warning,
     once.
+
+    ``dev`` says whether the page is a development page. The default is one: it shows the
+    connection metadata of the instance, such as the MQTT topic of each parameter, the protocol
+    properties that the northbound projection stripped, and the message of a connection's or of
+    the graph binding's last error, which may name a host, a port or a URL. ``dev=False`` leaves
+    all of that out, for a deployment that is not a laboratory one; the boxes then show counts,
+    states, ages and the type of an error. The registry's ``dev`` says which the page is.
     """
     # `getattr(..., None) is not None` rather than `hasattr`: a middleware that declares
     # `self.dashboard = None` when the feature is off would otherwise satisfy `hasattr`
@@ -796,7 +816,7 @@ def enable_dashboard(
     if existing is not None:
         return existing
 
-    registry = DashboardRegistry()
+    registry = DashboardRegistry(dev=dev)
     instance_name = _instance_name(middleware)
 
     if register_default_boxes:

@@ -29,7 +29,7 @@ from rdflib.namespace import RDF, SH
 from kapps_semantic_middleware import SemanticMiddleware
 from kapps_semantic_middleware.credentials import triplestore_for
 from kapps_semantic_middleware.dashboard import enable_dashboard
-from kapps_semantic_middleware.registration import create_possession
+from kapps_semantic_middleware.possession import create_possession, handover
 from kapps_semantic_middleware.validation_report import (
     Term,
     ValidationResult,
@@ -310,13 +310,14 @@ def test_a_refused_handover_is_shown_as_a_handover_and_its_markup_as_text(store)
     mw = _instance(store, seed.HANDOVER_SOURCE, IRI(f"{seed.DEMO_NS}TransferModuleService"))
     destination = str(seed.HANDOVER_DEST).rsplit("#", 1)[-1]
 
-    def handover() -> None:
-        with mw.handover(
+    def hand_over() -> None:
+        with handover(
+            mw,
             mode=MES.Pass, workpiece=seed.HANDOVER_BOX, counterpart=seed.HANDOVER_DEST
         ):
             pytest.fail("the body of a refused handover ran")
 
-    refusal = _refused(store, _ONE_WORKPIECE_PER_MODULE, handover)
+    refusal = _refused(store, _ONE_WORKPIECE_PER_MODULE, hand_over)
 
     (recorded,) = mw.refused_writes
     first_line = f"handover refused by OneWorkpiecePossessionShape at {destination}"

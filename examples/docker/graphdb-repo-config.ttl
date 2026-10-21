@@ -23,10 +23,9 @@
                 graphdb:read-only "false" ;
 
                 # Inference and Validation
-                # rdfsplus-optimized is the one ruleset of the project's repositories (the
-                # one-ruleset decision of 2026-10-08, Etienne). The shipped ontologies, examples
-                # and demo declare every class they name as a range or a domain, so they need
-                # no further entailment.
+                # rdfsplus-optimized is the one ruleset of the project's repositories. The
+                # shipped ontologies, examples and demo declare every class they name as a
+                # range or a domain, so they need no further entailment.
                 graphdb:ruleset "rdfsplus-optimized" ;
                 graphdb:disable-sameAs "true" ;
                 graphdb:check-for-inconsistencies "true" ;

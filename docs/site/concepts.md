@@ -11,12 +11,14 @@ Several packages work together:
 - **kapps-ogm** — handles all knowledge graph reads and writes through a validated object-graph mapping layer.
 - **kapps-triplestore-interface** — provides raw triple-store access where the OGM has no equivalent yet, such as instance discovery.
 - **transitional-sync-middleware** — the synchronization layer, a transitional fork of `aas-middleware` carrying four synchronization fixes, incrementally reimplemented locally. It is retired within a few releases; do not build on it directly.
-- **The triple store** — the examples bring one up with `docker compose` from the `docker/` directory that `kapps-examples` copies out. Reasoning is required.
+- **The triple store** — the examples bring one up with `docker compose` from the `docker/` directory that `kapps-examples` copies out. It runs the ruleset `rdfsplus-optimized`.
 - **Per-unit in-process broker** — each middleware unit runs its own MQTT broker for southbound device communication.
 
-## Why the reasoner is not optional
+## Which reads are inferred and which are asserted
 
-The middleware relies on the triple store's reasoner: `include_implicit` defaults to reading the inferred statements too, and both ontologies carry `owl:imports`. A store without a reasoner returns fewer triples and fails quietly, which is why a triple store with a reasoner — not an in-memory graph — is a prerequisite.
+The triple store runs the ruleset `rdfsplus-optimized`, and the examples' store configuration sets it. A query reads the inferred statements as well as the asserted ones unless it asks otherwise, and both ontologies carry `owl:imports`. The reads that go through the OGM, such as `fetch`, see the inferred statements too, except that the OGM reads the data of an anonymous node as asserted only. The recognition of a parameter's wiring reads the asserted statements only: a parameter node's only types that recognition could find by inference are anonymous restriction nodes, and counting them would inflate every result. So the wiring does not depend on inference.
+
+A store without that ruleset returns fewer statements to the reads that are inferred. It does not make the projection leak: the projection fails closed. When the ontology cannot be read, or a protocol marker's range is not understood, it raises instead of serving.
 
 ## Glossary
 
@@ -29,7 +31,7 @@ Resource
     The physical or logical thing a Service wraps, such as a door, a transformer cell, or a screwing tool. Required at construction time in resource mode.
 
 Mode
-    A construction-time choice governing what the middleware instance is for: `"resource"` wraps one Resource and exposes its Workflows and StateProperties; `"server"` wraps no Resource and serves CRUD operations; `"watchdog"` wraps no Resource and sweeps stale addresses from the graph.
+    A construction-time choice governing what the middleware instance is for: `"resource"` wraps one Resource and exposes its Workflows and StateProperties; `"server"` is reserved and not built: constructing one raises; `"watchdog"` wraps no Resource and sweeps stale addresses from the graph.
 
 Workflow
     An invokable function exposed by a Service, registered with a decorator. Realizes exactly one Capability. Typed via a domain-specific subclass that must pre-exist in the ontology, carrying a SHACL shape describing its arguments and return value.

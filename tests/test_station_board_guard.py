@@ -3,15 +3,18 @@
 - control_station.py names no FastAPI route decorator or response class -- it is the
   runner, not the routes file.
 - station_board.py names no subprocess/signal -- it is the routes file, not the runner.
-- Neither file (nor algorithm.py, which also drives a write) names an HTTP client
-  directly -- every write reaches a peer through Controller.push(), never a raw PUT
-  issued from demo code. This is the "PUT-grep guard":
-  The monitor design already states the underlying invariant ("a consumer cannot drive, because
+- The demo package sends no PUT, POST, PATCH or DELETE to a unit's served data-model
+  route. The demo observes: in KAPPS a device changes only through a workflow of its
+  service, and this demo has none yet. Its control returns with workflows after the paper.
+  The monitor design states the underlying invariant ("a consumer cannot drive, because
   its own code holds no method that sends a PUT request") and notes "the guard test
-  follows the wiring rather than the source text" -- the wiring-level half of that is
-  _VIEW_REGISTRY's REST-only recognition (tests/test_controller_view.py), and this is
-  the source-text half, shaped after tests/test_plc_guard.py and
-  tests/test_launcher_index_guard.py's own AST-based checks.
+  follows the wiring rather than the source text". The wiring half is the controller's
+  read-only flavour, asserted on a real wiring in tests/test_controller_view.py
+  (every registration a read leg). This file is the source half, shaped after
+  tests/test_plc_guard.py and tests/test_launcher_index_guard.py's own AST-based checks:
+  no demo module imports an HTTP client or calls a connector's send, the controller has
+  no write method, and every request a demo page makes goes to its own ``/api/`` route,
+  never to a served data-model route (``/{Model}/{root}/...``).
 - Every backend file named in station_board.TEACH exists on disk, so a tooltip never
   points at a file that moved (the launcher page's pattern).
 """
@@ -19,6 +22,7 @@
 from __future__ import annotations
 
 import ast
+import re
 import sys
 from pathlib import Path
 
@@ -94,30 +98,107 @@ def test_station_board_never_imports_from_control_station():
     )
 
 
-def test_no_demo_file_issues_an_http_call_directly():
-    """The PUT-grep guard (the invariant itself is the
-    monitor design's: "a consumer cannot drive, because its own code holds no method that sends
-    a PUT request"). station_board.py and algorithm.py are the two demo files that
-    drive a write in the station board's own code paths -- neither may import an HTTP client.
-    Every write reaches a peer exclusively through Controller.push(), whose own PUT
-    lives in the REST connector inside src/kapps_semantic_middleware/, not here.
-    """
-    forbidden = {"httpx", "requests", "urllib3", "aiohttp", "http"}
-    for filename in ("station_board.py", "algorithm.py", "control_station.py"):
-        path = REPO_ROOT / "demo" / "transferunits" / filename
-        names = get_imports_and_names(path)
-        violations = names & forbidden
-        assert not violations, f"{filename} must not reference: {forbidden}. Found: {violations}"
+DEMO_ROOT = REPO_ROOT / "demo"
+
+HTTP_CLIENTS = {"httpx", "requests", "urllib", "urllib3", "aiohttp", "http"}
+"""Every way a Python module here could open an HTTP request of its own."""
+
+SENDING_CALLS = {
+    "put", "post", "patch", "delete", "consume", "push", "push_parameter", "request", "send",
+}
+"""Method names that send a value somewhere: an HTTP client's write verbs, and a connector's
+``consume`` (the REST parameter connector's ``consume`` refuses, but a call is still an attempt
+to send). A FastAPI route decorator (``@app.post``) declares a route of the demo's own; the
+check skips decorators."""
 
 
-def test_station_board_names_no_raw_put_call():
-    """Belt and braces on top of the import check above: no literal `.put(` call
-    anywhere in station_board.py's source, so a future edit cannot reintroduce a direct
-    HTTP write by calling an already-imported client's method without adding a new
-    import the check above would catch."""
-    path = REPO_ROOT / "demo" / "transferunits" / "station_board.py"
-    source = path.read_text(encoding="utf-8")
-    assert ".put(" not in source, "station_board.py must drive writes only through controller.push()"
+def _demo_modules() -> list[Path]:
+    modules = sorted(DEMO_ROOT.rglob("*.py"))
+    assert modules, f"no Python module under {DEMO_ROOT}"
+    return modules
+
+
+def test_no_demo_module_imports_an_http_client():
+    """The whole package, not a list of files: a new module cannot open a side door."""
+    violations = {}
+    for path in _demo_modules():
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        imported = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                imported.update(alias.name.split(".")[0] for alias in node.names)
+            elif isinstance(node, ast.ImportFrom) and node.module and node.level == 0:
+                imported.add(node.module.split(".")[0])
+        found = imported & HTTP_CLIENTS
+        if found:
+            violations[str(path.relative_to(REPO_ROOT))] = sorted(found)
+
+    assert not violations, f"demo modules import an HTTP client: {violations}"
+
+
+def test_no_demo_module_calls_a_sending_method():
+    """No ``.put(``, ``.post(``, ``.delete(``, ``.consume(``, ``.push(`` and the like anywhere in the
+    package's code, so a write cannot come back through a client or a connector the
+    module already holds without a new import the check above would catch."""
+    violations = []
+    for path in _demo_modules():
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        decorators = {
+            id(decorator)
+            for node in ast.walk(tree)
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+            for decorator in node.decorator_list
+        }
+        for node in ast.walk(tree):
+            if (
+                isinstance(node, ast.Call)
+                and id(node) not in decorators
+                and isinstance(node.func, ast.Attribute)
+                and node.func.attr in SENDING_CALLS
+            ):
+                violations.append(
+                    f"{path.relative_to(REPO_ROOT)}:{node.lineno} .{node.func.attr}("
+                )
+
+    assert not violations, f"demo code sends a value: {violations}"
+
+
+def test_the_controller_has_no_write_method():
+    """``push`` and ``push_parameter`` drove an assignment out to a unit. They are gone,
+    and must not come back under the same names."""
+    from demo.transferunits.controller import Controller
+
+    present = [name for name in ("push", "push_parameter") if hasattr(Controller, name)]
+    assert not present, f"Controller has write methods again: {present}"
+
+
+_FETCH_CALL = re.compile(r"\bfetch\(\s*([^,)]+)")
+_POST_HELPER_CALL = re.compile(r"\bpost\(\s*([^,)]+)")
+
+
+def _page_targets(text: str) -> list[str]:
+    """The first argument of every ``fetch(`` and of the pages' own ``post(`` helper."""
+    return [m.group(1).strip() for m in _FETCH_CALL.finditer(text)] + [
+        m.group(1).strip() for m in _POST_HELPER_CALL.finditer(text)
+    ]
+
+
+def test_every_page_request_goes_to_its_own_api_route():
+    """A page reaches its own server's ``/api/`` routes only. The ``post(url, body)``
+    helper's own ``fetch(url, ...)`` is the one indirection, and every call of the helper
+    is checked in its place."""
+    templates = sorted(DEMO_ROOT.rglob("*.html"))
+    assert templates, f"no page template under {DEMO_ROOT}"
+
+    violations = []
+    for path in templates:
+        for target in _page_targets(path.read_text(encoding="utf-8")):
+            literal = target.strip("'\"`")
+            if target == "url" or literal.startswith("/api/"):
+                continue
+            violations.append(f"{path.relative_to(REPO_ROOT)}: {target}")
+
+    assert not violations, f"a page requests something other than its own /api/: {violations}"
 
 
 def test_teach_files_exist_on_disk():

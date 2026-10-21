@@ -135,7 +135,7 @@ function render(s) {
     if (label) label.textContent = pos + '  ' + speed.toFixed(2) + ' m/s';
 
     const box = document.getElementById('cmd-' + pos);
-    // `diverged` means what controller.py's WriteStatus.DIVERGED defines.
+    // `diverged`: the belt sat unmoved, short of its setpoint, for panel.py's DEFAULT_STILL_SECONDS.
     // The verdict is the server's -- panel.py's ConvergenceTracker judges it on the
     // clock, so opening a second tab cannot make a belt diverge sooner.
     const status = (s.belt_status || {})[pos];

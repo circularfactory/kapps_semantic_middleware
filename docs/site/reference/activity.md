@@ -4,20 +4,20 @@ Tracking what the middleware is doing while it does it.
 
 ## A refused write
 
-When the store's SHACL shapes refuse a write of `mw.commit()`, `mw.create()` or `mw.handover()`,
-the instance logs the refusal as one record at INFO, on its own logger,
-`kapps_semantic_middleware.validation_report`. The feed shows it like any record. Its message has
-several lines:
+When the store's SHACL shapes refuse a write of `mw.commit()`, `mw.create()` or
+`possession.handover(mw, ...)`, the instance logs the refusal as one record at INFO, on its own
+logger, `kapps_semantic_middleware.validation_report`. The feed shows it like any record. Its
+message has several lines:
 
 ```text
-handover refused by FlexConveyorModulePossessionShape at Module3
+handover refused by StationPossessionShape at Station3
 Result 1 of 1
-  Message: A FlexConveyorModule may possess at most one Box at a time.
+  Message: A Station may possess at most one Workpiece at a time.
   Severity: Violation
-  Focus node: Module3
+  Focus node: Station3
   Path: (hasPossessor/^hasPossessedWorkpiece)
   Value: —
-  Source shape: FlexConveyorModulePossessionShape
+  Source shape: StationPossessionShape
   Constraint: MaxCountConstraintComponent
 The store's validation report, verbatim:
 _:b0 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/ns/shacl#ValidationReport> .

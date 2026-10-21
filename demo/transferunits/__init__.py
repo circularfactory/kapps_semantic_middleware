@@ -17,7 +17,7 @@ The modules here:
 - ``control_station``: the entry point for the controller process.
 - ``controller``: the controller itself, which is a middleware instance.
 - ``station_board``: the controller's screen.
-- ``algorithm``: the control loop. It is the only module here allowed to name
+- ``algorithm``: the observing loop. It is the only module here allowed to name
   a domain term.
 - ``seed``: the starting facts this factory writes into the graph.
 - ``plc``: one unit's mock PLC, and the panel that drives it.

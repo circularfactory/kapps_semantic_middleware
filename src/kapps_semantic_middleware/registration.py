@@ -10,41 +10,46 @@ the newly-created instance (e.g. a workflow ``svc:isWorkflowOf``, a capability
 ``svc:realizedByWorkflow``). The container-side inverses (``svc:hasWorkflow`` etc.) are
 OWL-inferable. They receive no write. Each registration is a clean single-instance ``OGM.create``
 rather than a read-modify-write append onto a growing multi-valued property. Queries in this
-module therefore use the materialized (instance-owned) direction.
+module therefore use the materialized (instance-owned) direction. The one exception is the
+resource's ``cfc:hasCapability``, which Core gives the resource: it is written through
+``OGM.commit`` as an ``Append``, which adds the link and removes none, in the same commit as the
+Capability it links, so no commit holds a Capability without its resource (see
+``_register_capability``).
 """
 
 from __future__ import annotations
 
+import logging
 import uuid
 from datetime import datetime, timedelta, timezone
-from typing import TYPE_CHECKING, Any, Callable, Mapping, NamedTuple, Optional, Sequence, Tuple
+from typing import TYPE_CHECKING, Any, Callable, NamedTuple, Optional, Sequence, Tuple
 from urllib.parse import urlsplit, urlunsplit
 
 from kapps_triplestore_interface import IRI
 from rdflib import BNode
-from kapps_triplestore_interface.exceptions import InvalidIRIError, PreconditionFailedError
-from kapps_ogm.utils.class_scope import ClassScope
-from kapps_ogm import Create, Update
+from kapps_triplestore_interface.exceptions import (
+    InvalidIRIError,
+    PreconditionFailedError,
+    TripleStoreResponseError,
+    TripleStoreUnavailableError,
+)
+from kapps_ogm import Append, Create, Update
 
+from kapps_semantic_middleware.commit import _scope_naming
 from kapps_semantic_middleware.errors import (  # noqa: F401 - their earlier home, kept importable
-    HandoverPreconditionError,
     OntologyGroundTruthError,
     OperationQueueEmpty,
     OperationResolutionError,
-    PossessionSwitchConflict,
 )
 from kapps_semantic_middleware.errors import (
     CapabilityNotRealizedError,
     DeploymentValueError,
     OperationReceiverUnavailableError,
 )
+from kapps_semantic_middleware import _deprecation
 from kapps_semantic_middleware.operation import _implements
-from kapps_semantic_middleware.possession import _switch_conflict, possession_change
-# jms_kapps's seed imports mint_possession_state_iri from here.
-from kapps_semantic_middleware.possession import mint_possession_state_iri  # noqa: F401
 from kapps_semantic_middleware.vocabulary import (
     CFC,
-    MES,
     OperationStatus,
     SVC,
 )
@@ -59,6 +64,37 @@ RDF_TYPE = IRI("http://www.w3.org/1999/02/22-rdf-syntax-ns#type")
 # --------------------------------------------------------------------------- #
 # Deterministic IRI minting (so a restarting resource reuses its IRIs).
 # --------------------------------------------------------------------------- #
+
+
+logger = logging.getLogger(__name__)
+
+#: The store's errors that the liveness paths (the heartbeat, the watchdog's sweep) log and survive,
+#: trying again at the next interval: the store unreachable or the connection dropped (Retry), an
+#: error answer of the store (logged at every interval, so one that needs a repair stays visible),
+#: and a value another write changed after the read (Refresh: the next attempt reads again).
+_LIVENESS_STORE_ERRORS = (
+    TripleStoreUnavailableError,
+    TripleStoreResponseError,
+    PreconditionFailedError,
+)
+
+
+def __getattr__(name: str) -> Any:
+    # The deprecated names of the handover's helpers and errors, which left this module. Each use
+    # of one comes here and warns, and only then imports the new home, so this module does not
+    # import it. The release after the one that moved them removes them.
+    extension = "kapps_semantic_middleware.possession"
+    errors = "kapps_semantic_middleware.errors"
+    homes = {
+        "create_possession": extension,
+        "switch_possession": extension,
+        "find_possession_state": extension,
+        "counterpart_has_complementary_ability": extension,
+        "mint_possession_state_iri": extension,
+        "HandoverPreconditionError": errors,
+        "PossessionSwitchConflict": errors,
+    }
+    return _deprecation.moved(__name__, homes, name)
 
 
 def normalize_address(address: str) -> str:
@@ -180,7 +216,7 @@ def _create(
     literals as their Python/str value). The IRI must be new: if the graph already holds
     statements about it, the OGM writes nothing and raises ``PreconditionFailedError``.
     """
-    scope = ClassScope.from_property_chains([[IRI(prop)] for prop in data])
+    scope = _scope_naming(None, data)
     ogm.create(
         class_iri=class_iri,
         instance_iri=instance_iri,
@@ -243,7 +279,12 @@ def register_service(
     address: str,
     named_graph: Optional[IRI] = None,
 ) -> None:
-    """Register a Service instance for a resource. Set its base address.
+    """Register a Service instance for a resource. Set its base address and a first heartbeat.
+
+    The address and ``svc:lastHeartbeat`` (now) are written in one commit. A Service with an
+    address is stale to the watchdog when its heartbeat is missing or old, so an address written
+    alone would let a sweep that runs before the heartbeat loop's first beat deregister a Service
+    that is starting, or one that restarts after its old heartbeat aged past the threshold.
 
     Raises OntologyGroundTruthError if ``service_class`` is not ``svc:Service`` or a subclass.
     """
@@ -251,7 +292,62 @@ def register_service(
     _create_or_adopt(
         ogm, service_class, service_iri, {str(SVC.isServiceOf): [_ref(resource_iri)]}, named_graph
     )
-    _set(ogm, service_iri, {str(SVC.address): [str(address)]}, named_graph)
+    _set(
+        ogm,
+        service_iri,
+        {
+            str(SVC.address): [str(address)],
+            str(SVC.lastHeartbeat): [datetime.now(timezone.utc).isoformat()],
+        },
+        named_graph,
+    )
+
+
+def _register_capability(
+    ogm: "OGM",
+    *,
+    resource_iri: IRI,
+    capability_iri: IRI,
+    capability_class: IRI,
+    data: dict,
+    named_graph: Optional[IRI] = None,
+) -> None:
+    """Write a Capability and the link from the resource that provides it, in one OGM commit.
+
+    A Capability does not exist without its resource, so no commit holds one without the
+    resource's ``cfc:hasCapability`` link to it. The commit carries a ``Create`` of the Capability
+    with ``data``, its own link to its Workflow or StateProperty, and one ``Append`` of the
+    resource's link. When the store refuses the create because it holds the Capability already,
+    left by an earlier run, the Capability is adopted: a second commit carries an ``Update`` with
+    ``data`` and the same ``Append``. Each commit is admitted or refused as a whole.
+
+    The link is a multi-valued property of the resource, declared in Core (domain
+    ``cfc:Resource``, range ``cfc:Capability``). The ``Append`` adds it and removes none, so a
+    sibling instance's concurrent registration on the same resource keeps its link. The OGM reads
+    the resource's class to check the property, and none of the property's stored values: the
+    property has no maximum. A link the resource already has changes nothing. The resource must be
+    in the store already. ``named_graph`` is the graph the commit writes to.
+
+    Raises:
+        OGMNotFoundError: If the store does not hold the resource (from ``kapps_ogm.utils.errors``).
+            Nothing is written.
+        TripleStoreResponseError: If the store refuses the commit, a SHACL refusal included. It
+            propagates unchanged, and nothing of the commit is written.
+    """
+    link = Append(instance_iri=resource_iri, property_iri=CFC.hasCapability, value=capability_iri)
+    create = Create(
+        class_iri=capability_class,
+        data=data,
+        instance_iri=capability_iri,
+        class_scope=_scope_naming(None, data),
+    )
+    try:
+        ogm.commit(changes=[create, link], named_graph=named_graph)
+    except PreconditionFailedError:
+        ogm.commit(
+            changes=[Update(instance_iri=capability_iri, data=data), link],
+            named_graph=named_graph,
+        )
 
 
 def register_workflow(
@@ -280,19 +376,18 @@ def register_workflow(
         ogm, workflow_class, workflow_iri, {str(SVC.isWorkflowOf): [_ref(service_iri)]}, named_graph
     )
     _set(ogm, workflow_iri, {str(SVC.endpoint): [str(endpoint)]}, named_graph)
-    _create_or_adopt(
+    # The resource *provides* the Capability (cfc:hasCapability, Resource -> Capability), and the
+    # link goes into the Capability's own commit. It lets a restarting resource (or the watchdog)
+    # find its own Operations by ontology traversal rather than by match of IRI names, and it
+    # persists across a restart.
+    _register_capability(
         ogm,
-        capability_class,
-        capability_iri,
-        {str(SVC.realizedByWorkflow): [_ref(workflow_iri)]},
-        named_graph,
+        resource_iri=resource_iri,
+        capability_iri=capability_iri,
+        capability_class=capability_class,
+        data={str(SVC.realizedByWorkflow): [_ref(workflow_iri)]},
+        named_graph=named_graph,
     )
-    # The resource *provides* the Capability (cfc:hasCapability, Resource -> Capability). This
-    # Core link is not declared in the loaded Core subset. Write through the low-level triple
-    # API (as create_operation does for cfc: links). It lets a restarting resource (or the
-    # watchdog) find its own Operations by ontology traversal rather than by match of IRI names.
-    # It persists across a restart.
-    ogm.db.triple_add((resource_iri, CFC.hasCapability, capability_iri), named_graph=named_graph)
 
 
 def register_state_property(
@@ -325,15 +420,16 @@ def register_state_property(
         named_graph,
     )
     _set(ogm, state_property_iri, {str(SVC.endpoint): [str(endpoint)]}, named_graph)
-    _create_or_adopt(
+    # The resource provides this Capability too (cfc:hasCapability), linked in the Capability's
+    # own commit. See register_workflow.
+    _register_capability(
         ogm,
-        capability_class,
-        capability_iri,
-        {str(SVC.providedByStateProperty): [_ref(state_property_iri)]},
-        named_graph,
+        resource_iri=resource_iri,
+        capability_iri=capability_iri,
+        capability_class=capability_class,
+        data={str(SVC.providedByStateProperty): [_ref(state_property_iri)]},
+        named_graph=named_graph,
     )
-    # The resource provides this Capability too (cfc:hasCapability). See register_workflow.
-    ogm.db.triple_add((resource_iri, CFC.hasCapability, capability_iri), named_graph=named_graph)
 
 
 # --------------------------------------------------------------------------- #
@@ -349,10 +445,13 @@ def deregister_service(
     Endpoints receive removal via ``OGM.commit`` (the validated write path). The workflows/state-
     properties to clear are found via a read on the instance-owned inverse (``svc:isWorkflowOf``
     / ``svc:isStatePropertyOf``). Structural triples and rdf:type are preserved.
+
+    The endpoints go first and the address last, each in its own commit. A deregistration that
+    stops halfway (a store error) leaves the address, so the Service is still found by its address
+    (as stale, by the watchdog) and the next deregistration finishes it; the reverse order would
+    leave endpoints that nothing finds again.
     """
     db = ogm.db
-    _set(ogm, service_iri, {str(SVC.address): []}, named_graph)
-
     for wf_node, _, _ in db.triples_get(
         pred=SVC.isWorkflowOf, obj=service_iri, named_graph=named_graph
     ):
@@ -364,6 +463,8 @@ def deregister_service(
         _set(
             ogm, _named(sp_node, "StateProperty", service_iri), {str(SVC.endpoint): []}, named_graph
         )
+
+    _set(ogm, service_iri, {str(SVC.address): []}, named_graph)
 
 
 def _named(node: IRI | BNode, kind: str, service_iri: IRI) -> IRI:
@@ -438,18 +539,25 @@ def sweep_stale_services(
     now: Optional[datetime] = None,
     named_graph: Optional[IRI] = None,
 ) -> list[IRI]:
-    """Deregister every stale Service. Fail its resource stranded Operations.
+    """Deregister every stale Service. Fail the Operations of its resource that are stranded.
 
-    Alongside removal of a dead resource reachability, the watchdog marks that resource stranded
-    Operations (``queued``/``running``) ``failed``. Work addressed to a resource that will never
-    return does not hang forever. Returns the swept Service IRIs.
+    Alongside removal of a dead resource reachability, the watchdog marks ``failed`` the
+    ``queued``/``running`` Operations of that resource that no surviving Service can take. Work
+    addressed to a resource that will never return does not hang forever. Returns the Service IRIs
+    it deregistered; one skipped on a store error is left for the next sweep and not returned.
 
-    A resource may carry several Services. This is no longer quite right. A stale
-    monitor drags its live sibling stranded Operations down with it. Fail them only when no
-    sibling survives is *also* wrong. A surviving monitor realizes no Workflow. It would shield
-    a dead controller queue forever. The correct predicate is per-Operation ("does any surviving
-    Service realize this Operation Capability"). ``_reconstruct_queue`` needs the same
-    treatment. Neither is done yet.
+    The decision is per Operation (:func:`find_stranded_operations`), live meaning a Service
+    with an ``svc:address`` and an ``svc:lastHeartbeat`` within ``max_age_seconds`` of ``now``:
+    a ``queued`` Operation is stranded when its Capability is realized by no live Service of
+    its resource; a ``running`` one when the Service of the Workflow that claimed it
+    (``svc:executedByWorkflow``) is not live, or no claimer is recorded. The stale Service is
+    not live by definition. So a stale monitor does not fail the queue of a live controller
+    sibling that realizes its Capability, a live monitor that realizes no Workflow does not
+    shield the queue of a dead controller, and a dead claimer's running Operation is failed
+    even when a live sibling realizes its Capability (that sibling would never run it). The
+    stale Service is deregistered either way. The startup reconstruction of a queue
+    (``SemanticMiddleware._reconstruct_queue``) decides its running Operations with the same
+    predicate.
     """
     return _sweep_stale_services(ogm, max_age_seconds, now=now, named_graph=named_graph)
 
@@ -463,26 +571,76 @@ def _sweep_stale_services(
     failed: Callable[[IRI], None] = lambda operation_iri: None,
 ) -> list[IRI]:
     """The sweep of :func:`sweep_stale_services`. It calls ``failed`` with each Operation that it
-    marked ``failed``, after that commit, so the watchdog notifies the Operation's issuer."""
+    marked ``failed``, after that commit, so the watchdog notifies the Operation's issuer.
+
+    A store error is isolated to the Service or the Operation it hit: it is logged as one warning
+    that names them, and the sweep goes on with the next. A Service whose stranded Operations
+    were not all failed keeps its address, so the next sweep finds it again and finishes; it is
+    left out of the returned list. Only the first read (the stale Services) raises a store error.
+    Any other error is raised.
+    """
+    if now is None:
+        now = datetime.now(timezone.utc)
     stale = find_stale_services(ogm, max_age_seconds, now=now, named_graph=named_graph)
+    swept: list[IRI] = []
     for service_iri in stale:
-        resource_iri = _resource_of_service(ogm, service_iri, named_graph=named_graph)
-        if resource_iri is not None:
-            for op_iri in find_resource_operations(
-                ogm,
-                resource_iri,
-                [OperationStatus.QUEUED, OperationStatus.RUNNING],
-                named_graph=named_graph,
-            ):
+        try:
+            resource_iri = _resource_of_service(ogm, service_iri, named_graph=named_graph)
+            stranded = (
+                find_stranded_operations(
+                    ogm,
+                    resource_iri,
+                    [OperationStatus.QUEUED, OperationStatus.RUNNING],
+                    max_age_seconds,
+                    now=now,
+                    named_graph=named_graph,
+                )
+                if resource_iri is not None
+                else []
+            )
+        except _LIVENESS_STORE_ERRORS as error:
+            logger.warning(
+                "The sweep skipped the stale Service %s, whose stranded Operations were not "
+                "read; the next sweep tries again: %r",
+                service_iri,
+                error,
+            )
+            continue
+        all_failed = True
+        for op_iri in stranded:
+            try:
                 mark_operation_failed(
                     ogm,
                     op_iri,
-                    "stranded operation swept by watchdog: the resource is stale/dead",
+                    "stranded operation swept by watchdog: no live service of the resource "
+                    "will finish it",
                     named_graph=named_graph,
                 )
-                failed(op_iri)
-        deregister_service(ogm, service_iri, named_graph=named_graph)
-    return stale
+            except _LIVENESS_STORE_ERRORS as error:
+                all_failed = False
+                logger.warning(
+                    "The sweep did not fail the stranded Operation %s of the stale Service %s; "
+                    "the next sweep tries again: %r",
+                    op_iri,
+                    service_iri,
+                    error,
+                )
+                continue
+            failed(op_iri)
+        if not all_failed:
+            continue
+        try:
+            deregister_service(ogm, service_iri, named_graph=named_graph)
+        except _LIVENESS_STORE_ERRORS as error:
+            logger.warning(
+                "The sweep did not finish deregistering the stale Service %s; the next sweep "
+                "tries again: %r",
+                service_iri,
+                error,
+            )
+            continue
+        swept.append(service_iri)
+    return swept
 
 
 # --------------------------------------------------------------------------- #
@@ -522,15 +680,16 @@ def create_operation(
 
     The whole Operation is written in ONE ``OGM.commit``: its ``rdf:type``, its single-valued
     ``cfc:implementsCapability`` link, ``svc:operationStatus``, and ``data``, whose properties
-    the Operation's class must declare. Its class scope names every property it sets, because
-    kapps_ogm drops a property that the scope does not name, with only a warning.
+    the Operation's class must declare: kapps_ogm refuses a property that the class does not
+    declare, with ``OGMDataError``. Its class scope names every property it sets, so none lies
+    outside the scope.
     ``issue_operation()`` does not call this: it creates the Operation with ``mw.create()`` under the
     operation scope. This writer is kept for existing callers, such as tests that seed an
     Operation. The IRI must be new: the store must hold no statement about it yet, or the
     store's refusal ``PreconditionFailedError`` is raised, and nothing is written. The
     Resource->Capability ``cfc:hasCapability`` link written at *registration* is a separate,
-    multi-valued append. It stays on the low-level path until
-    ``kapps_ogm`` grows a validated single-triple append.
+    multi-valued property of the resource, written through the OGM as an ``Append`` in the
+    Capability's own commit by ``_register_capability``.
     """
     create_data: dict = {
         **_implements(IRI(capability_iri)),
@@ -541,7 +700,7 @@ def create_operation(
         class_iri=IRI(operation_class),
         instance_iri=IRI(operation_iri),
         data=create_data,
-        class_scope=ClassScope.from_property_chains([[IRI(prop)] for prop in create_data]),
+        class_scope=_scope_naming(None, create_data),
     )
     ogm.commit(changes=[creation], named_graph=named_graph)
 
@@ -624,6 +783,8 @@ class _ClaimRead(NamedTuple):
     workflow: IRI
     #: The Operation's issuer (``svc:issuedBy``), or None when it has none.
     issuer: Optional[IRI]
+    #: The Operation's Capability (``cfc:implementsCapability``), or None when not read.
+    capability: Optional[IRI] = None
 
 
 def _resolve_claim(
@@ -638,7 +799,7 @@ def _resolve_claim(
             is an ``OperationResolutionError``.
     """
     sparql = f"""
-    SELECT ?wf ?issuer WHERE {{
+    SELECT ?wf ?issuer ?cap WHERE {{
         <{operation_iri}> <{CFC.implementsCapability}> ?cap .
         ?cap <{SVC.realizedByWorkflow}> ?wf .
         OPTIONAL {{ <{operation_iri}> <{SVC.issuedBy}> ?issuer . }}
@@ -652,7 +813,12 @@ def _resolve_claim(
         )
     binding = bindings[0]
     issuer = binding.get("issuer")
-    return _ClaimRead(IRI(str(binding["wf"])), IRI(str(issuer)) if issuer is not None else None)
+    capability = binding.get("cap")
+    return _ClaimRead(
+        IRI(str(binding["wf"])),
+        IRI(str(issuer)) if issuer is not None else None,
+        IRI(str(capability)) if capability is not None else None,
+    )
 
 
 def _issuers(ogm: "OGM", operation_iris: Sequence[IRI]) -> dict[IRI, IRI]:
@@ -724,10 +890,24 @@ def _bindings(result: Any) -> list:
 def _operation_status_update(operation_iri: IRI, status: str) -> Update:
     """The kapps_ogm ``Update`` that sets `svc:operationStatus` on an Operation.
 
-    This covers the queued->running transition and any other single-status transition. Nothing
-    is written here: ``claim_next()`` commits it as the entry of ``mw.commit()``, its claim.
+    It covers any single-status transition. Nothing is written here: :func:`set_operation_status`
+    commits it. ``claim_next()`` commits :func:`_claim_update` as its claim instead.
     """
     return Update(instance_iri=IRI(operation_iri), data={str(SVC.operationStatus): [status]})
+
+
+def _claim_update(operation_iri: IRI, executor: Optional[IRI]) -> Update:
+    """The kapps_ogm ``Update`` of a claim: `svc:operationStatus` ``running`` and, when the
+    claimer names its Workflow, that Workflow as the executor (`svc:executedByWorkflow`).
+
+    One change, so the status and the executor are written in one commit.
+    :func:`find_stranded_operations` reads the executor to decide whether a running Operation is
+    stranded. Nothing is written here: ``claim_next()`` commits it as its entry.
+    """
+    data: dict = {str(SVC.operationStatus): [OperationStatus.RUNNING]}
+    if executor is not None:
+        data[str(SVC.executedByWorkflow)] = [_ref(executor)]
+    return Update(instance_iri=IRI(operation_iri), data=data)
 
 
 def set_operation_status(
@@ -739,9 +919,9 @@ def set_operation_status(
 ) -> None:
     """Set `svc:operationStatus` on an Operation via the OGM atomic commit path.
 
-    It writes :func:`_operation_status_update` in one ``OGM.commit``. ``claim_next()`` no longer
-    calls this: it commits the same change through ``mw.commit()``. This writer is kept for
-    existing callers.
+    It writes :func:`_operation_status_update` in one ``OGM.commit``. ``claim_next()`` does not
+    call this: it commits its claim (:func:`_claim_update`) through ``mw.commit()``. This writer
+    is kept for existing callers.
     """
     ogm.commit(changes=[_operation_status_update(operation_iri, status)], named_graph=named_graph)
 
@@ -847,6 +1027,96 @@ def find_resource_operations(
     return [IRI(str(b["op"])) for b in bindings]
 
 
+def find_stranded_operations(
+    ogm: "OGM",
+    resource_iri: IRI,
+    statuses: Sequence[str],
+    max_age_seconds: float,
+    now: Optional[datetime] = None,
+    named_graph: Optional[IRI] = None,
+    *,
+    excluding: Sequence[IRI] = (),
+) -> list[IRI]:
+    """Find a resource own Operations, in one of ``statuses``, that no live Service will finish.
+
+    A Service is live when it has an ``svc:address`` and an ``svc:lastHeartbeat`` no older than
+    ``max_age_seconds`` before ``now``, and is not in ``excluding``. The Operations are the
+    resource own, as :func:`find_resource_operations` finds them (``cfc:implementsCapability``
+    and ``cfc:hasCapability``). Two rules, one read:
+
+    - A ``running`` Operation is stranded when the Service of its executor is not live: the
+      Workflow recorded at the claim (``svc:executedByWorkflow``) belongs (``svc:isWorkflowOf``)
+      to no live Service. A running Operation without a recorded executor (written by a claim
+      that names none) is stranded. No other Service takes up a
+      running Operation, so only its claimer counts.
+    - An Operation in any other status (``queued``) is stranded when its Capability is realized
+      by no live Service of its resource: no Workflow that realizes the Capability
+      (``svc:realizedByWorkflow``) belongs to a live Service of the resource
+      (``svc:isServiceOf``). The joins are those of discovery (:func:`resolve_dispatch_target`),
+      plus the heartbeat.
+
+    The watchdog sweep and the startup reconstruction of a queue (for its running Operations)
+    both decide with it. The reconstruction takes up its queued Operations without it. A
+    restarting instance's re-registration writes a fresh heartbeat with its address
+    (:func:`register_service`), so a sweep after it counts the instance as live.
+
+    Args:
+        ogm: The OGM instance.
+        resource_iri: The resource whose Operations to inspect.
+        statuses: The statuses to filter (e.g. ``["queued", "running"]``).
+        max_age_seconds: The staleness threshold: a heartbeat older than this is not live.
+        now: The time the threshold counts back from. Defaults to the current time.
+        named_graph: Optional named graph for the read.
+        excluding: Services that never count as live, whatever their heartbeat. A restarting
+            instance names its own Service here: its heartbeat may still be fresh from before
+            the crash, and the running Operations it claimed then are orphans.
+
+    Returns:
+        List of the stranded Operation IRIs.
+    """
+    if now is None:
+        now = datetime.now(timezone.utc)
+    cutoff = (
+        f'"{(now - timedelta(seconds=max_age_seconds)).isoformat()}"'
+        "^^<http://www.w3.org/2001/XMLSchema#dateTime>"
+    )
+    status_filter = ", ".join(f'"{s}"' for s in statuses)
+
+    def live(service: str) -> str:
+        """The pattern of a live ``service`` (a SPARQL variable)."""
+        exclusion = ""
+        if excluding:
+            listed = ", ".join(f"<{iri}>" for iri in excluding)
+            exclusion = f" FILTER({service} NOT IN ({listed}))"
+        return (
+            f"{service} <{SVC.address}> ?addr . {service} <{SVC.lastHeartbeat}> ?hb . "
+            f"FILTER(?hb >= {cutoff}){exclusion}"
+        )
+
+    sparql = f"""
+    SELECT DISTINCT ?op WHERE {{
+        ?op <{CFC.implementsCapability}> ?cap .
+        <{resource_iri}> <{CFC.hasCapability}> ?cap .
+        ?op <{SVC.operationStatus}> ?st .
+        FILTER(?st IN ({status_filter}))
+        FILTER(
+            (?st = "{OperationStatus.RUNNING}" && NOT EXISTS {{
+                ?op <{SVC.executedByWorkflow}> ?exwf .
+                ?exwf <{SVC.isWorkflowOf}> ?exsvc .
+                {live("?exsvc")}
+            }})
+            || (?st != "{OperationStatus.RUNNING}" && NOT EXISTS {{
+                ?cap <{SVC.realizedByWorkflow}> ?wf .
+                ?wf <{SVC.isWorkflowOf}> ?svc .
+                ?svc <{SVC.isServiceOf}> <{resource_iri}> .
+                {live("?svc")}
+            }})
+        )
+    }}
+    """
+    return [IRI(str(b["op"])) for b in _bindings(ogm.db.query(sparql, convert_bindings=True))]
+
+
 def services_of_resource(
     ogm: "OGM",
     resource_iri: IRI,
@@ -918,138 +1188,6 @@ def mark_operation_failed(
         },
         named_graph,
     )
-
-
-# ---- Possession + handover (Core reified possession, one state per Resource) ----
-
-
-def create_possession(
-    ogm: "OGM",
-    *,
-    workpiece_iri: IRI,
-    possessor_iri: IRI,
-    named_graph: Optional[IRI] = None,
-) -> IRI:
-    """Give a workpiece its first Possessor, in one OGM commit.
-
-    The same write as :func:`switch_possession`, under the name that callers of a first
-    possession use: the workpiece points at the possessor's one ``cfc:PossessionState``, and
-    when the possessor has none yet, the same commit creates it as ``<possessor>_possession``
-    (its ``Create`` writes its type) and links the possessor to it. A possessor that has a state
-    keeps its link unchanged, however many workpieces it possesses.
-
-    Returns:
-        The possessor's PossessionState IRI.
-    """
-    return switch_possession(
-        ogm, workpiece_iri=workpiece_iri, new_possessor_iri=possessor_iri, named_graph=named_graph
-    )
-
-
-def find_possession_state(
-    ogm: "OGM",
-    workpiece_iri: IRI,
-    possessor_iri: IRI,
-    named_graph: Optional[IRI] = None,
-) -> Optional[IRI]:
-    """The current PossessionState in which ``possessor_iri`` holds ``workpiece_iri``, or None.
-
-    An ontology-backed read (``workpiece cfc:hasPossessedWorkpiece ?ps . possessor
-    cfc:hasPossessor ?ps``). Never match on IRI names.
-    """
-    sparql = f"""
-    SELECT ?ps WHERE {{
-        <{workpiece_iri}> <{CFC.hasPossessedWorkpiece}> ?ps .
-        <{possessor_iri}> <{CFC.hasPossessor}> ?ps .
-    }}
-    """
-    result = ogm.db.query(sparql, convert_bindings=True)
-    bindings = (
-        result.get("results", {}).get("bindings", []) if isinstance(result, dict) else []
-    )
-    return IRI(str(bindings[0]["ps"])) if bindings else None
-
-
-def counterpart_has_complementary_ability(
-    ogm: "OGM",
-    counterpart_iri: IRI,
-    mode_ability_iri: IRI,
-    named_graph: Optional[IRI] = None,
-) -> bool:
-    """True iff the counterpart carries the handover ability COMPLEMENTARY to ``mode_ability_iri``.
-
-    ``mes:complements`` is symmetric. This is a read (``mode_ability mes:complements ?a . counterpart
-    mes:hasHandoverAbility ?a``).
-    """
-    sparql = f"""
-    SELECT ?a WHERE {{
-        <{mode_ability_iri}> <{MES.complements}> ?a .
-        <{counterpart_iri}> <{MES.hasHandoverAbility}> ?a .
-    }}
-    """
-    result = ogm.db.query(sparql, convert_bindings=True)
-    bindings = (
-        result.get("results", {}).get("bindings", []) if isinstance(result, dict) else []
-    )
-    return bool(bindings)
-
-
-def switch_possession(
-    ogm: "OGM",
-    *,
-    workpiece_iri: IRI,
-    new_possessor_iri: IRI,
-    workpiece_update: Optional[Mapping[str, Sequence[Any]]] = None,
-    named_graph: Optional[IRI] = None,
-) -> IRI:
-    """Hand a workpiece to a new possessor in one OGM commit, with no move around it.
-
-    This is the possession change of ``SemanticMiddleware.handover()`` on its own. The workpiece's
-    ``cfc:hasPossessedWorkpiece`` points at the new possessor's one state, and
-    ``workpiece_update`` changes more of its properties in the same commit. When the new
-    possessor has no state yet, the same commit creates it and links the possessor to it. The
-    previous possessor keeps its state and its link, and so does a new possessor that has a
-    state. The store validates the whole commit once; if it refuses, nothing of it stays.
-
-    Another write that moves the workpiece at the same moment is refused only in part. Inside the
-    commit, kapps_ogm compares the workpiece with a fresh read of it: a write that landed before
-    that read is overwritten. One that lands between that read and the write makes the store
-    refuse this commit and write nothing of it, and the switch raises
-    ``PossessionSwitchConflict``.
-
-    A participant hands over with ``SemanticMiddleware.handover()``. This module-level helper,
-    and ``create_possession``, serve callers that hold no middleware; they write through
-    ``OGM.commit``, the validated write, not through ``mw.commit()``.
-
-    Args:
-        workpiece_update: More properties of the workpiece to set in the same commit, as
-            ``{property IRI: [values]}``; each listed property is replaced. An IRI value (an
-            ``IRI`` or an rdflib ``URIRef``), or ``{"id": iri}``, is a reference to that object;
-            any other value goes to the OGM as it is.
-
-    Returns:
-        The new possessor's PossessionState IRI.
-
-    Raises:
-        ValueError: If ``workpiece_update`` names ``cfc:hasPossessedWorkpiece``, which the
-            change sets itself.
-        DeploymentValueError: If the new possessor has more than one possession state
-            (Repair). It is a ``ValueError``.
-        PossessionSwitchConflict: If another write changed what the commit had read, so the
-            store found its precondition false (``PreconditionFailedError``, the cause).
-            Nothing is written.
-    """
-    change = possession_change(
-        ogm,
-        workpiece_iri=workpiece_iri,
-        possessor_iri=new_possessor_iri,
-        workpiece_update=workpiece_update,
-    )
-    try:
-        ogm.commit(changes=change.changes, named_graph=named_graph)
-    except PreconditionFailedError as error:
-        raise _switch_conflict(workpiece_iri) from error
-    return change.state
 
 
 def reachable_service_addresses(ogm: "OGM", resource_iri: IRI) -> list[Tuple[IRI, str]]:

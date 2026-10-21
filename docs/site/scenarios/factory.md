@@ -1,6 +1,11 @@
 # Scenario 3 — The TransferUnit Factory
 
-This demo builds a very small factory on your computer and lets you drive it from a web browser.
+This demo builds a very small factory on your computer and lets you watch it from a web browser.
+
+**The demo observes.** In KAPPS a machine changes only through a workflow of its service. This
+demo has no machine workflows yet, so the control station reads the machines and changes none.
+Its control returns with workflows after the paper. You can still move a belt at the machine
+itself, on its own panel page.
 
 Nothing here is real hardware. Every machine is a Python program that pretends to be one. But the
 parts talk to each other the same way real ones would, so what you see is the real behaviour.
@@ -18,13 +23,13 @@ a factory floor.
 | --- | --- |
 | **PLC 1** and **PLC 2** | Two conveyor machines. Each has 2 belts and 2 light barriers. Each has its own small web page. |
 | **Middleware 1** and **Middleware 2** | One "translator" per machine. It reads the machine over MQTT and offers it to the network over HTTP. |
-| **Control station** | An operator screen. It finds the machines by asking a database, then drives them. |
+| **Control station** | An operator screen. It finds the machines by asking a database, then shows what they report. |
 | **Launcher** | Starts all of the above and shows you a picture of them. |
 
 A **TransferUnit** is one conveyor machine: 2 belts and 2 light barriers.
 
 **The point of the demo:** the control station is never told where the machines are. It asks the
-knowledge graph, finds whatever is there, and drives it. You can stop a machine and it disappears
+knowledge graph, finds whatever is there, and reads it. You can stop a machine and it disappears
 from the screen. Nothing is hardcoded.
 
 ## Before you start
@@ -109,27 +114,18 @@ asking for 3 m/s takes about 3 seconds. This is on purpose — a real belt has m
 ### 3. Open the control station — the station board
 
 Click the **control station** box. This screen never talked to the machines directly. It ran a
-database query, found them, and connected.
+database query, found them, and connected. It only reads: it has no set control.
 
 Try this:
 
-1. Press **pause**. The station board runs an automatic program on a timer; you must pause it before
-   you can drive a machine by hand.
-2. Expand a machine's card and type a new belt speed, then press **set**.
-3. Watch the value. It says `sending`, then climbs, then reaches your number and says `settled`.
-4. Turn on **show IRIs**. Every row now also shows its full name in the knowledge graph, the exact
-   Python line that sets it, and which private details were hidden from the network.
+1. Expand a machine's card. Every belt speed and light barrier shows the value the machine reports.
+2. On that machine's own panel page (step 2), set a belt speed. Within a few seconds the station
+   board shows the belt climbing to your number.
+3. Turn on **show IRIs**. Every row now also shows its full name in the knowledge graph, the exact
+   Python expression that reaches its value, and which private details were hidden from the network.
 
-A value that stops short of your number says `diverged`. How long the automatic program waits
-between its own writes matters as much. Both rules, as the demo's code states them:
-
-```{eval-rst}
-.. autoattribute:: kapps_semantic_middleware.demonstrations.transferunits.controller.WriteStatus.DIVERGED
-   :no-index:
-
-.. autodata:: kapps_semantic_middleware.demonstrations.transferunits.control_station.DEFAULT_TICK_SECONDS
-   :no-index:
-```
+The bar above the cards shows the automatic program. It waits for a light barrier to change, then
+reads a barrier and a belt speed and writes both to the control station's log. **pause** stops it.
 
 % SCREENSHOT SLOT 3 of 4: the station board with show IRIs turned on.
 
@@ -154,11 +150,13 @@ the machine removed itself from the graph, and the station board simply stopped 
 Every program's output also appears in the terminal you started from, with a name in front of each
 line (`plc-1`, `middleware-2`, `control`), so you can see which program said what.
 
-## The full loop this demo proves
+## The path this demo proves
 
 ```text
-PLC → MQTT → middleware → knowledge graph → control station → HTTP → back to the PLC
+PLC → MQTT → middleware → knowledge graph → control station finds it → HTTP read → station board
 ```
 
 Every arrow in that line is a mechanism the earlier scenarios showed one at a time. The difference
-here is only that there are six processes instead of one notebook.
+here is only that there are six processes instead of one notebook. The way back to the PLC returns
+with workflows: a machine changes only through a workflow of its service, and this demo has none
+yet.

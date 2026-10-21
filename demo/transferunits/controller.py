@@ -1,10 +1,11 @@
 """The controller is a middleware instance: SPARQL view, fetched datamodels, REST
-connectors.
+connectors that read.
 
 The controller is a resource-mode middleware instance that holds its own datamodels. It
-never speaks raw HTTP itself. Its own driving connectors do that, exactly the way a
-device-facing instance's MQTT connectors do. The Control Expert's five
-steps (``CONTEXT.md``):
+never speaks raw HTTP itself. Its own reading connectors do that, exactly the way a
+device-facing instance's MQTT connectors do. It observes and writes nothing: in KAPPS a
+device changes only through a workflow of its service, and this demo has none yet. The
+Control Expert's steps (``CONTEXT.md``):
 
 1. ``view()`` runs the caller's own SPARQL query -- the view -- and returns every IRI it
    binds to ``?resource``. The query is the whole view: which class, which liveness join
@@ -21,10 +22,9 @@ steps (``CONTEXT.md``):
 4. Registration happens in step 2, via ``wire_view()`` -- a plain call the caller makes
    after construction and before the app's lifespan starts (before ``run_server``).
    Connectors must exist before the lifespan connects them, so wiring cannot
-   wait for an async hook.
-5. ``push()`` drives an in-place assignment on a loaded datamodel out to its owner. An
-   algorithm reads and writes ``self.units[...]`` directly; nothing here or in the
-   algorithm's body issues an HTTP call.
+   wait for an async hook. Every connector it registers is a read leg: the controller's
+   connector flavour is ``TO_PERSISTENCE``, so recognition never builds a write leg, and
+   nothing here can send a PUT to a unit's served data model.
 
 The controller still discovers resources by class IRI via ``discover_resources``,
 independent of the view mechanism above, and still derives REST parameter paths
@@ -35,16 +35,15 @@ itself as a ControlStationService so it appears in its own discovery list.
 from __future__ import annotations
 
 import asyncio
-import enum
 import functools
 import logging
-import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple, Union
+from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 
 import anyio
 from transitional_sync_middleware.middleware.registries import ConnectionInfo
+from transitional_sync_middleware.middleware.sync.synced_connector import SyncDirection
 from kapps_triplestore_interface import IRI
 
 from kapps_semantic_middleware import Mode, SemanticMiddleware
@@ -130,240 +129,16 @@ class ViewDiff:
     """Set when the heuristic itself failed (malformed SPARQL). None otherwise."""
 
 
-@dataclass
-class CommandedValue:
-    """What was last written to one parameter, and who wrote it.
-
-    The served datamodel carries only the observed value (the locator pattern
-    means the graph, and so the fetched tree, holds no separate setpoint field), so this
-    is the *only* place "what did we ask for" is knowable at all -- not a convenience
-    cache of something visible elsewhere. Both write paths must fill it: a human via
-    ``station_board.py``'s set route, and the algorithm via ``algorithm.run_algorithm_once``,
-    each calling ``controller.writes.record_commanded`` immediately before ``push()``.
-    """
-
-    value: Any
-    at: float
-    """``time.monotonic()`` at the moment this was recorded, for a UI's "how long has
-    this been converging" display -- monotonic rather than wall-clock because nothing
-    here compares it across a process restart."""
-
-    origin: str
-    """"operator" or "algorithm" -- distinguishes who last commanded this parameter."""
-
-
-class WriteStatus(str, enum.Enum):
-    """What became of the last write to one parameter.
-
-    A plain ``str`` subclass for the same reason ``AlgorithmMode`` is one: a status
-    round-trips through JSON with no translation layer between the tracker, the page's
-    badge and a test's assertion.
-
-    The progression is ``sending`` -> ``settled`` | ``rejected`` | ``diverged``.
-    ``sending`` is not a member here because it is not a *judgement* -- it is simply the
-    moment between the click and the first observation, and the page shows it locally.
-    :attr:`CONVERGING` is what that moment becomes as soon as there is something to
-    observe, and while a belt ramps (``TransferUnit._ramp_loop``) it is where a healthy write
-    spends most of its life.
-    """
-
-    SETTLED = "settled"
-    """The actual value came back matching what was commanded."""
-
-    CONVERGING = "converging"
-    """Accepted, still moving toward the command -- the normal state while a belt ramps."""
-
-    DIVERGED = "diverged"
-    """Accepted, but the actual value has *stopped converging*. Not "unequal": a belt ramps
-    toward its command (``TransferUnit._ramp_loop``), so commanded and actual are unequal
-    during every set by design, and an equality test would fire on every write. How long a
-    value may sit unmoved before it counts as stopped is ``DEFAULT_STILL_SECONDS``."""
-
-    REJECTED = "rejected"
-    """The PUT failed outright -- unit down, 4xx, bad payload. Carries a reason."""
-
-
-_SETTLED_RELATIVE_TOLERANCE = 1e-2
-"""A value that has made a round trip through MQTT, JSON and a float is never bit-exact,
-so an exact comparison would leave every write reading ``converging`` forever."""
-
-_SETTLED_ABSOLUTE_TOLERANCE = 1e-9
-
-DEFAULT_STILL_SECONDS = 6.0
-"""How long a value may sit unmoved, short of its command, before the write is called
-diverged.
-
-Measured in *seconds*, not in polls: a poll is a browser asking, so counting polls would
-make two open tabs declare divergence in half the time and a closed page never declare it
-at all. One quiet moment may be a slow lap -- a lap can straddle a poll, see
-``control_station.DEFAULT_TICK_SECONDS`` -- so this must exceed a lap while staying under the
-default tick, or the algorithm would overwrite a stuck value before the board ever reported
-it.
-"""
-
-
-def _is_close(a: Any, b: Any) -> bool:
-    """Whether two observed values count as the same value."""
-    if isinstance(a, bool) or isinstance(b, bool) or not isinstance(a, (int, float)) or not isinstance(b, (int, float)):
-        return a == b
-    difference = abs(a - b)
-    if difference < _SETTLED_ABSOLUTE_TOLERANCE:
-        return True
-    return difference / max(abs(a), abs(b), 1.0) < _SETTLED_RELATIVE_TOLERANCE
-
-
-@dataclass
-class _Observation:
-    """The last value seen for one parameter, and when it last actually moved."""
-
-    last_value: Any
-    unchanged_since: float
-
-
-class WriteTracker:
-    """Per parameter: what was last commanded, and whether the device is converging on it
-    (see :class:`WriteStatus`).
-
-    This is its own object, not a handful of dicts on :class:`Controller`, because the
-    judgement it makes has to be provable *in a test*: the
-    classification began in ``station_board.html``'s script, where pytest cannot reach
-    it. Nothing here touches the graph, a connector or the network -- it is a state
-    machine over observations, which is what lets its tests run with no fixtures at all.
-
-    The served datamodel carries only the observed value (the locator pattern
-    means the graph holds no separate setpoint field), so this is the *only* place "what
-    did we ask for" is knowable at all. Both write paths must record: a human via
-    ``station_board.py``'s set route, and the algorithm via ``run_algorithm_once``.
-
-    Args:
-        still_seconds: How long a value may sit unmoved, short of its command, before
-            the write is called diverged. See :data:`DEFAULT_STILL_SECONDS`.
-        clock: Monotonic seconds source. Injectable so a test can age a write without
-            sleeping through it.
-    """
-
-    def __init__(
-        self,
-        *,
-        still_seconds: float = DEFAULT_STILL_SECONDS,
-        clock: Callable[[], float] = time.monotonic,
-    ) -> None:
-        self._still_seconds = still_seconds
-        self._clock = clock
-        self._commanded: Dict[str, CommandedValue] = {}
-        self._rejected: Dict[str, str] = {}
-        self._observations: Dict[str, _Observation] = {}
-
-    @staticmethod
-    def _key(component_iri: Union[str, IRI], field_name: str) -> str:
-        return f"{component_iri}#{field_name}"
-
-    @staticmethod
-    def _scalar(value: Any) -> Any:
-        """The comparable form of a written value.
-
-        ``inf:hasValue`` is a one-element list on the datamodel, so both write paths hand
-        over ``[4.2]`` while every observation reads back the scalar ``4.2``. Normalising
-        here rather than at each caller is what keeps the two paths honest: the operator's
-        route and the algorithm's tick disagreed on this exact point, and the algorithm's
-        writes could never reach ``settled`` as a result.
-        """
-        if isinstance(value, (list, tuple)) and len(value) == 1:
-            return value[0]
-        return value
-
-    def record_commanded(
-        self, component_iri: Union[str, IRI], field_name: str, value: Any, *, origin: str
-    ) -> None:
-        """Record what was just written, and who wrote it. Clears any earlier rejection
-        and restarts the convergence watch -- a retry after the unit came back must not
-        read as rejected forever, nor inherit the previous write's stillness."""
-        key = self._key(component_iri, field_name)
-        self._commanded[key] = CommandedValue(
-            value=self._scalar(value), at=self._clock(), origin=origin
-        )
-        self._rejected.pop(key, None)
-        self._observations.pop(key, None)
-
-    def record_rejected(
-        self, component_iri: Union[str, IRI], field_name: str, error: str
-    ) -> None:
-        """Record that a write failed outright, with the reason to show. Recorded here
-        rather than in the page so it survives a reload -- and so a test can see it."""
-        self._rejected[self._key(component_iri, field_name)] = error
-
-    def commanded_for(
-        self, component_iri: Union[str, IRI], field_name: str
-    ) -> Optional[CommandedValue]:
-        """The last :class:`CommandedValue` recorded, or ``None`` if this controller has
-        never written to this parameter."""
-        return self._commanded.get(self._key(component_iri, field_name))
-
-    def error_for(
-        self, component_iri: Union[str, IRI], field_name: str
-    ) -> Optional[str]:
-        """The reason the last write was rejected, or ``None``."""
-        return self._rejected.get(self._key(component_iri, field_name))
-
-    def observe(
-        self, component_iri: Union[str, IRI], field_name: str, actual: Any
-    ) -> Optional[WriteStatus]:
-        """Record what was just observed for one parameter and return the write's status,
-        or ``None`` if this controller has never commanded it (a value nobody here drove
-        gets no badge -- there is nothing to compare it against).
-
-        Called once per parameter per poll. Only *movement* is recorded, and divergence is
-        judged against the clock, so calling this more often -- a second browser tab, a
-        manual refresh -- cannot make a write diverge any sooner.
-        """
-        key = self._key(component_iri, field_name)
-
-        if key in self._rejected:
-            return WriteStatus.REJECTED
-
-        commanded = self._commanded.get(key)
-        if commanded is None:
-            return None
-
-        now = self._clock()
-        observation = self._observations.get(key)
-        if observation is None or not _is_close(actual, observation.last_value):
-            observation = _Observation(last_value=actual, unchanged_since=now)
-            self._observations[key] = observation
-
-        if _is_close(actual, commanded.value):
-            return WriteStatus.SETTLED
-        if now - observation.unchanged_since >= self._still_seconds:
-            return WriteStatus.DIVERGED
-        return WriteStatus.CONVERGING
-
-    def drop(self, parameters: Sequence[Tuple[Union[str, IRI], str]]) -> None:
-        """Forget every named parameter -- a departed view hit's state must not outlive
-        it, or a unit that leaves and rejoins shows a stale command.
-
-        Takes the parameters explicitly rather than matching an IRI prefix: the keys are
-        *component* IRIs (``ConveyorBelt1_left``), not the unit's own (``TransferUnit1``),
-        so a prefix match on the unit IRI silently matches nothing at all. The caller
-        reads them off the leaver's own :class:`WiringPlan`.
-        """
-        for component_iri, field_name in parameters:
-            key = self._key(component_iri, field_name)
-            self._commanded.pop(key, None)
-            self._rejected.pop(key, None)
-            self._observations.pop(key, None)
-
-
 class Controller(SemanticMiddleware):
     """A resource-mode middleware that holds its own datamodels.
 
     ``view()`` runs the caller's SPARQL query and returns the resource IRIs it binds.
     ``wire_view()`` recognizes each hit's interface-accessible parameters and registers
-    a driving REST connector for every one it finds -- reached over REST, never MQTT
-    (``_VIEW_REGISTRY`` excludes it). Loading happens on startup: each hit's pruned
-    datamodel materializes into ``self.units``, keyed by resource IRI string. An
-    algorithm reads and writes those loaded objects directly and calls ``push()`` to
-    drive an assignment out -- no HTTP call anywhere in its body; the registered
-    connector's own ``consume()`` performs that.
+    a reading REST connector for every one it finds -- reached over REST, never MQTT
+    (``_VIEW_REGISTRY`` excludes it), and never a write leg (the connector flavour is
+    ``TO_PERSISTENCE``). Loading happens on startup: each hit's pruned datamodel
+    materializes into ``self.units``, keyed by resource IRI string, and each read leg's
+    poll keeps it current. An algorithm reads those loaded objects directly.
 
     It also discovers resources by class IRI (``discover_resources``) and
     registers itself as a ControlStationService, so it appears in its own discovery
@@ -382,18 +157,16 @@ class Controller(SemanticMiddleware):
         # Step 1: the view is the query. No domain class is named here.
         hits = controller.view(VIEW_QUERY)
 
-        # Steps 2-4: recognize and register a driving connector for every hit. Must
+        # Steps 2-4: recognize and register a reading connector for every hit. Must
         # run before the app's lifespan starts (before uvicorn's serve()).
         controller.wire_view(hits, class_scope=UNIT_SCOPE)
 
         # ... uvicorn serves the app; on_start_up loads every hit into self.units ...
 
-        # Step 5: the algorithm assigns to its own objects, then pushes.
+        # The algorithm reads its own objects, which the read legs keep current.
         unit = controller.units[str(hits[0])]
         belt = getattr(unit, TU_HAS_CONVEYOR_BELT.lined)[0]
-        speed = getattr(belt, TU_HAS_CONVEYOR_SPEED.lined)[0]
-        setattr(speed, INF.hasValue.lined, [50.0])
-        await controller.push(hits[0])
+        speed = getattr(getattr(belt, TU_HAS_CONVEYOR_SPEED.lined)[0], INF.hasValue.lined)
     """
 
     def __init__(
@@ -446,12 +219,17 @@ class Controller(SemanticMiddleware):
             heartbeat_interval=heartbeat_interval,
             staleness_threshold=staleness_threshold,
             class_scope=None,  # No device interface to prune
-            # Not "no connectors" -- `wire_view` registers a REST connector per driveable
-            # parameter of every view hit, six per unit in this demo. What this flag turns
+            # Not "no connectors" -- `wire_view` registers a REST read connector per
+            # parameter of every view hit, four per unit in this demo. What this flag turns
             # off is recognition *at construction*, against this controller's own resource:
             # a control station is not a device and has no parameters of its own to bind.
             # Its connectors come from the view, which does not exist yet at this point.
             autoregister_connectors=False,
+            # Read legs only. `resolve_direction` takes the most restrictive of a
+            # parameter's access mode and this flavour, so even a read-write belt speed
+            # gets no write leg: the controller observes, and a device changes only
+            # through a workflow of its service.
+            connector_sync_direction=SyncDirection.TO_PERSISTENCE,
             activity_feed=activity_feed,
             activity_capacity=activity_capacity,
         )
@@ -473,15 +251,11 @@ class Controller(SemanticMiddleware):
         self._view_resource_class: Optional[IRI] = None
         self._view_registry: Optional[SemanticConnectorRegistry] = None
 
-        # Held for the duration of one rebuild_view() call. algorithm.run_algorithm_once
+        # Held for the duration of one rebuild_view() call. algorithm.run_algorithm_loop
         # checks `.locked()` and skips its tick rather than racing a rebuild in progress
         # -- the lock itself *is* "the algorithm auto-pauses across a rebuild and
         # resumes", not a separate flag that could drift out of step with it.
         self.rebuild_lock = asyncio.Lock()
-
-        # What was last commanded on each parameter and whether the device is converging
-        # on it (see WriteTracker's docstring for why this exists at all).
-        self.writes = WriteTracker()
 
     def view(self, sparql_query: str) -> List[IRI]:
         """Run the caller's SPARQL query -- the view, the Control Expert's step 1 -- and return
@@ -525,7 +299,7 @@ class Controller(SemanticMiddleware):
         resource_class: Optional[Union[str, IRI]] = None,
         registry: Optional[SemanticConnectorRegistry] = None,
     ) -> None:
-        """Recognize every view hit and register its driving REST connectors (the Control
+        """Recognize every view hit and register its reading REST connectors (the Control
         Expert's steps 2-4).
 
         Call this once, after ``view()`` and before the app's lifespan starts (before
@@ -621,8 +395,7 @@ class Controller(SemanticMiddleware):
 
         ``persist`` registers the "resource" persistence connector each connector
         ``wire_view`` added was built against (keyed by this hit's own IRI as
-        ``model_id``), which is what makes ``push()`` and the background read poll able
-        to find it.
+        ``model_id``), which is what makes the background read poll able to find it.
 
         A fetch failure (the resource vanished between ``wire_view()`` and this call, or
         a transient graph error) is caught and logged rather than left to propagate: an
@@ -752,7 +525,7 @@ class Controller(SemanticMiddleware):
         ``transitional_sync_middleware``'s own ``ConnectionRegistry.remove_connection`` is explicitly a
         partial cleanup -- its own source comment says "also delete connector and
         connection type" as a TODO -- so this pops all three of its dicts itself, for
-        both ``connection_registry`` (the REST read/write connectors ``wire_view``
+        both ``connection_registry`` (the REST read connectors ``wire_view``
         registered for this hit) and ``persistence_registry`` (the "resource" connector
         ``persist()`` built for it). The dependency policy keeps this fix here rather than
         patched into the sibling: it is a missing feature the base class's own TODO
@@ -807,13 +580,6 @@ class Controller(SemanticMiddleware):
             self.persistence_registry.connection_types.pop(persist_connector_id, None)
 
         self.units.pop(key, None)
-        if wiring is not None:
-            # Driven off the leaver's own bindings: the tracker's keys are *component*
-            # IRIs (ConveyorBelt1_left), never the unit's own, so a prefix match on
-            # `key` here would silently forget nothing at all.
-            self.writes.drop(
-                [(binding.resource_iri, binding.field_id) for binding in wiring.bindings]
-            )
         logger.info("Dropped departed view hit %s.", resource_iri)
 
     def wiring_for(self, resource_iri: Union[str, IRI]) -> Optional[WiringPlan]:
@@ -860,92 +626,6 @@ class Controller(SemanticMiddleware):
             heartbeat_at = heartbeat_at.replace(tzinfo=timezone.utc)
         age_seconds = (datetime.now(timezone.utc) - heartbeat_at).total_seconds()
         return age_seconds > self.staleness_threshold, age_seconds
-
-    async def push(self, resource_iri: Union[str, IRI]) -> None:
-        """Drive an in-place assignment on a loaded view datamodel out to its owner
-        (the Control Expert's step 5).
-
-        The algorithm mutates ``self.units[str(resource_iri)]`` directly -- ``setattr``
-        on the loaded pydantic tree, the view-datamodel shape
-        (``unit.conveyor_belt_left.speed[0]["inf:hasValue"][0] = 12.4``, mangled field
-        names notwithstanding: see the class docstring for the real attribute names). A
-        plain Python mutation calls out to nothing on its own, so this re-consumes the
-        hit's own persistence connector, which fans the new value out to every synced
-        connector sharing it (``PersistedConnector._notify_synced_connectors``) --
-        among them the REST connector ``wire_view`` registered, whose own ``consume()``
-        performs the PUT. No HTTP call happens here or needs to happen in the caller.
-
-        Args:
-            resource_iri: One of the IRIs ``view()`` returned and ``wire_view()`` wired.
-
-        Raises:
-            KeyError: ``resource_iri`` was never wired (or the app has not started yet,
-                so nothing has been loaded and persisted).
-        """
-        connection_info = ConnectionInfo(data_model_name="resource", model_id=str(resource_iri))
-        connector = self.persistence_registry.get_connection(connection_info)
-        model = await connector.provide()
-        await connector.consume(model)
-
-    async def push_parameter(
-        self,
-        resource_iri: Union[str, IRI],
-        component_iri: Union[str, IRI],
-        field_name: str,
-        node: Any,
-    ) -> None:
-        """Drive one specific parameter's write leg directly, bypassing ``push()``'s
-        persistence-level fan-out.
-
-        ``push()`` re-consumes the whole resource through its persistence connector,
-        which fans the new value out to every synced connector sharing it
-        (``PersistedConnector._notify_synced_connectors``). That fan-out catches and
-        only logs a sibling connector's failure, by the base framework's own design --
-        its docstring's own reasoning is that one connector's failure must not silently
-        end every other connector's sync. Correct for the
-        fan-out's own purpose, but it means ``push()`` can never actually tell its
-        caller a PUT failed: the exception never reaches this far. That is exactly what
-        the ``rejected`` write state needs to know, so a human-initiated write goes through
-        this method instead, straight to the one connector responsible for this exact
-        parameter -- a genuine failure (the peer down, a 4xx) then propagates to the
-        caller rather than being swallowed and merely logged.
-
-        Only the operator's own set control (``station_board.py``'s ``/api/set`` route)
-        uses this. The algorithm keeps using ``push()``: a background loop's own write
-        has nowhere useful to report a failure to, and ``push()``'s silent-fan-out
-        behaviour costs it nothing it was relying on.
-
-        Args:
-            resource_iri: The root view hit that owns ``component_iri``.
-            component_iri: The IRI of the belt/barrier/etc. that holds the parameter.
-            field_name: The parameter's mangled field name (``IRI(...).lined``).
-            node: The parameter's own current pydantic node (already mutated by the
-                caller's ``setattr`` -- this method sends exactly this value, it does
-                not re-derive one).
-
-        Raises:
-            KeyError: No write connector is registered for this exact parameter --
-                either it is read-only, or ``resource_iri`` was never wired.
-        """
-        wiring = self.wiring_for(resource_iri)
-        if wiring is None:
-            raise KeyError(f"{resource_iri} is not a wired view hit")
-
-        for binding, registration in wiring.registrations:
-            if (
-                str(binding.resource_iri) == str(component_iri)
-                and binding.field_id == field_name
-                and registration.suffix == "write"
-            ):
-                body = (
-                    registration.formatter.serialize([node])
-                    if registration.formatter is not None
-                    else [node]
-                )
-                await registration.connector.consume(body)
-                return
-
-        raise KeyError(f"No write connector for {component_iri}#{field_name}")
 
     def discover_resources(self, resource_class: Any) -> List[ResourceInfo]:
         """List all individuals of resource_class with their service metadata.

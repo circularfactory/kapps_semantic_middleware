@@ -1,26 +1,32 @@
 # The TransferUnit Factory demo
 
-This demo builds a very small factory on your computer and lets you drive it from a web browser.
+This demo builds a very small factory on your computer and lets you watch it from a web browser.
+
+**The demo observes.** In KAPPS a machine changes only through a workflow of its service. This
+demo has no machine workflows yet, so the control station reads the machines and changes none.
+Its control returns with workflows after the paper. You can still move a belt at the machine
+itself, on its own panel page.
 
 Nothing here is real hardware. Every machine is a Python program that pretends to be one. But the
 parts talk to each other the same way real ones would, so what you see is the real behaviour.
 
 ## What you will see
 
-The demo starts **6 programs** at once. Each one is a separate process, like a separate machine on
+The demo starts **7 programs** at once (6 with `--no-watchdog`). Each one is a separate process, like a separate machine on
 a factory floor.
 
 | program | what it pretends to be |
 | --- | --- |
 | **PLC 1** and **PLC 2** | Two conveyor machines. Each has 2 belts and 2 light barriers. Each has its own small web page. |
 | **Middleware 1** and **Middleware 2** | One "translator" per machine. It reads the machine over MQTT and offers it to the network over HTTP. |
-| **Control station** | An operator screen. It finds the machines by asking a database, then drives them. |
+| **Control station** | An operator screen. It finds the machines by asking a database, then shows what they report. |
+| **Watchdog** | A middleware in watchdog mode. It sweeps the knowledge graph every 5 seconds and removes the address of any program that stopped reporting. It registers nothing itself, so the launcher page shows its state and no address. |
 | **Launcher** | Starts all of the above and shows you a picture of them. |
 
 A **TransferUnit** is one conveyor machine: 2 belts and 2 light barriers.
 
 **The point of the demo:** the control station is never told where the machines are. It asks a
-knowledge graph (a database of facts), finds whatever is there, and drives it. You can stop a
+knowledge graph (a database of facts), finds whatever is there, and reads it. You can stop a
 machine and it disappears from the screen. Nothing is hardcoded.
 
 ---
@@ -65,13 +71,15 @@ export TRIPLESTORE_USERNAME=your-username
 export TRIPLESTORE_PASSWORD=your-password
 ```
 
-There is no fourth value. The demo always uses the dataset named **`kapps-demo`**, which is the
-one `docker compose` creates for you, and it names that in code rather than reading it from your
-environment. A `TRIPLESTORE_DATASET` you happen to have set is ignored.
+There is no fourth value. The demo uses the dataset named **`kapps-demo`**, which is the one
+`docker compose` creates for you, unless `--dataset NAME` names another (for a test, or for a
+second factory on the same server). The environment still cannot name it: a `TRIPLESTORE_DATASET`
+you happen to have set is ignored.
 
-> **Warning.** The demo **writes into** `kapps-demo`, and `--force` **deletes and rewrites** the
-> demo's data in it. Point `TRIPLESTORE_URL` at a store you are allowed to overwrite — the dataset
-> is pinned, but the server is not, and a `kapps-demo` on a shared server is still somebody's.
+> **Warning.** The demo **writes into** the dataset the demo uses, and `--force` **deletes and
+> rewrites** the demo's data in it. Point `TRIPLESTORE_URL` at a store you are allowed to
+> overwrite — the dataset is named on the command line, not by the environment, and a
+> `kapps-demo` on a shared server is still somebody's.
 
 You do **not** need to install an MQTT broker. Each machine starts its own, inside its own process.
 
@@ -104,11 +112,14 @@ names differ because a package called `demo` on PyPI would collide with half the
 That address is fixed and always the same. Every other program picks a free port at random, so the
 launcher page is your way in — it lists every program and links to it.
 
-Two options:
+Options:
 
 - `--units 2` — how many machines to build. Try `--units 3`.
 - `--force` — wipe the demo's old data and start fresh. Use it if a previous run did not shut down
   cleanly.
+- `--no-watchdog` — do not start the watchdog (6 programs instead of 7).
+- `--dataset NAME` — the dataset the demo seeds and every program that reads the graph joins
+  (default: `kapps-demo`). The environment cannot name it.
 
 ## Stop it
 
@@ -124,7 +135,7 @@ and the next run may complain — that is what `--force` clears.
 
 ### 1. Look at the launcher page — <http://127.0.0.1:8080/>
 
-A picture of all 6 programs and how they connect. Hover over any box to read what it is and which
+A picture of all the programs and how they connect. Hover over any box to read what it is and which
 source file it comes from.
 
 ### 2. Open a machine's own page
@@ -138,22 +149,44 @@ asking for 3 m/s takes about 3 seconds. This is on purpose — a real belt has m
 ### 3. Open the control station — the station board
 
 Click the **control station** box. This screen never talked to the machines directly. It ran a
-database query, found them, and connected.
+database query, found them, and connected. It only reads: it has no set control.
 
 Try this:
 
-1. Press **pause**. The station board runs an automatic program on a timer; you must pause it before
-   you can drive a machine by hand.
-2. Expand a machine's card and type a new belt speed, then press **set**.
-3. Watch the value. It says `sending`, then climbs, then reaches your number and says `settled`.
-4. Turn on **show IRIs**. Every row now also shows its full name in the knowledge graph, the exact
-   Python line that sets it, and which private details were hidden from the network.
+1. Expand a machine's card. Every belt speed and light barrier shows the value the machine reports.
+2. On that machine's own panel page (step 2), set a belt speed. Within a few seconds the station
+   board shows the belt climbing to your number.
+3. Turn on **show IRIs**. Every row now also shows its full name in the knowledge graph, the exact
+   Python expression that reaches its value, and which private details were hidden from the network.
+
+The bar above the cards shows the automatic program. It waits for a light barrier to change, then
+reads a barrier and a belt speed and writes both to the control station's log. **pause** stops it.
 
 ### 4. Prove the discovery is real
 
 With the demo still running, press **stop** on one unit in the launcher page. Go back to the station
 board. Within a few seconds that machine is gone from the screen. Nobody edited any configuration —
 the machine removed itself from the graph, and the station board simply stopped finding it.
+
+### 5. Watch the watchdog
+
+The **stop** button is a clean shutdown: the machine removes its own address on the way out, so the
+watchdog has nothing left to do. To see the watchdog work, kill a machine's middleware so it cannot
+say goodbye. Take the pid from its box on the launcher page and run `kill -9 <pid>`.
+
+A running middleware refreshes a heartbeat in the knowledge graph. After the kill the heartbeat stops
+being renewed. When it is older than the staleness threshold (90 seconds, the middleware's default;
+the demo does not change it), the watchdog's next sweep removes that machine's address from the
+graph, so the station board stops finding it. Sweeps run every 5 seconds, so allow about 95 seconds
+after the kill at most.
+
+The sweep also settles that machine's operations. Each machine has exactly one service, its own
+middleware, so when it is swept every operation of that machine that is still **queued** or
+**running** is marked failed: nothing is left to run it. The control station is not affected: it
+registers a service but no workflow, so it never has operations queued to it. The failed operations
+are visible in the graph, as `svc:operationStatus "failed"`, and the issuer of each is notified. The launcher page's
+**watchdog** box shows only that the process is live; its output (click it if it turns red) and the
+terminal show what it ran.
 
 ---
 
@@ -202,19 +235,23 @@ broken.
 | `index.py` | The launcher page's web routes. **No process handling here.** |
 | `templates/index.html` | The topology picture and its polling code. |
 | `middleware.py` | Runs one middleware per machine, and starts that machine's MQTT broker. |
-| `control_station.py` | Runs the control station process and its timed algorithm. |
-| `station_board.py` | The station board's web routes and template. |
-| `controller.py` | Finding machines by query, and driving them over HTTP. |
-| `algorithm.py` | The example automatic program. It reads a barrier on one machine and sets a belt speed on another — only to show that it can reach them. It is not a real controller. |
+| `watchdog.py` | Runs the one watchdog-mode middleware that sweeps stale services. |
+| `control_station.py` | Runs the control station process and its observing algorithm. |
+| `station_board.py` | The station board's web routes and template. It shows; it sets nothing. |
+| `controller.py` | Finding machines by query, and reading them over HTTP. |
+| `algorithm.py` | The example automatic program. When a barrier changes, it reads a barrier on one machine and a belt speed on another — only to show that it can reach them. It writes nothing and is not a real controller. |
 | `seed.py` | Writes the starting facts for N machines into the knowledge graph. |
 | `plc/` | The pretend machine and its own panel page. |
 | `factory.ttl`, `transferunit.ttl` | The vocabulary: what a TransferUnit is made of. |
 
-**The full loop this demo proves:**
+**The path this demo proves:**
 
 ```
-PLC → MQTT → middleware → knowledge graph → control station → HTTP → back to the PLC
+PLC → MQTT → middleware → knowledge graph → control station finds it → HTTP read → station board
 ```
+
+The way back to the PLC returns with workflows: a machine changes only through a workflow of its
+service, and this demo has none yet.
 
 `CONTEXT.md` in this folder explains the words used here (Factory, Unit index, Launcher, Runner,
 Control station, Panel, Live factory) and points at the decision records behind each choice.

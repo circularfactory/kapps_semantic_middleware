@@ -41,6 +41,16 @@ _PACKAGE = __package__ or "demo.transferunits"
 SLOW_AFTER_SECONDS = 30.0
 WATCH_INTERVAL_SECONDS = 1.0
 
+WATCHDOG_SWEEP_SECONDS = 5.0
+"""How often the demo's watchdog sweeps. A killed unit's address is gone from the graph within the
+middleware's default staleness threshold plus this interval. The threshold itself is the
+middleware's default, which the demo does not override."""
+
+WATCHDOG_READY_MARKER = "Watchdog running"
+"""The line the watchdog process prints once its sweep loop is about to run. The watchdog
+registers no Service and has no address, so this line is the only sign the launcher has that it
+is live."""
+
 PANEL_TIMEOUT_SECONDS = 60.0
 """How long the launcher waits for a PLC's panel line before it fails the factory.
 
@@ -78,11 +88,11 @@ class ChildHandle:
 
     proc: subprocess.Popen
     pid: int
-    kind: str  # "plc", "middleware", or "controller"
-    unit_index: Optional[int]  # None for the controller
+    kind: str  # "plc", "middleware", "controller", or "watchdog"
+    unit_index: Optional[int]  # None for the controller and the watchdog
     cmdline: str
     address: Optional[str] = None
-    source: Optional[str] = None  # "pipe", "graph", "flag", or "env"
+    source: Optional[str] = None  # "pipe", "graph", "flag", or "env"; None for the watchdog
     state: str = "starting"  # starting | slow | live | failed | stopped
     started_at: float = field(default_factory=time.time)
     stopping: bool = False
@@ -113,6 +123,8 @@ def _child_identity(child: ChildHandle) -> str:
     """The short label an echoed line is prefixed with, e.g. "plc-1", "middleware-2"."""
     if child.kind == "controller":
         return "control"
+    if child.kind == "watchdog":
+        return "watchdog"
     return f"{child.kind}-{child.unit_index}"
 
 
@@ -299,7 +311,7 @@ def _fail_plc_wait(
     raise RuntimeError("\n".join(message))
 
 
-def _spawn_middleware(unit_index: int) -> ChildHandle:
+def _spawn_middleware(unit_index: int, dataset: str) -> ChildHandle:
     """Spawn a middleware process for one unit, inheriting the store's variables from the launcher."""
     cmdline = [
         sys.executable,
@@ -313,7 +325,7 @@ def _spawn_middleware(unit_index: int) -> ChildHandle:
         # shared default is the only other thing that could keep parent and child in one
         # graph -- and a default is exactly what drifts when one side changes.
         "--dataset",
-        DEMO_DATASET,
+        dataset,
     ]
     cmdline_str = " ".join(cmdline)
     print(cmdline_str, flush=True)
@@ -331,9 +343,17 @@ def _spawn_middleware(unit_index: int) -> ChildHandle:
     return ChildHandle(proc=proc, pid=proc.pid, kind="middleware", unit_index=unit_index, cmdline=cmdline_str)
 
 
-def _spawn_controller() -> ChildHandle:
+def _spawn_controller(dataset: str) -> ChildHandle:
     """Spawn the control station process, inheriting the store's variables from the launcher."""
-    cmdline = [sys.executable, "-m", f"{_PACKAGE}.control_station", "--port", "0"]
+    cmdline = [
+        sys.executable,
+        "-m",
+        f"{_PACKAGE}.control_station",
+        "--port",
+        "0",
+        "--dataset",
+        dataset,
+    ]
     cmdline_str = " ".join(cmdline)
     print(cmdline_str, flush=True)
 
@@ -350,6 +370,38 @@ def _spawn_controller() -> ChildHandle:
     return ChildHandle(proc=proc, pid=proc.pid, kind="controller", unit_index=None, cmdline=cmdline_str)
 
 
+def _spawn_watchdog(dataset: str) -> ChildHandle:
+    """Spawn the watchdog process: a watchdog-mode middleware on the demo dataset.
+
+    It inherits the store's variables, names the dataset like every graph-side child, and runs
+    the middleware's default staleness threshold with the demo's sweep interval. It registers
+    no Service, so it has no address.
+    """
+    cmdline = [
+        sys.executable,
+        "-m",
+        f"{_PACKAGE}.watchdog",
+        "--dataset",
+        dataset,
+        "--sweep-interval",
+        f"{WATCHDOG_SWEEP_SECONDS:g}",
+    ]
+    cmdline_str = " ".join(cmdline)
+    print(cmdline_str, flush=True)
+
+    proc = subprocess.Popen(
+        cmdline,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        env=os.environ.copy(),
+        text=True,
+        bufsize=1,
+        creationflags=_NEW_PROCESS_GROUP,
+    )
+
+    return ChildHandle(proc=proc, pid=proc.pid, kind="watchdog", unit_index=None, cmdline=cmdline_str)
+
+
 def _check_service_address(db: TripleStore, resource_iri: str) -> Optional[str]:
     """One-shot check of the graph for the svc:address of a resource. No wait, no loop."""
     sparql = f"""
@@ -363,17 +415,18 @@ def _check_service_address(db: TripleStore, resource_iri: str) -> Optional[str]:
     return str(bindings[0]["addr"]) if bindings else None
 
 
-def probe_and_seed(units: int, force: bool = False) -> None:
+def probe_and_seed(units: int, force: bool = False, dataset: str = DEMO_DATASET) -> None:
     """Probe for a live factory and seed if the graph is clear, or if you force it.
 
     Args:
         units: Number of units to seed.
         force: Clear and seed even if a live factory exists.
+        dataset: The dataset to probe and seed.
 
     Raises:
         RuntimeError: A live factory exists, and force is False.
     """
-    db = triplestore_for(DEMO_DATASET)
+    db = triplestore_for(dataset)
     live_services = seed.factory_is_live(db)
 
     if live_services and not force:
@@ -444,8 +497,8 @@ def _terminate_and_wait(handles: List[ChildHandle], timeout: float) -> List[str]
 
 
 def stop_factory(children: List[ChildHandle], timeout: float = STOP_TIMEOUT_SECONDS) -> None:
-    """Stop every child, middleware and the control station first, then the PLCs."""
-    graph_children = [c for c in children if c.kind in ("middleware", "controller")]
+    """Stop every child, middleware, control station and watchdog first, then the PLCs."""
+    graph_children = [c for c in children if c.kind in ("middleware", "controller", "watchdog")]
     plc_children = [c for c in children if c.kind == "plc"]
 
     stragglers = _terminate_and_wait(graph_children, timeout)
@@ -466,13 +519,14 @@ class Factory:
     speaks HTTP.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, dataset: str = DEMO_DATASET) -> None:
+        self.dataset = dataset
         self.children: List[ChildHandle] = []
-        self._db = triplestore_for(DEMO_DATASET)
+        self._db = triplestore_for(dataset)
         # The store's URL, for the index page. The endpoint holds no secret.
-        self._store_url = endpoint_for(DEMO_DATASET).url
+        self._store_url = endpoint_for(dataset).url
 
-    def start(self, units: int, force: bool = False) -> None:
+    def start(self, units: int, force: bool = False, watchdog: bool = True) -> None:
         """Seed the graph and spawn every participant. Blocking; call once at startup.
 
         No broker is started here: each unit's own middleware brings
@@ -486,18 +540,23 @@ class Factory:
         does its own spawn and read. Spawning the PLC first would have the launcher block on
         a connection to a broker that nothing has even been asked to bring up yet.
 
+        The watchdog (one watchdog-mode middleware, unless ``watchdog`` is False) is spawned last,
+        after the units and the control station.
+
         Raises ``RuntimeError`` when a PLC's wait fails: its broker never listened, because
         the unit's middleware ended or the wait timed out. The children spawned so far stay in
         ``children``, so the caller's ``stop_all`` stops them.
         """
-        probe_and_seed(units, force=force)
+        probe_and_seed(units, force=force, dataset=self.dataset)
 
         for n in range(1, units + 1):
-            middleware = _spawn_middleware(n)
+            middleware = _spawn_middleware(n, self.dataset)
             self.children.append(middleware)
             threading.Thread(target=self._drain_output, args=(middleware,), daemon=True).start()
             self.children.append(_spawn_plc(n, middleware=middleware))
-        self.children.append(_spawn_controller())
+        self.children.append(_spawn_controller(self.dataset))
+        if watchdog:
+            self.children.append(_spawn_watchdog(self.dataset))
 
         for child in self.children:
             if child.kind not in ("middleware", "plc"):
@@ -522,6 +581,12 @@ class Factory:
             stripped = line.rstrip("\n")
             child.output.append(stripped)
             _echo_address_line(child, stripped)
+            if (
+                child.kind == "watchdog"
+                and WATCHDOG_READY_MARKER in stripped
+                and child.state in ("starting", "slow")
+            ):
+                child.state = "live"
         _finish_drain(child)
 
     def _resource_iri(self, child: ChildHandle) -> Optional[str]:
@@ -544,6 +609,11 @@ class Factory:
                 continue
             if child.proc.poll() is not None:
                 child.state = "failed"
+                continue
+            if child.kind == "watchdog":
+                # No Service and no address: the drain promotes it on its ready line.
+                if time.time() - child.started_at > SLOW_AFTER_SECONDS:
+                    child.state = "slow"
                 continue
             resource_iri = self._resource_iri(child)
             address = _check_service_address(self._db, resource_iri) if resource_iri else None
@@ -592,9 +662,9 @@ class Factory:
             c.source = None
 
     def output(self, index: int, part: str) -> List[str]:
-        """The last 20 lines of output of one process. index=0 selects the controller."""
+        """The last 20 lines of output of one process. index=0 selects the controller or the watchdog."""
         for c in self.children:
-            if part == "controller" and c.kind == "controller":
+            if part in ("controller", "watchdog") and c.kind == part:
                 return list(c.output)
             if c.unit_index == index and c.kind == part:
                 return list(c.output)
@@ -602,6 +672,8 @@ class Factory:
 
     def state_snapshot(self, launcher_address: str) -> dict:
         """Serialize every participant's live state for the index page.
+
+        The ``watchdog`` key is present only when the factory runs one. It has no address.
 
         No broker is tracked here as its own participant: each unit's
         broker is a thread inside that unit's own middleware process, so its display state
@@ -619,9 +691,13 @@ class Factory:
 
         units: dict = {}
         controller_entry = None
+        watchdog_entry = None
         for child in self.children:
             if child.kind == "controller":
                 controller_entry = entry(child)
+                continue
+            if child.kind == "watchdog":
+                watchdog_entry = entry(child)
                 continue
             bucket = units.setdefault(child.unit_index, {"index": child.unit_index})
             bucket[child.kind] = entry(child)
@@ -634,10 +710,13 @@ class Factory:
                 "source": "flag",
             }
 
-        return {
+        snapshot: dict = {
             "graph": {"state": "live", "address": self._store_url, "source": "env"},
             "launcher": {"state": "live", "address": launcher_address, "source": "flag"},
             "controller": controller_entry
             or {"state": "starting", "address": None, "source": None, "pid": None},
             "unit": [units[i] for i in sorted(units)],
         }
+        if watchdog_entry is not None:
+            snapshot["watchdog"] = watchdog_entry
+        return snapshot

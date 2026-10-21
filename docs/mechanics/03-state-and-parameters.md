@@ -48,7 +48,8 @@ Whether a Parameter's value lives in the graph is the domain's choice. The middl
 ```python
 # Locator pattern: value never committed
 datamodel.conveyor_speed = 12.5  # lives in memory/REST only
-ogm.commit(datamodel)            # writes metadata, not the value
+with mw.commit(entry=[metadata]):  # `metadata`: the changes for unit, access mode, topic, broker
+    ...                            # writes metadata, not the value
 ```
 
 ## The Shape Comes from the TBox Restriction
@@ -66,7 +67,7 @@ This is a silent-failure trap. If a connector needs a metadata field (topic, bro
 
 Whether a Parameter is externally settable is expressed as `inf:accessMode`, valued `"read"` or `"readwrite"`. This is a facet on the one node, not a subclass distinction.
 
-Value, unit and access mode are read and written together as one atomic dict. A `readwrite` parameter exposes GET and PUT; a `read` parameter exposes GET only, with no PUT route and no outbound connector. A sensor is structurally unwritable through the advertised surface.
+Value, unit and access mode are read and written together as one atomic dict. Every parameter route is a GET, whatever the access mode: the served datamodel is read-only, because a device changes only through a workflow of its service, which commits before the device acts. A `readwrite` parameter gets an outbound connector under a driving wiring; a `read` parameter never does, so a sensor is structurally unwritable.
 
 ## Static Facets
 

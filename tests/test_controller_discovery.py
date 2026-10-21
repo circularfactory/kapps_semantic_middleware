@@ -158,8 +158,8 @@ class TestControllerDiscovery:
     def test_controller_appears_in_own_discovery(self, seeded_graph):
         """The controller appears in its own discovery list, once it registers.
 
-        register_service only writes the Service side (svc:isServiceOf plus
-        svc:address). It expects the resource individual to already exist,
+        register_service only writes the Service side (svc:isServiceOf,
+        svc:address and a first svc:lastHeartbeat). It expects the resource individual to already exist,
         the same way a domain seed writes a TransferUnit before its
         middleware starts. The demo's seed_factory does this for the control
         station too; here, the test does it by hand, with the

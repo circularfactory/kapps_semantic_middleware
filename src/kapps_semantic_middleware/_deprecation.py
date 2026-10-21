@@ -8,6 +8,7 @@ removes this module.
 from __future__ import annotations
 
 import functools
+import importlib
 import warnings
 from typing import Any, Callable, Mapping, TypeVar, cast
 
@@ -56,3 +57,25 @@ def constant(module: str, aliases: Mapping[str, str], namespace: dict[str, Any],
         stacklevel=3,
     )
     return namespace[successor]
+
+
+def moved(module: str, homes: Mapping[str, str], name: str) -> Any:
+    """The object that the deprecated name `name` of `module` names in its new home.
+
+    A module's `__getattr__` calls this, so the moved name is not an attribute of the old module
+    and each use of it warns once, at the caller's line: an import of it and a read of it as an
+    attribute. `homes` maps each moved name to the module that now holds it. The new home is
+    imported here, at the first use, so the old module does not import it.
+
+    Raises:
+        AttributeError: If `name` is not a moved name of the module.
+    """
+    home = homes.get(name)
+    if home is None:
+        raise AttributeError(f"module {module!r} has no attribute {name!r}")
+    warnings.warn(
+        f"{name} is deprecated; use {home}.{name}, which replaces it.",
+        DeprecationWarning,
+        stacklevel=3,
+    )
+    return getattr(importlib.import_module(home), name)

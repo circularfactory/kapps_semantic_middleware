@@ -400,16 +400,7 @@ class _Creation:
         Raises:
             ValueError: If the values of a property are not a list.
         """
-        for prop, values in data.items():
-            if not isinstance(values, list):
-                raise ValueError(
-                    f"the values of {prop} must be a list, as in {{property: [values]}}; "
-                    f"got {values!r}"
-                )
-        references = {
-            prop: [_as_reference(value) for value in values] for prop, values in data.items()
-        }
-        self._data = _merged_data(self._data, references)
+        self._data = _merged_data(self._data, _as_references(data))
 
     def _stage(self, change: Change) -> None:
         """Register a change of a creation nested in this one, for this one's clean exit."""
@@ -439,13 +430,11 @@ class _Creation:
                 f"the body of the creation of {self.iri} sets {named}, which its scope sets itself"
             )
         data = {**self._data, **added.data}
-        chains: list[list[Any]] = self._scope.to_property_chains()
-        chains += [[IRI(prop)] for prop in data]
         create = Create(
             class_iri=self._class_iri,
             instance_iri=self.iri,
             data=data,
-            class_scope=ClassScope.from_property_chains(chains),
+            class_scope=_scope_naming(self._scope, data),
         )
         return [create, *added.further, *staged]
 
@@ -520,10 +509,10 @@ def _nothing_to_join() -> Iterator[None]:
     """Mark a body in which a creation finds no pending write to join, so it commits on its own.
 
     Two bodies need it. One is a body whose commit has already happened, such as that of
-    ``handover()``: its clean exit writes nothing more. The other is a creation that must commit
-    on its own although a write of its caller is still to come, such as the Operation of
-    ``issue_operation()``, whose receiver reads it after the notification. A creation opened in a
-    ``mw.commit()`` or a ``mw.create()`` inside the marked body still joins that one.
+    ``possession.handover()``: its clean exit writes nothing more. The other is a creation that
+    must commit on its own although a write of its caller is still to come, such as the Operation
+    of ``issue_operation()``, whose receiver reads it after the notification. A creation opened in
+    a ``mw.commit()`` or a ``mw.create()`` inside the marked body still joins that one.
     """
     token = _pending_write.set(None)
     try:
@@ -563,6 +552,21 @@ def _as_class_scope(scope: Mapping) -> ClassScope:
     return result
 
 
+def _as_references(data: Mapping) -> dict:
+    """``data``, ``{property IRI: [values]}``, with each IRI value as a reference (`_as_reference`).
+
+    Raises:
+        ValueError: If the values of a property are not a list.
+    """
+    for prop, values in data.items():
+        if not isinstance(values, list):
+            raise ValueError(
+                f"the values of {prop} must be a list, as in {{property: [values]}}; "
+                f"got {values!r}"
+            )
+    return {prop: [_as_reference(value) for value in values] for prop, values in data.items()}
+
+
 def _as_reference(value: Any) -> Any:
     """An IRI (an ``IRI`` or an rdflib ``URIRef``) as the OGM's reference ``{"id": iri}``.
 
@@ -575,10 +579,11 @@ def _as_reference(value: Any) -> Any:
 
 
 def _check(change: Change) -> None:
-    """Refuse a change that kapps_ogm would write wrongly, without an error of its own.
+    """Refuse a change early, with an error that names the instance.
 
-    A ``Create`` that carries data needs a ``class_scope``: without one, on an OGM without a
-    loader, kapps_ogm drops a data property that the class does not know, with only a warning.
+    A ``Create`` that carries data needs a ``class_scope`` that names every property it sets:
+    kapps_ogm refuses a value outside the scope, and without a scope the data has none to be
+    checked against.
 
     Raises:
         ValueError: If ``change`` is a ``Create`` with data and no ``class_scope``.
@@ -586,8 +591,8 @@ def _check(change: Change) -> None:
     if isinstance(change, Create) and change.data and change.class_scope is None:
         name = change.instance_iri or f"a new {change.class_iri}"
         raise ValueError(
-            f"the Create of {name} carries data but no class_scope, so properties that the "
-            "class does not know would be dropped; give the Create a class_scope"
+            f"the Create of {name} carries data but no class_scope, so its data has no scope to "
+            "be checked against; give the Create a class_scope that names every property it sets"
         )
 
 
@@ -596,9 +601,10 @@ def _one_change_per_instance(changes: Sequence[Change]) -> list[Change]:
 
     kapps_ogm refuses a call in which two changes write one instance. A later value of a
     property replaces an earlier one. Updates to an instance that a ``Create`` makes fold into
-    that ``Create``. Two equal ``Create``s of one instance are one, as when two new Workpieces
-    create their possessor's state. Two different ``Create``s of one instance stay apart, so
-    kapps_ogm refuses them.
+    that ``Create``, whose ``class_scope`` then names their properties too, so none of them
+    lies outside the scope, which kapps_ogm refuses. Two equal ``Create``s of one instance are
+    one, as when two new Workpieces create their possessor's state. Two different ``Create``s of
+    one instance stay apart, so kapps_ogm refuses them.
     """
     merged: list[Change] = []
     position: dict[IRI, int] = {}
@@ -616,11 +622,40 @@ def _one_change_per_instance(changes: Sequence[Change]) -> list[Change]:
                 merged.append(change)
             continue
         data = _merged_data(earlier.data, change.data)
-        if isinstance(change, Create):
-            merged[index] = replace(change, data=data)
+        kept = change if isinstance(change, Create) else earlier
+        if isinstance(kept, Create):
+            scope = _scope_naming(kept.class_scope, data)
+            merged[index] = replace(kept, data=data, class_scope=scope)
         else:
-            merged[index] = replace(earlier, data=data)
+            merged[index] = replace(kept, data=data)
     return merged
+
+
+def _scope_naming(scope: Optional[ClassScope], data: Mapping) -> ClassScope:
+    """``scope`` (or an empty one) with every property of ``data`` named in it, for a ``Create``
+    of ``data``: the scope names every property the ``Create`` sets, and kapps_ogm refuses a
+    value outside it."""
+    chains: list[list[Any]] = scope.to_property_chains() if scope is not None else []
+    for prop, values in data.items():
+        chains += _chains_of([IRI(prop)], values)
+    return ClassScope.from_property_chains(chains)
+
+
+def _chains_of(path: list[Any], values: Any) -> list[list[Any]]:
+    """The property chains that name ``path`` and every property of the nested values under it.
+
+    kapps_ogm checks a nested node against the nested scope, so a nested instance that carries
+    properties beside its ``id`` needs them named below ``path``. A value that is no mapping, or
+    a reference (only an ``id``), ends the chain at ``path``.
+    """
+    chains: list[list[Any]] = [path]
+    for value in values if isinstance(values, (list, tuple)) else [values]:
+        if not isinstance(value, Mapping):
+            continue
+        for prop, nested in value.items():
+            if prop != "id":
+                chains += _chains_of([*path, IRI(prop)], nested)
+    return chains
 
 
 def _overlap(transition: Sequence[Change], staged: Sequence[Change]) -> bool:

@@ -6,8 +6,7 @@ during every set by design, so the old rule painted a healthy belt as a fault th
 to its setpoint.
 
 No broker, no graph, no HTTP: `ConvergenceTracker` is a state machine over observations, so
-these run with no fixtures and an injected clock — the same shape, and the same reason, as
-`test_write_status.py` for the controller's `WriteTracker`.
+these run with no fixtures and an injected clock.
 """
 
 from __future__ import annotations

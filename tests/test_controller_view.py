@@ -1,15 +1,17 @@
 """The controller as a middleware instance: SPARQL view, fetched datamodels, REST
-connectors.
+connectors that read.
 
-The Control Expert's five steps, each its own seam:
+The Control Expert's steps, each its own seam:
 
 1. ``view()`` -- a SPARQL query. No live peer needed: seed a factory, mark some units
    live by hand (``_publish_service``, the same pattern
    ``test_scenario3_wiring_integration.py`` already uses), assert the heuristic finds
    exactly the right ones.
 2. ``wire_view()`` -- recognition. No live peer needed either: assert every registered
-   connector is REST, never MQTT (``_VIEW_REGISTRY`` excludes it on purpose).
-3-5. ``_load_view_datamodels()`` / ``push()`` -- these need a real peer over REST, and the
+   connector is REST, never MQTT (``_VIEW_REGISTRY`` excludes it on purpose), and a read
+   leg, never a write leg (the controller observes; this is the wiring half of the demo's
+   no-write guard, ``test_station_board_guard.py`` holds the source half).
+3-4. ``_load_view_datamodels()`` and the read poll -- these need a real peer over REST, and the
    peer must run as a genuine separate **process**, not just a separate
    thread in this same process: ``transitional_sync_middleware``'s ``connector_sync_manager`` is a
    process-wide singleton keyed only by ``(data_model_name, model_id)``, so a controller
@@ -35,6 +37,8 @@ from pathlib import Path
 import httpx
 import pytest
 import pytest_asyncio
+from transitional_sync_middleware.middleware.registries import ConnectionInfo
+from transitional_sync_middleware.middleware.sync.synced_connector import SyncDirection
 from kapps_triplestore_interface import IRI
 from kapps_ogm import OGM
 
@@ -150,7 +154,8 @@ class TestView:
 
 @requires_store
 class TestWireView:
-    """The Control Expert's steps 2-4: recognition registers REST connectors, never MQTT."""
+    """The Control Expert's steps 2-4: recognition registers REST read connectors, never MQTT
+    and never a write leg."""
 
     def test_registers_only_rest_connectors(self, store, factory4, unit_scope):
         _publish_service(store, seed._mint_transfer_unit_iri(2), "http://127.0.0.1:19102")
@@ -171,10 +176,14 @@ class TestWireView:
             for registration in registrations
         )
 
-    def test_six_connectors_for_one_units_four_parameters(self, store, factory4, unit_scope):
-        """2 belts (readwrite -> 2 connectors each) + 2 barriers (read -> 1 each) = 6,
-        the same count MQTT wiring reaches for one unit
-        (``test_scenario3_wiring_integration.py::TestRegistrationCount``)."""
+    def test_one_read_leg_and_no_write_leg_for_each_of_a_units_four_parameters(
+        self, store, factory4, unit_scope
+    ):
+        """2 belts + 2 barriers = 4 read legs. A belt speed is read-write in the ontology,
+        and a device-facing instance gives it a write leg too
+        (``test_scenario3_wiring_integration.py::TestRegistrationCount`` counts 6), but the
+        controller's flavour is ``TO_PERSISTENCE``: it observes, and a device changes only
+        through a workflow of its service. No registration here can send a PUT."""
         _publish_service(store, seed._mint_transfer_unit_iri(2), "http://127.0.0.1:19103")
         controller = Controller(resource_iri="http://example.org/CS-wire2", ogm=factory4, port=0)
         hits = controller.view(_view_query())
@@ -183,7 +192,10 @@ class TestWireView:
 
         [(_, wiring)] = controller._view_wirings
         assert len(wiring.bindings) == 4
-        assert len(wiring.registrations) == 6
+        assert len(wiring.registrations) == 4
+        for _, registration in wiring.registrations:
+            assert registration.suffix == "read"
+            assert registration.sync_direction is SyncDirection.TO_PERSISTENCE
 
 
 def _bind_free_socket(host: str) -> socket.socket:
@@ -226,21 +238,6 @@ async def _read(url: str):
         response = await client.get(url, timeout=5.0)
         response.raise_for_status()
         return response.json()
-
-
-async def _wait_for_field(url: str, value_field: str, expected, timeout: float = 10.0):
-    """Poll ``url`` until its ``value_field`` equals ``expected``, or fail."""
-    deadline = time.monotonic() + timeout
-    last_error: Exception | None = None
-    while time.monotonic() < deadline:
-        try:
-            [body] = await _read(url)
-            if body[value_field] == expected:
-                return body
-        except httpx.HTTPError as exc:
-            last_error = exc
-        await asyncio.sleep(0.2)
-    raise AssertionError(f"{url} never reported {value_field}={expected!r} (last error: {last_error})")
 
 
 def _spawn_peer_middleware(unit_index: int, dataset: str) -> subprocess.Popen:
@@ -362,11 +359,14 @@ async def running_peer_and_controller(store, unit_scope):
 @requires_store
 @pytest.mark.asyncio
 class TestDrivingAView:
-    """The Control Expert's steps 3-5, over real REST between two real middleware processes."""
+    """The Control Expert's steps 3-4, over real REST between two real middleware processes."""
 
-    async def test_assigning_a_speed_moves_the_peers_belt_with_no_http_in_the_algorithm(
+    async def test_an_assignment_on_the_controller_never_reaches_the_peer(
         self, running_peer_and_controller
     ):
+        """The controller has no write leg, so a value assigned to its own loaded copy
+        stays there. Re-consuming the hit's persistence connector fans out to no connector
+        that sends, and the peer's served value does not move."""
         controller, peer_address, unit_iri, _ = running_peer_and_controller
         unit = controller.units[str(unit_iri)]
 
@@ -374,20 +374,26 @@ class TestDrivingAView:
         speed_field = seed.TU_HAS_CONVEYOR_SPEED.lined
         value_field = INF.hasValue.lined
 
-        # "The algorithm's body": a plain attribute assignment plus one framework call.
-        # No httpx import, no network call, anywhere in this block.
         belt = getattr(unit, belt_field)[0]
-        speed_param = getattr(belt, speed_field)[0]
-        setattr(speed_param, value_field, [77.7])
-        await controller.push(unit_iri)
-
         path = build_parameter_path(
             IRI(str(seed.TRANSFER_UNIT_CLASS)).lined,
             unit_iri,
             [(belt_field, str(belt.id))],
             speed_field,
         )
-        await _wait_for_field(f"{peer_address}{path}", value_field, [77.7])
+        [before] = await _read(f"{peer_address}{path}")
+
+        speed_param = getattr(belt, speed_field)[0]
+        setattr(speed_param, value_field, [77.7])
+        connector = controller.persistence_registry.get_connection(
+            ConnectionInfo(data_model_name="resource", model_id=str(unit_iri))
+        )
+        await connector.consume(await connector.provide())
+
+        # Longer than the REST poll interval and the PUT round trip a write leg would need.
+        await asyncio.sleep(3.0)
+        [after] = await _read(f"{peer_address}{path}")
+        assert after[value_field] == before[value_field] != [77.7]
 
     async def test_holds_no_mqtt_properties_anywhere(self, running_peer_and_controller):
         """Acceptance criterion 5: "The controller holds no inf:hasMQTT* property

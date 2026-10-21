@@ -1,12 +1,20 @@
-"""REST routes, generated recursively to the complex property.
+"""REST routes of the served datamodel: read-only, generated recursively to the complex property.
 
-The middleware extends the CRUD API of the resource datamodel with recursive routes. These routes descend
-the datamodel tree. They terminate at each interface-accessible parameter. This parameter is a
-``PropertyValueKind.COMPLEX`` property. Its blanknode dict is the atomic addressable unit. The
-framework generator produces only top-level CRUD. This module adds the parameter routes beneath it.
+**The served datamodel is read-only.** Every route this module mounts is a GET. A peer reads a
+resource here; it never writes one. A device changes only through a workflow of its service, so
+that the middleware commits before the device acts: the claim before the workflow runs, the
+possession before the move. A write route on the served datamodel would set the device, or the
+graph, with no commit around it. So a write verb on any of these paths answers 405.
+
+The framework's generator mounts CRUD on the top-level model and its contained models: POST,
+PUT and DELETE beside each GET. The framework takes bug fixes only, so this module runs that
+generator and mounts its GET routes alone. Then it adds the recursive parameter routes. These
+routes descend the datamodel tree. They terminate at each interface-accessible parameter. This
+parameter is a ``PropertyValueKind.COMPLEX`` property. Its blanknode dict is the atomic
+addressable unit.
 
 Recursion terminates at COMPLEX properties. RDF has no properties about properties. Metadata about
-a conveyor speed is its unit and its MQTT topic. The middleware models this metadata as a blanknode.
+a drive speed is its unit and its MQTT topic. The middleware models this metadata as a blanknode.
 This blanknode hangs off the parameter property. That blanknode materializes as an ``AnonymousClass``
 with no ``id``. It is not ``Identifiable``. It is never routable. Treat the blanknode dict as the
 atomic element. This approach makes the id-less problem disappear. The **property** is the last
@@ -17,12 +25,10 @@ Every value in this tree is a **list**. RDF multiplicity requires this (research
 requirement includes scalars. The original example showed a bare dict. That example predates the
 finding. The payload is a list of parameter dicts. It is not a bare dict.
 
-Verb gating is per individual. One belt may be ``readwrite``. A barrier on the same unit may be
-``read``. Path segments are therefore **literal**. They are not FastAPI path parameters. A
-parameterized route could not express per-individual verb differences. A PUT to a read-only
-parameter returns 405. The route does not exist. FastAPI handles that automatically.
+Path segments are **literal**. They are not FastAPI path parameters. One route per individual
+keeps the route table a list of exactly the parameters this resource serves.
 
-The request or response type comes from the **owning node** model field annotation. It does not
+The response type comes from the **owning node** model field annotation. It does not
 come from ``binding.node_model_type``. The latter comes from the full spec. It carries southbound
 connection metadata. The northbound instance owns its annotation. That annotation is the pruned
 shape. Use the wrong one. This mistake leaks broker addresses northbound.
@@ -32,16 +38,18 @@ from __future__ import annotations
 
 import inspect
 import logging
-from typing import Annotated, Any, Dict, List, Sequence, Set, Tuple
+from typing import Any, Dict, List, Sequence, Set, Tuple
 
-from fastapi import APIRouter, Body, HTTPException
+from fastapi import APIRouter, HTTPException
+from fastapi.routing import APIRoute
 from kapps_triplestore_interface import IRI
 from pydantic import BaseModel
 
 from transitional_sync_middleware.model.data_model import DataModel
 from transitional_sync_middleware.middleware.registries import ConnectionInfo
+from transitional_sync_middleware.middleware.rest_routers import RestRouter
 
-from kapps_semantic_middleware.connectors.semantic import AccessMode, ParameterBinding
+from kapps_semantic_middleware.connectors.semantic import ParameterBinding
 
 logger = logging.getLogger(__name__)
 
@@ -63,8 +71,8 @@ def _owner_of(model: Any, owner_id: str, field_id: str) -> Any:
 
     The `DataModel` rebuilds per request. It does not capture when the route was generated. This
     design is deliberate. The handler must navigate the model persistence holds *now*. A map built
-    at generation time would pin objects. Later writes replace those objects. This rebuild is
-    the same rebuild `update_persistence_with_value` does. It does so for the same reason.
+    at generation time would pin objects. Later device reads replace those objects. This rebuild
+    is the same rebuild `update_persistence_with_value` does. It does so for the same reason.
 
     `get_model` returns ``None`` when recognition finds a binding. Its owner is not in the
     materialized tree. Ontology drift causes this. A scope that pruned the branch out from under it
@@ -133,92 +141,6 @@ def _make_get_handler(
     return get_parameter
 
 
-def _make_put_handler(
-    data_model_name: str,
-    root_id: str,
-    owner_id: str,
-    field_id: str,
-    body_annotation: Any,
-    middleware: Any,
-) -> Any:
-    """Build a PUT handler for one parameter route.
-
-    This function mirrors ``update_persistence_with_value`` final ``else:`` branch. That branch is
-    from ``transitional_sync_middleware/middleware/sync/synchronization.py``. That is what makes the write
-    precise. Only the one field mutates. Every sibling stays byte-identical. A downstream
-    diff-based commit writes nothing for the siblings. See that file lines around the field-level
-    branch.
-
-    The precision has to survive the ``consume`` call as well, and at first it did not. A
-    persistence connector is keyed by *(data_model_name, model_id)*, so every connector on
-    this resource hangs off the one this handler fetches. Handing it the whole model with no
-    further word meant the fan-out asked *every* write leg on the resource to re-derive its
-    slice -- including a sibling parameter this PUT never touched, whose write leg then
-    published its last *observed* value onto its *set* topic as though someone had commanded
-    it. ``changed`` carries the same field identity the mutation above already used, so the
-    fan-out reaches this parameter's write leg and no other.
-    """
-    async def put_parameter(body):
-        try:
-            connection_info = ConnectionInfo(
-                data_model_name=data_model_name, model_id=root_id
-            )
-            connector = middleware.persistence_registry.get_connection(connection_info)
-            model = await connector.provide()
-
-            if owner_id == root_id:
-                setattr(model, field_id, body)
-            else:
-                setattr(_owner_of(model, owner_id, field_id), field_id, body)
-
-            # `contained_model_id=owner_id` unconditionally, including when the parameter
-            # sits on the root: `middleware._wire_semantic_connectors` registers every
-            # binding with `contained_model_id=str(binding.resource_iri)`, so a root-owned
-            # parameter's connector carries the root's own id there rather than `None`.
-            # Leaving it `None` here would widen the scope to every field on the resource
-            # and quietly restore the defect.
-            await connector.consume(
-                model,
-                changed=ConnectionInfo(
-                    data_model_name=data_model_name,
-                    model_id=root_id,
-                    contained_model_id=owner_id,
-                    field_id=field_id,
-                ),
-            )
-            # A PUT is always news. Something northbound chose to act. Log after the
-            # consume. The line means "applied" rather than "attempted".
-            logger.info("PUT applied: %s on %s = %r", field_id, owner_id, body)
-            return {"message": f"Updated {field_id}"}
-        except HTTPException:
-            raise
-        except Exception as e:
-            logger.warning("PUT %s failed: %s", field_id, e)
-            raise HTTPException(status_code=500, detail=str(e))
-
-    # As above: the body type has to arrive as a real object on the signature. Do not use a string
-    # annotation. FastAPI would fail to resolve it.
-    #
-    # `body_annotation` is the owning model's field annotation. For a COMPLEX property that
-    # is not required, that annotation is `Optional[Annotated[conlist(Model, ...), BeforeValidator]]`
-    # -- not the plain `List[Model]` it is for a required one. FastAPI infers body-vs-query from
-    # whether the annotation looks "scalar", and an `Optional` wrapper defeats that inference: it
-    # falls back to a query parameter named "body", which every real PUT then 422s against, since
-    # a list can never arrive on a query string. Mark it explicitly rather than rely on inference.
-    # mypy knows no `__signature__` attribute on a function, hence the ignore.
-    put_parameter.__signature__ = inspect.Signature(  # type: ignore[attr-defined]
-        parameters=[
-            inspect.Parameter(
-                "body",
-                inspect.Parameter.POSITIONAL_OR_KEYWORD,
-                annotation=Annotated[body_annotation, Body()],
-            )
-        ],
-        return_annotation=Dict[str, str],
-    )
-    return put_parameter
-
-
 def _accumulate_routes(
     inst: Any,
     bindings_map: Dict[str, List[ParameterBinding]],
@@ -277,6 +199,31 @@ def _accumulate_routes(
     return results
 
 
+_READ_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
+
+
+def _is_read_route(route: Any) -> bool:
+    """Whether a framework route only reads. Anything that is not an ``APIRoute`` is not kept."""
+    return isinstance(route, APIRoute) and set(route.methods) <= _READ_METHODS
+
+
+def _mount_read_only_crud(middleware: Any, data_model_name: str) -> None:
+    """Mount the GET routes the framework generates for a datamodel, and none of its writes.
+
+    The framework's ``generate_rest_api_for_data_model`` mounts every router it builds in one
+    call, writes included. This is that call taken apart: the same ``RestRouter``, the same
+    routers per top-level type, filtered before they reach the app. A route the framework
+    adds later is kept only if it is a read, so a new write verb upstream stays off this surface.
+    """
+    rest_router = RestRouter(
+        middleware.data_models[data_model_name], data_model_name, middleware
+    )
+    for model_type in rest_router.data_model.get_top_level_types():
+        for router in rest_router.generate_endpoints_from_model(model_type):
+            router.routes[:] = [route for route in router.routes if _is_read_route(route)]
+            middleware.app.include_router(router)
+
+
 def generate_recursive_rest_api(
     middleware: Any,
     data_model_name: str,
@@ -285,16 +232,15 @@ def generate_recursive_rest_api(
     instance: Any,
     bindings: Sequence[ParameterBinding],
 ) -> List[str]:
-    """Generate the REST surface of the resource middleware. Generate top-level CRUD plus recursive parameter routes.
+    """Generate the read-only REST surface of the resource middleware.
 
-    Call ``middleware.generate_rest_api_for_data_model`` first. This produces the unchanged top-level
-    CRUD. Then walk the instance tree. Mount parameter routes beneath it. Return the list of
-    generated parameter route paths. Count the path string per route. Count GET and PUT of the same
-    path once. Ordering is tree order. It is depth-first.
+    Mount the framework's top-level reads first, without its writes. Then walk the instance tree
+    and mount a GET for each parameter beneath it. Return the list of generated parameter route
+    paths. Ordering is tree order. It is depth-first.
 
     Args:
-        middleware: The semantic middleware instance. It provides ``app``, ``persistence_registry``,
-            and ``generate_rest_api_for_data_model``.
+        middleware: The semantic middleware instance. It provides ``app``, ``data_models`` and
+            ``persistence_registry``.
         data_model_name: The name of the data model for ConnectionInfo.
         root_id: The IRI of the root resource instance.
         instance: The materialized root instance. Walk its tree.
@@ -303,12 +249,12 @@ def generate_recursive_rest_api(
     Returns:
         List of generated parameter route paths. Empty if the instance has no id.
     """
-    middleware.generate_rest_api_for_data_model(data_model_name)
+    _mount_read_only_crud(middleware, data_model_name)
 
     root_node_id = getattr(instance, "id", None)
     if root_node_id is None:
         logger.warning(
-            "Root instance for %s has no id. Generate top-level CRUD only. Generate no parameter routes.",
+            "Root instance for %s has no id. Mount the top-level reads only. Generate no parameter routes.",
             data_model_name,
         )
         return []
@@ -341,17 +287,6 @@ def generate_recursive_rest_api(
             middleware=middleware,
         )
         router.get(path, response_model=field_annotation)(get_handler)
-
-        if binding.access_mode == AccessMode.READWRITE:
-            put_handler = _make_put_handler(
-                data_model_name=data_model_name,
-                root_id=root_id,
-                owner_id=owner_id,
-                field_id=binding.field_id,
-                body_annotation=field_annotation,
-                middleware=middleware,
-            )
-            router.put(path)(put_handler)
 
     middleware.app.include_router(router)
 

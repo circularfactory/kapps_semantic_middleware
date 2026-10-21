@@ -27,6 +27,7 @@ from demo.transferunits.launcher import ChildHandle, Factory
 def make_factory() -> Factory:
     """A Factory with no real store connection -- __init__ is bypassed."""
     factory = Factory.__new__(Factory)
+    factory.dataset = launcher.DEMO_DATASET
     factory.children = []
     factory._db = MagicMock()
     factory._store_url = "http://store.invalid:7200"
@@ -119,6 +120,102 @@ class TestWatchOnce:
         assert child.state == "starting"
 
 
+class TestWatchdogChild:
+    """The watchdog kind: no Service and no address, so its state comes from its ready line."""
+
+    def test_watch_never_looks_up_an_address_for_a_watchdog(self, monkeypatch):
+        factory = make_factory()
+        child = make_child("watchdog", None)
+        factory.children = [child]
+
+        def must_not_query(db, iri):
+            raise AssertionError("a watchdog has no Service to look up")
+
+        monkeypatch.setattr(launcher, "_check_service_address", must_not_query)
+
+        factory._watch_once()
+
+        assert child.state == "starting"
+        assert child.address is None
+
+    def test_a_watchdog_that_exited_is_failed(self, monkeypatch):
+        factory = make_factory()
+        child = make_child("watchdog", None, alive=False)
+        factory.children = [child]
+
+        factory._watch_once()
+
+        assert child.state == "failed"
+
+    def test_a_watchdog_still_starting_after_the_threshold_is_slow(self, monkeypatch):
+        factory = make_factory()
+        child = make_child("watchdog", None)
+        child.started_at = time.time() - launcher.SLOW_AFTER_SECONDS - 1
+        factory.children = [child]
+
+        factory._watch_once()
+
+        assert child.state == "slow"
+
+    def test_the_ready_line_makes_it_live_with_no_address(self):
+        factory = make_factory()
+        child = make_child("watchdog", None)
+        child.proc.stdout = iter([f"{launcher.WATCHDOG_READY_MARKER}: sweeping every 5 s\n"])
+
+        factory._drain_output(child)
+
+        assert child.state == "live"
+        assert child.address is None
+
+    def test_other_output_does_not_make_it_live(self):
+        factory = make_factory()
+        child = make_child("watchdog", None)
+        child.proc.stdout = iter(["importing\n"])
+
+        factory._drain_output(child)
+
+        assert child.state == "starting"
+
+    def test_identity_is_watchdog(self):
+        assert launcher._child_identity(make_child("watchdog", None)) == "watchdog"
+
+    def test_stop_factory_stops_the_watchdog_with_the_graph_children(self, monkeypatch):
+        calls = []
+
+        def fake_terminate(handles, timeout):
+            calls.append([h.kind for h in handles])
+            return []
+
+        monkeypatch.setattr(launcher, "_terminate_and_wait", fake_terminate)
+
+        launcher.stop_factory(
+            [make_child("plc", 1), make_child("middleware", 1), make_child("watchdog", None)]
+        )
+
+        assert calls == [["middleware", "watchdog"], ["plc"]]
+
+    def test_spawned_command_names_the_demo_dataset_and_sweep_interval(self, monkeypatch):
+        captured = {}
+
+        def fake_popen(cmdline, **kwargs):
+            captured["cmdline"] = cmdline
+            proc = MagicMock()
+            proc.pid = 4242
+            return proc
+
+        monkeypatch.setattr(launcher.subprocess, "Popen", fake_popen)
+
+        child = launcher._spawn_watchdog(launcher.DEMO_DATASET)
+
+        assert child.kind == "watchdog"
+        assert child.unit_index is None
+        cmdline = captured["cmdline"]
+        assert cmdline[2].endswith(".watchdog")
+        assert cmdline[cmdline.index("--dataset") + 1] == launcher.DEMO_DATASET
+        assert cmdline[cmdline.index("--sweep-interval") + 1] == f"{launcher.WATCHDOG_SWEEP_SECONDS:g}"
+        assert "--staleness-threshold" not in cmdline  # the middleware's default, not the demo's
+
+
 class TestStopUnit:
     """This class tests Factory.stop_unit and stop_all mark the right children stopped."""
 
@@ -163,7 +260,7 @@ class TestStartSpawnOrder:
         factory = make_factory()
         order = []
 
-        def fake_spawn_middleware(n):
+        def fake_spawn_middleware(n, dataset):
             order.append(("middleware", n))
             return make_child("middleware", n)
 
@@ -171,14 +268,19 @@ class TestStartSpawnOrder:
             order.append(("plc", n))
             return make_child("plc", n)
 
-        def fake_spawn_controller():
+        def fake_spawn_controller(dataset):
             order.append(("controller", None))
             return make_child("controller", None)
 
-        monkeypatch.setattr(launcher, "probe_and_seed", lambda units, force=False: None)
+        def fake_spawn_watchdog(dataset):
+            order.append(("watchdog", None))
+            return make_child("watchdog", None)
+
+        monkeypatch.setattr(launcher, "probe_and_seed", lambda units, force=False, dataset=None: None)
         monkeypatch.setattr(launcher, "_spawn_middleware", fake_spawn_middleware)
         monkeypatch.setattr(launcher, "_spawn_plc", fake_spawn_plc)
         monkeypatch.setattr(launcher, "_spawn_controller", fake_spawn_controller)
+        monkeypatch.setattr(launcher, "_spawn_watchdog", fake_spawn_watchdog)
         monkeypatch.setattr(launcher.threading, "Thread", lambda *a, **k: MagicMock())
 
         factory.start(units=2)
@@ -189,22 +291,41 @@ class TestStartSpawnOrder:
             ("middleware", 2),
             ("plc", 2),
             ("controller", None),
+            ("watchdog", None),
         ]
+
+    def test_no_watchdog_spawns_none(self, monkeypatch):
+        factory = make_factory()
+        monkeypatch.setattr(launcher, "probe_and_seed", lambda units, force=False, dataset=None: None)
+        monkeypatch.setattr(launcher, "_spawn_middleware", lambda n, dataset: make_child("middleware", n))
+        monkeypatch.setattr(launcher, "_spawn_plc", lambda n, *, middleware=None: make_child("plc", n))
+        monkeypatch.setattr(launcher, "_spawn_controller", lambda dataset: make_child("controller", None))
+
+        def must_not_spawn(dataset):
+            raise AssertionError("watchdog=False must not spawn a watchdog")
+
+        monkeypatch.setattr(launcher, "_spawn_watchdog", must_not_spawn)
+        monkeypatch.setattr(launcher.threading, "Thread", lambda *a, **k: MagicMock())
+
+        factory.start(units=1, watchdog=False)
+
+        assert [c.kind for c in factory.children] == ["middleware", "plc", "controller"]
 
     def test_each_plc_wait_watches_its_own_units_middleware(self, monkeypatch):
         """The middleware runs its unit's broker, so its PLC's wait is handed that one."""
         factory = make_factory()
         watched = {}
 
-        monkeypatch.setattr(launcher, "probe_and_seed", lambda units, force=False: None)
-        monkeypatch.setattr(launcher, "_spawn_middleware", lambda n: make_child("middleware", n))
+        monkeypatch.setattr(launcher, "probe_and_seed", lambda units, force=False, dataset=None: None)
+        monkeypatch.setattr(launcher, "_spawn_middleware", lambda n, dataset: make_child("middleware", n))
 
         def fake_spawn_plc(n, *, middleware=None):
             watched[n] = middleware
             return make_child("plc", n)
 
         monkeypatch.setattr(launcher, "_spawn_plc", fake_spawn_plc)
-        monkeypatch.setattr(launcher, "_spawn_controller", lambda: make_child("controller", None))
+        monkeypatch.setattr(launcher, "_spawn_controller", lambda dataset: make_child("controller", None))
+        monkeypatch.setattr(launcher, "_spawn_watchdog", lambda dataset: make_child("watchdog", None))
         monkeypatch.setattr(launcher.threading, "Thread", lambda *a, **k: MagicMock())
 
         factory.start(units=2)
@@ -261,6 +382,22 @@ class TestStateSnapshot:
         assert snapshot["unit"] == []
 
 
+    def test_snapshot_lists_the_watchdog_with_its_state_and_no_address(self):
+        factory = make_factory()
+        factory.children = [make_child("watchdog", None, state="live")]
+
+        snapshot = factory.state_snapshot("http://127.0.0.1:8080/")
+
+        assert snapshot["watchdog"] == {"state": "live", "address": None, "source": None, "pid": 4242}
+        assert snapshot["unit"] == []  # the watchdog is no unit
+
+    def test_snapshot_has_no_watchdog_key_without_one(self):
+        factory = make_factory()
+        factory.children = [make_child("controller", None, state="live")]
+
+        assert "watchdog" not in factory.state_snapshot("http://127.0.0.1:8080/")
+
+
 class TestOutput:
     """This class tests Factory.output selects the right child, including the controller."""
 
@@ -279,6 +416,19 @@ class TestOutput:
         ctrl.output.append("controller booted")
         factory.children = [ctrl]
 
+        assert factory.output(0, "controller") == ["controller booted"]
+
+
+class TestWatchdogOutput:
+    def test_output_index_zero_selects_the_watchdog(self):
+        factory = make_factory()
+        ctrl = make_child("controller", None)
+        ctrl.output.append("controller booted")
+        dog = make_child("watchdog", None)
+        dog.output.append("Watchdog running")
+        factory.children = [ctrl, dog]
+
+        assert factory.output(0, "watchdog") == ["Watchdog running"]
         assert factory.output(0, "controller") == ["controller booted"]
 
 
@@ -616,7 +766,10 @@ class TestLauncherEntryPoint:
         stopped = []
 
         class FailingFactory:
-            def start(self, units, force=False):
+            def __init__(self, dataset):
+                pass
+
+            def start(self, units, force=False, watchdog=True):
                 raise RuntimeError("plc-1 cannot reach its broker")
 
             def stop_all(self):
@@ -634,6 +787,178 @@ class TestLauncherEntryPoint:
 
         assert "Factory running" not in capsys.readouterr().out
         assert stopped == [True]
+
+
+class TestNoWatchdogFlag:
+    """``--no-watchdog`` reaches ``Factory.start``; without it the watchdog is on."""
+
+    @pytest.mark.parametrize(
+        "argv, expected",
+        [(["--units", "1"], True), (["--units", "1", "--no-watchdog"], False)],
+    )
+    def test_the_flag_turns_the_watchdog_off(self, monkeypatch, argv, expected):
+        import demo.transferunits.__main__ as entry
+
+        seen = {}
+
+        class RecordingFactory:
+            def __init__(self, dataset):
+                pass
+
+            def start(self, units, force=False, watchdog=True):
+                seen["watchdog"] = watchdog
+
+            def stop_all(self):
+                pass
+
+        monkeypatch.setattr(entry, "Factory", RecordingFactory)
+        monkeypatch.setattr(entry.index, "configure_factory", lambda *a, **k: None)
+        monkeypatch.setattr(entry.uvicorn, "run", lambda *a, **k: None)
+        monkeypatch.setattr(sys, "argv", ["launcher", *argv])
+
+        entry.main()
+
+        assert seen["watchdog"] is expected
+
+
+class TestTheDatasetReachesEveryGraphSideChild:
+    """``Factory(dataset=...)`` seeds that dataset and names it to the middleware, the watchdog
+    and the control station; ``Factory()`` uses the demo's own."""
+
+    NAME = "some-other-dataset"
+
+    @staticmethod
+    def _capture_cmdlines(monkeypatch) -> list:
+        cmdlines: list = []
+
+        def fake_popen(cmdline, **kwargs):
+            cmdlines.append(list(cmdline))
+            proc = MagicMock()
+            proc.pid = 4242
+            return proc
+
+        monkeypatch.setattr(launcher.subprocess, "Popen", fake_popen)
+        return cmdlines
+
+    def _factory_named(self, monkeypatch, name=None) -> Factory:
+        monkeypatch.setattr(launcher, "triplestore_for", lambda dataset: MagicMock())
+        monkeypatch.setattr(
+            launcher, "endpoint_for", lambda dataset: MagicMock(url="http://store.invalid:7200")
+        )
+        return Factory() if name is None else Factory(dataset=name)
+
+    def test_a_named_factory_puts_the_name_on_all_three_command_lines(self, monkeypatch):
+        cmdlines = self._capture_cmdlines(monkeypatch)
+        factory = self._factory_named(monkeypatch, self.NAME)
+
+        launcher._spawn_middleware(1, factory.dataset)
+        launcher._spawn_controller(factory.dataset)
+        launcher._spawn_watchdog(factory.dataset)
+
+        assert factory.dataset == self.NAME
+        assert len(cmdlines) == 3
+        for cmdline in cmdlines:
+            assert cmdline[cmdline.index("--dataset") + 1] == self.NAME
+
+    def test_start_seeds_and_spawns_with_the_name(self, monkeypatch):
+        seeded = {}
+        spawned = {}
+
+        def fake_probe(units, force=False, dataset=None):
+            seeded["dataset"] = dataset
+
+        def recording(kind, unit_index=None):
+            def spawn(*args):
+                spawned[kind] = args[-1]
+                return make_child(kind, unit_index)
+
+            return spawn
+
+        monkeypatch.setattr(launcher, "probe_and_seed", fake_probe)
+        monkeypatch.setattr(launcher, "_spawn_middleware", recording("middleware", 1))
+        monkeypatch.setattr(launcher, "_spawn_plc", lambda n, *, middleware=None: make_child("plc", n))
+        monkeypatch.setattr(launcher, "_spawn_controller", recording("controller"))
+        monkeypatch.setattr(launcher, "_spawn_watchdog", recording("watchdog"))
+        monkeypatch.setattr(launcher.threading, "Thread", lambda *a, **k: MagicMock())
+        factory = self._factory_named(monkeypatch, self.NAME)
+
+        factory.start(units=1)
+
+        assert seeded == {"dataset": self.NAME}
+        assert spawned == {
+            "middleware": self.NAME,
+            "controller": self.NAME,
+            "watchdog": self.NAME,
+        }
+
+    def test_probe_and_seed_connects_to_the_name(self, monkeypatch):
+        asked = []
+        monkeypatch.setattr(
+            launcher, "triplestore_for", lambda dataset: asked.append(dataset) or MagicMock()
+        )
+        monkeypatch.setattr(launcher.seed, "factory_is_live", lambda db: [])
+        monkeypatch.setattr(launcher.seed, "seed_factory", lambda db, ogm, units: None)
+        monkeypatch.setattr("kapps_ogm.OGM", lambda db: MagicMock())
+
+        launcher.probe_and_seed(1, force=True, dataset=self.NAME)
+
+        assert asked == [self.NAME]
+
+    def test_a_factory_without_a_name_uses_the_demo_dataset(self, monkeypatch):
+        assert self._factory_named(monkeypatch).dataset == launcher.DEMO_DATASET
+        assert launcher.DEMO_DATASET == "kapps-demo"
+
+    def test_the_environment_cannot_name_the_dataset(self, monkeypatch):
+        """A ``TRIPLESTORE_DATASET`` in the launcher's environment reaches no child."""
+        monkeypatch.setenv("TRIPLESTORE_DATASET", "from-env")
+        popens: list = []
+
+        def fake_popen(cmdline, **kwargs):
+            popens.append((list(cmdline), kwargs.get("env")))
+            proc = MagicMock()
+            proc.pid = 4242
+            return proc
+
+        monkeypatch.setattr(launcher.subprocess, "Popen", fake_popen)
+        factory = self._factory_named(monkeypatch)
+
+        launcher._spawn_middleware(1, factory.dataset)
+        launcher._spawn_controller(factory.dataset)
+        launcher._spawn_watchdog(factory.dataset)
+
+        assert len(popens) == 3
+        for cmdline, env in popens:
+            assert cmdline[cmdline.index("--dataset") + 1] == "kapps-demo"
+            assert "from-env" not in cmdline
+            added = set(env or {}) - set(os.environ)
+            assert not {key for key in added if "DATASET" in key}
+
+    def test_the_parser_has_a_dataset_option_defaulting_to_the_demo_dataset(self, monkeypatch):
+        import demo.transferunits.__main__ as entry
+
+        seen = {}
+
+        class RecordingFactory:
+            def __init__(self, dataset):
+                seen["dataset"] = dataset
+
+            def start(self, units, force=False, watchdog=True):
+                pass
+
+            def stop_all(self):
+                pass
+
+        monkeypatch.setattr(entry, "Factory", RecordingFactory)
+        monkeypatch.setattr(entry.index, "configure_factory", lambda *a, **k: None)
+        monkeypatch.setattr(entry.uvicorn, "run", lambda *a, **k: None)
+
+        monkeypatch.setattr(sys, "argv", ["launcher", "--units", "1"])
+        entry.main()
+        assert seen["dataset"] == launcher.DEMO_DATASET
+
+        monkeypatch.setattr(sys, "argv", ["launcher", "--dataset", self.NAME])
+        entry.main()
+        assert seen["dataset"] == self.NAME
 
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]

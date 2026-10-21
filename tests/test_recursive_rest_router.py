@@ -12,27 +12,28 @@ implementation makes two mistakes that this guard exists to catch:
    visited ids, a cyclic instance graph hangs forever. The recursion must stop at parameters
    and at already-seen ids.
 
-3. **PUT body misclassified as a query parameter.** FastAPI infers body-vs-query from
-   whether a field's annotation looks scalar. A COMPLEX property that isn't required has an
-   `Optional[Annotated[conlist(...), BeforeValidator]]` annotation, and that `Optional` wrapper
-   defeats the inference -- every real PUT route 422ed. The other fixtures below use a plain
-   `list[Model]` shape that never exercises this; `RealisticBelt`/`RealisticTransferUnit` exist
-   specifically to reproduce the real shape.
+3. **A write route reaches the device or the graph.** The served data model is read-only: a
+   device changes only through a workflow of its service. The framework's generator mounts
+   POST, PUT and DELETE beside every GET, and a parameter route once had a PUT of its own.
+   The tests below run the framework's real generator against a real `DataModel` and find
+   only GET, and a write verb answers 405 with nothing consumed and nothing persisted.
 
 This is a **static** check of the generated routes plus **behavioural** checks via `TestClient`.
 No store, no broker: the middleware is faked, the instance tree is plain pydantic models,
-and the connectors are stubs that record what they consume.
+and the connectors are stubs that record what they would consume.
 """
 
 from __future__ import annotations
 
+from collections import defaultdict
 from dataclasses import dataclass
-from typing import Annotated, Any, Optional
+from typing import Any, Optional
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from kapps_triplestore_interface import IRI
-from pydantic import BaseModel, BeforeValidator, ConfigDict, conlist, create_model
+from pydantic import BaseModel
+from transitional_sync_middleware.model.data_model import DataModel
 
 from kapps_semantic_middleware.connectors.semantic import AccessMode
 from kapps_semantic_middleware.rest_router import generate_recursive_rest_api
@@ -88,39 +89,6 @@ class TransferUnit(BaseModel):
     id: str
     TU_hasConveyorBelt: list[Belt] = []
     TU_hasLightBarrier: list[Barrier] = []
-
-
-def _coerce_speed(value: Any) -> Any:
-    return value
-
-
-# Built with `create_model`, exactly as `kapps_ogm.ClassSpec.to_pydantic_model` builds it,
-# rather than a static class body -- a literal `conlist(...)` call cannot appear in a class-body
-# annotation under strict static typing, but that is exactly the shape a COMPLEX property's
-# field actually has at runtime: `Optional` because the property isn't required, `Annotated`
-# because of the coercion validator, `conlist` rather than plain `list` for the min/max bound.
-# Every fixture above this point uses the simpler `list[Speed]` shape instead, which FastAPI's
-# scalar check always classifies as a body regardless of how the route wires the parameter --
-# that shape would not have caught the misclassification.
-_realistic_speed_field: Any = Optional[
-    Annotated[conlist(Speed, min_length=0), BeforeValidator(_coerce_speed)]
-]
-
-
-RealisticBelt: Any = create_model(
-    "RealisticBelt",
-    __config__=ConfigDict(extra="forbid"),
-    id=(str, ...),
-    TU_hasConveyorSpeed=(_realistic_speed_field, None),
-)
-
-
-RealisticTransferUnit: Any = create_model(
-    "RealisticTransferUnit",
-    __config__=ConfigDict(extra="forbid"),
-    id=(str, ...),
-    TU_hasConveyorBelt=(list[RealisticBelt], []),
-)
 
 
 @dataclass(frozen=True)
@@ -188,11 +156,9 @@ def _make_bindings() -> list[_BindingStub]:
 class _StubConnector:
     """Records what the framework asks it to provide/consume.
 
-    Stands in for a ``PersistedConnector``, so it must carry that class's signature:
-    ``origin`` and ``changed`` are how a caller tells the fan-out what it attributed the
-    write to and which region of the model actually moved. Recording
-    ``changed`` rather than swallowing it makes this stub the fast, store-free place to
-    assert that the PUT handler scopes its write to one parameter.
+    Stands in for a ``PersistedConnector``, so it carries that class's signature. A served
+    data model mounts no write route, so ``consumed`` stays ``None`` whatever a request asks:
+    the write tests below assert exactly that.
     """
 
     def __init__(self) -> None:
@@ -213,12 +179,21 @@ class _StubConnector:
 
 
 class _FakeMiddleware:
-    """A middleware fake with a real FastAPI app and stub persistence."""
+    """A middleware fake with a real FastAPI app, a real data model and stub persistence.
 
-    def __init__(self) -> None:
+    ``data_models`` holds a real ``DataModel`` built from the instance, as
+    ``load_model_instances`` builds it, so the framework's own generator runs against it and the
+    route tests see every verb that generator would mount. ``persisted`` records a write to the
+    graph: the framework's POST on the model persists through ``persist``.
+    """
+
+    def __init__(self, *instances: Any) -> None:
         self.app = FastAPI()
-        self._generate_called = False
         self._connector = _StubConnector()
+        self.persisted: list[Any] = []
+        model = DataModel.from_models(*instances) if instances else DataModel()
+        # The router looks the model up by `data_model_name`; one model serves every name here.
+        self.data_models: dict[str, DataModel] = defaultdict(lambda: model)
 
         class _Registry:
             def get_connection(_self, connection_info: Any) -> _StubConnector:
@@ -226,8 +201,8 @@ class _FakeMiddleware:
 
         self._registry = _Registry()
 
-    def generate_rest_api_for_data_model(self, name: str) -> None:
-        self._generate_called = True
+    async def persist(self, data_model_name: str, model: Any) -> None:
+        self.persisted.append(model)
 
     @property
     def persistence_registry(self) -> Any:
@@ -262,8 +237,8 @@ def test_routes_are_generated_at_the_right_structural_paths():
     segment — forgetting to mangle an id, using the wrong field name — breaks client code
     that constructs URLs from the ontology.
     """
-    mw = _FakeMiddleware()
     unit = _make_unit()
+    mw = _FakeMiddleware(unit)
     bindings = _make_bindings()
 
     generate_recursive_rest_api(
@@ -283,20 +258,19 @@ def test_routes_are_generated_at_the_right_structural_paths():
 
     route_paths = {r.path for r in mw.app.routes}
     assert expected in route_paths
-    # Load-bearing ordering: the framework's top-level CRUD must be generated before the
-    # parameter routes mount beneath it. Only the no-id test pinned this call, so a refactor
-    # that dropped it on the normal path would have gone unnoticed.
-    assert mw._generate_called
+    # The framework's top-level reads mount beside the parameter routes. Only the no-id test
+    # pinned them once, so a refactor that dropped them on the normal path went unnoticed.
+    assert "GET" in methods_at(mw.app, "/TransferUnit/{item_id}")
 
 
-def test_read_only_parameter_gets_get_but_no_put():
+def test_a_read_only_parameter_gets_get_and_no_put():
     """A barrier's occupancy path exists with GET and explicitly lacks PUT.
 
     Read-only parameters must not expose mutation endpoints. The router gates PUT on
     `binding.access_mode`, so a monitor instance cannot accidentally drive a device.
     """
-    mw = _FakeMiddleware()
     unit = _make_unit()
+    mw = _FakeMiddleware(unit)
     bindings = _make_bindings()
 
     generate_recursive_rest_api(
@@ -319,14 +293,15 @@ def test_read_only_parameter_gets_get_but_no_put():
     assert "PUT" not in methods
 
 
-def test_read_write_parameter_gets_both_get_and_put():
-    """A belt's speed path exposes both GET and PUT.
+def test_a_read_write_parameter_gets_get_and_no_put():
+    """A settable belt's speed path exposes GET and no PUT.
 
-    A controller instance may drive settable parameters. Both verbs must be present, or the
-    instance cannot fulfil its role.
+    ``readwrite`` says the device accepts a setpoint, not that a peer may send one over the
+    served data model. A PUT here would set the device with no commit and no admission: a
+    device changes only through a workflow of its service.
     """
-    mw = _FakeMiddleware()
     unit = _make_unit()
+    mw = _FakeMiddleware(unit)
     bindings = _make_bindings()
 
     generate_recursive_rest_api(
@@ -344,9 +319,7 @@ def test_read_write_parameter_gets_both_get_and_put():
         "TU_hasConveyorSpeed",
     )
 
-    methods = methods_at(mw.app, path)
-    assert "GET" in methods
-    assert "PUT" in methods
+    assert methods_at(mw.app, path) == {"GET"}
 
 
 def test_no_route_is_generated_below_a_complex_property():
@@ -356,8 +329,8 @@ def test_no_route_is_generated_below_a_complex_property():
     Those are persistence details, not addressable resources. A generic check ensures this
     holds for every generated route, not just one named path.
     """
-    mw = _FakeMiddleware()
     unit = _make_unit()
+    mw = _FakeMiddleware(unit)
     bindings = _make_bindings()
 
     param_paths = generate_recursive_rest_api(
@@ -375,192 +348,6 @@ def test_no_route_is_generated_below_a_complex_property():
         assert not deeper, f"Found routes below parameter {param_path}: {deeper}"
 
 
-def test_put_to_one_belt_mutates_only_that_belt():
-    """Driving the PUT handler changes the left belt's speed and leaves everything else untouched.
-
-    This is the headline criterion: recursive routes must isolate their target. A bug in the
-    closure or the traversal would mutate the wrong child, or overwrite siblings. The stub
-    connector records exactly what was consumed — assertions target `consumed`, not `unit`,
-    because `consumed` is what actually reached persistence.
-    """
-    mw = _FakeMiddleware()
-    unit = _make_unit()
-    bindings = _make_bindings()
-    _prime_connector(mw, unit)
-
-    generate_recursive_rest_api(
-        middleware=mw,
-        data_model_name="TransferUnit",
-        root_id=unit.id,
-        instance=unit,
-        bindings=bindings,
-    )
-
-    path = _path(
-        unit.id,
-        "TU_hasConveyorBelt",
-        "https://example.org/tui#ConveyorBelt1_left",
-        "TU_hasConveyorSpeed",
-    )
-
-    client = TestClient(mw.app)
-
-    # PUT new value to left belt — payload is a list because the field is list[Speed]
-    payload = [{"hasValue": [9.9], "hasUnit": ["m/s"]}]
-    response = client.put(path, json=payload)
-    assert response.status_code == 200
-
-    # Assert on consumed, which is what reached persistence
-    consumed = mw.persistence_registry.get_connection(None).consumed
-
-    # Left belt's speed changed
-    left_belt = next(b for b in consumed.TU_hasConveyorBelt if b.id.endswith("_left"))
-    assert left_belt.TU_hasConveyorSpeed[0].hasValue == [9.9]
-
-    # Siblings unchanged
-    right_belt = next(b for b in consumed.TU_hasConveyorBelt if b.id.endswith("_right"))
-    assert right_belt.TU_hasConveyorSpeed[0].hasValue == [2.0]
-
-    front_barrier = next(b for b in consumed.TU_hasLightBarrier if b.id.endswith("_front"))
-    assert front_barrier.TU_isOccupied[0].hasValue == [False]
-
-    back_barrier = next(b for b in consumed.TU_hasLightBarrier if b.id.endswith("_back"))
-    assert back_barrier.TU_isOccupied[0].hasValue == [True]
-
-
-def test_put_tells_the_fan_out_which_parameter_moved():
-    """Mutating one field is not enough -- the ``consume`` call has to say so.
-
-    The whole model goes to persistence either way, because a persistence connector is
-    keyed by *(data_model_name, model_id)* and holds the resource entire. Without
-    ``changed``, the fan-out asks every write leg on that resource to re-derive its slice,
-    and a sibling parameter's write leg publishes its last *observed* value onto its *set*
-    topic -- an unbidden command. The integration test in
-    ``test_southbound_echo_integration.py`` proves the effect against a real broker; this
-    proves the cause, with no store and no network.
-    """
-    mw = _FakeMiddleware()
-    unit = _make_unit()
-    _prime_connector(mw, unit)
-
-    generate_recursive_rest_api(
-        middleware=mw,
-        data_model_name="TransferUnit",
-        root_id=unit.id,
-        instance=unit,
-        bindings=_make_bindings(),
-    )
-
-    path = _path(
-        unit.id,
-        "TU_hasConveyorBelt",
-        "https://example.org/tui#ConveyorBelt1_left",
-        "TU_hasConveyorSpeed",
-    )
-    response = TestClient(mw.app).put(path, json=[{"hasValue": [9.9], "hasUnit": ["m/s"]}])
-    assert response.status_code == 200
-
-    changed = mw.persistence_registry.get_connection(None).changed
-    assert changed is not None, "the PUT handler told the fan-out nothing about what moved"
-
-    # All four levels, and the deepest two are the point: `contained_model_id` names the
-    # belt and `field_id` the parameter, so `_covers` reaches this belt's write leg and no
-    # other. A `changed` that stopped at `model_id` would cover the whole unit and restore
-    # the defect while still looking like a fix.
-    assert changed.data_model_name == "TransferUnit"
-    assert changed.model_id == unit.id
-    assert changed.contained_model_id == "https://example.org/tui#ConveyorBelt1_left"
-    assert changed.field_id == "TU_hasConveyorSpeed"
-
-
-def test_get_and_put_are_symmetric():
-    """What GET returns is accepted by PUT unchanged, and doing so is not an error.
-
-    Symmetry matters for clients that read-modify-write. If the shapes diverge, a round-trip
-    fails even though nothing changed.
-    """
-    mw = _FakeMiddleware()
-    unit = _make_unit()
-    bindings = _make_bindings()
-    _prime_connector(mw, unit)
-
-    generate_recursive_rest_api(
-        middleware=mw,
-        data_model_name="TransferUnit",
-        root_id=unit.id,
-        instance=unit,
-        bindings=bindings,
-    )
-
-    path = _path(
-        unit.id,
-        "TU_hasConveyorBelt",
-        "https://example.org/tui#ConveyorBelt1_left",
-        "TU_hasConveyorSpeed",
-    )
-
-    client = TestClient(mw.app)
-
-    get_response = client.get(path)
-    assert get_response.status_code == 200
-    payload = get_response.json()
-
-    put_response = client.put(path, json=payload)
-    assert put_response.status_code == 200
-
-
-def test_put_body_is_bound_as_a_json_body_not_a_query_parameter():
-    """A PUT whose field type has the shape the OGM actually produces is accepted as JSON.
-
-    ``Belt.TU_hasConveyorSpeed`` above is typed ``list[Speed]`` -- a plain list, which FastAPI's
-    scalar check always classifies as a body regardless of how the route wires the parameter.
-    That shape is not what ``ClassSpec.to_pydantic_field`` (kapps_ogm) actually emits for a
-    COMPLEX property: a real field is ``Optional[Annotated[conlist(Model, ...), BeforeValidator]]``
-    -- optional because the property isn't required, `Annotated` because of the coercion
-    validator, `conlist` rather than `list` for the min/max bound. FastAPI's implicit body-vs-query
-    inference (`field_annotation_is_scalar`) does not see through that `Optional` wrapper the same
-    way, and silently classifies the parameter as a query param instead -- reproduced
-    against the real installed FastAPI in isolation before this test was written. Every other test
-    in this file uses the simpler shape and would not have caught this.
-    """
-    mw = _FakeMiddleware()
-    unit = RealisticTransferUnit(
-        id="https://example.org/tui#TransferUnit1",
-        TU_hasConveyorBelt=[
-            RealisticBelt(
-                id="https://example.org/tui#ConveyorBelt1_left",
-                TU_hasConveyorSpeed=[Speed(hasValue=[1.5], hasUnit=["m/s"])],
-            )
-        ],
-    )
-    bindings = [
-        _BindingStub(
-            resource_iri=IRI("https://example.org/tui#ConveyorBelt1_left"),
-            field_id="TU_hasConveyorSpeed",
-            access_mode=AccessMode.READWRITE,
-        )
-    ]
-    _prime_connector(mw, unit)
-
-    # `type(instance).__name__` becomes the route's leading segment, so it is
-    # "RealisticTransferUnit" here rather than the "TransferUnit" `_path()` assumes.
-    generated_paths = generate_recursive_rest_api(
-        middleware=mw,
-        data_model_name="TransferUnit",
-        root_id=unit.id,
-        instance=unit,
-        bindings=bindings,
-    )
-    assert len(generated_paths) == 1
-    path = generated_paths[0]
-
-    client = TestClient(mw.app)
-    payload = [{"hasValue": [9.9], "hasUnit": ["m/s"]}]
-    response = client.put(path, json=payload)
-
-    assert response.status_code == 200, response.json()
-
-
 def test_closure_capture_is_correct():
     """GET-ing two different parameter paths returns two different values.
 
@@ -568,8 +355,8 @@ def test_closure_capture_is_correct():
     every route serves the last parameter's value. This test fetches two distinct paths and
     asserts they return distinct data. Values are lists because the field is list[Speed].
     """
-    mw = _FakeMiddleware()
     unit = _make_unit()
+    mw = _FakeMiddleware(unit)
     bindings = _make_bindings()
     _prime_connector(mw, unit)
 
@@ -659,11 +446,11 @@ def test_cyclic_instance_graph_terminates():
     assert len(paths) == 2  # Two parameters, no infinite expansion
 
 
-def test_instance_with_no_id_returns_empty_list_and_still_calls_generate():
-    """An instance lacking an `id` field yields `[]` but still triggers the base CRUD generation.
+def test_instance_with_no_id_returns_empty_list_and_still_mounts_the_reads():
+    """An instance lacking an `id` field yields `[]` but the top-level reads still mount.
 
-    The recursion cannot proceed without a root id to mangle into paths, but the middleware's
-    top-level CRUD must still be wired. This guards against a silent early-return that skips
+    The recursion cannot proceed without a root id to mangle into paths, but the data model's
+    top-level reads must still be served. This guards against a silent early-return that skips
     everything.
     """
 
@@ -671,7 +458,7 @@ def test_instance_with_no_id_returns_empty_list_and_still_calls_generate():
         model_config = {"extra": "forbid"}
         TU_hasConveyorBelt: list[Belt] = []
 
-    mw = _FakeMiddleware()
+    mw = _FakeMiddleware(_make_unit())
     instance = NoIdModel()
     bindings: list[_BindingStub] = []
 
@@ -684,7 +471,7 @@ def test_instance_with_no_id_returns_empty_list_and_still_calls_generate():
     )
 
     assert paths == []
-    assert mw._generate_called
+    assert "GET" in methods_at(mw.app, "/TransferUnit/{item_id}")
 
 
 def test_a_binding_whose_owner_is_absent_generates_no_route():
@@ -696,8 +483,8 @@ def test_a_binding_whose_owner_is_absent_generates_no_route():
     the missing individual, rather than at generation time where it would take down every other
     parameter with it.
     """
-    mw = _FakeMiddleware()
     unit = _make_unit()
+    mw = _FakeMiddleware(unit)
     bindings = _make_bindings()
     bindings.append(
         _BindingStub(
@@ -718,3 +505,85 @@ def test_a_binding_whose_owner_is_absent_generates_no_route():
     assert len(paths) == 4
     ghost_segment = IRI("https://example.org/tui#ConveyorBelt99_ghost").lined
     assert not any(ghost_segment in p for p in paths)
+
+
+_WRITE_VERBS = {"POST", "PUT", "PATCH", "DELETE"}
+
+
+def _data_model_routes(app: FastAPI) -> list[Any]:
+    """Every route the served data model mounts: those under the root model's prefix."""
+    return [r for r in app.routes if getattr(r, "path", "").startswith("/TransferUnit/")]
+
+
+def test_only_get_is_mounted_on_the_served_data_model():
+    """The framework's generator and the parameter routes together mount no write verb.
+
+    The framework mounts POST on the model, PUT and DELETE on an item, and PUT, DELETE and an
+    optional POST on each contained model. Any of them would set the device or the graph with no
+    commit around it. The GET assertions keep this from passing on an empty route table.
+    """
+    unit = _make_unit()
+    mw = _FakeMiddleware(unit)
+
+    param_paths = generate_recursive_rest_api(
+        middleware=mw,
+        data_model_name="TransferUnit",
+        root_id=unit.id,
+        instance=unit,
+        bindings=_make_bindings(),
+    )
+
+    routes = _data_model_routes(mw.app)
+    served = {method for route in routes for method in route.methods}
+    assert served <= {"GET", "HEAD", "OPTIONS"}, served
+
+    # Not vacuous: the reads are there, on the model, on a contained model, and on every
+    # parameter, the settable belts included.
+    assert "GET" in methods_at(mw.app, "/TransferUnit/")
+    assert "GET" in methods_at(mw.app, "/TransferUnit/{item_id}")
+    assert "GET" in methods_at(mw.app, "/TransferUnit/{item_id}/TU_hasConveyorBelt/")
+    assert len(param_paths) == 4
+    for path in param_paths:
+        assert methods_at(mw.app, path) == {"GET"}, path
+
+
+def test_a_write_verb_answers_405_and_reaches_neither_the_device_nor_the_graph():
+    """A write on a parameter, an item or a contained model is refused, and nothing moves.
+
+    The stub connector stands in for the persistence connector, whose ``consume`` fans out to
+    the device's write legs; ``persisted`` stands in for the graph. Both stay untouched.
+    """
+    unit = _make_unit()
+    mw = _FakeMiddleware(unit)
+    _prime_connector(mw, unit)
+
+    generate_recursive_rest_api(
+        middleware=mw,
+        data_model_name="TransferUnit",
+        root_id=unit.id,
+        instance=unit,
+        bindings=_make_bindings(),
+    )
+
+    belt = _path(
+        unit.id,
+        "TU_hasConveyorBelt",
+        "https://example.org/tui#ConveyorBelt1_left",
+        "TU_hasConveyorSpeed",
+    )
+    item = f"/TransferUnit/{IRI(unit.id).lined}"
+    contained = f"/TransferUnit/{IRI(unit.id).lined}/TU_hasConveyorBelt/"
+    client = TestClient(mw.app)
+    body = [{"hasValue": [9.9], "hasUnit": ["m/s"]}]
+
+    for path in (belt, item, contained, "/TransferUnit/"):
+        for verb in sorted(_WRITE_VERBS):
+            response = client.request(verb, path, json=body)
+            # 405, not 404: each path matches a GET route, so a 404 would mean the read
+            # vanished rather than that the write was refused.
+            assert response.status_code == 405, (verb, path, response.status_code)
+
+    # The read still answers, so the refusals above are not a dead app.
+    assert client.get(belt).json()[0]["hasValue"] == [1.5]
+    assert mw.persistence_registry.get_connection(None).consumed is None
+    assert mw.persisted == []

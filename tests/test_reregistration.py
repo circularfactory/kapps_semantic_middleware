@@ -23,8 +23,9 @@ from kapps_triplestore_interface import IRI
 from kapps_triplestore_interface.exceptions import PreconditionFailedError
 
 from kapps_ogm import OGM
+from kapps_semantic_middleware.errors import PossessionSwitchConflict
+from kapps_semantic_middleware.possession import switch_possession
 from kapps_semantic_middleware.registration import (
-    PossessionSwitchConflict,
     _create_or_adopt,
     create_operation,
     deregister_service,
@@ -36,7 +37,6 @@ from kapps_semantic_middleware.registration import (
     register_service,
     register_state_property,
     register_workflow,
-    switch_possession,
 )
 from kapps_semantic_middleware.vocabulary import CFC, SVC
 
@@ -62,6 +62,12 @@ def _explicit_about(db, *subjects: IRI) -> set:
         for subject in subjects
         for triple in db.triples_get(sub=subject, include_implicit=False)
     }
+
+
+def _without_heartbeat(statements: set) -> set:
+    """``statements`` without the ``svc:lastHeartbeat`` ones, whose literal each registration
+    refreshes."""
+    return {t for t in statements if t[1] != str(SVC.lastHeartbeat)}
 
 
 def _register_hello(ogm: OGM, address: str) -> tuple[IRI, IRI, IRI]:
@@ -176,16 +182,20 @@ class TestRestartIntegration:
     def test_a_restart_on_the_same_address_restores_the_earlier_registration_exactly(
         self, store
     ):
+        """The address and the endpoints come back; nothing else is written. The heartbeat is
+        the one exception, by design: the registration writes a fresh ``svc:lastHeartbeat`` with
+        the address, so its literal is left out of the comparison (the Service has exactly one)."""
         seed.seed_scenario2(store)
         ogm = OGM(db=store)
         written = (seed.DOOR_RESOURCE, *_register_door(ogm, ADDR_A))
-        registered = _explicit_about(store, *written)
+        registered = _without_heartbeat(_explicit_about(store, *written))
 
         deregister_service(ogm, written[1])
         _register_door(ogm, ADDR_A)
 
-        # The address and the endpoints come back; nothing else is written.
-        assert _explicit_about(store, *written) == registered
+        restored = _explicit_about(store, *written)
+        assert _without_heartbeat(restored) == registered
+        assert len([t for t in restored if t[1] == str(SVC.lastHeartbeat)]) == 1
 
     def test_a_restart_on_another_address_repoints_the_capability_and_writes_nothing_else(
         self, store

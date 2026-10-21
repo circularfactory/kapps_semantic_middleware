@@ -222,8 +222,7 @@ class MQTTParameterFormatter:
         """Pull the scalar from a persistence value, whatever depth it arrives at.
 
         Accept the one-element list the framework holds, a bare node, or an
-        already-plain scalar. An outbound value can reach here from a PUT route as
-        easily as from the persistence model.
+        already-plain scalar. An outbound value may arrive in any of these shapes.
         """
         if isinstance(data, (list, tuple)):
             if not data:

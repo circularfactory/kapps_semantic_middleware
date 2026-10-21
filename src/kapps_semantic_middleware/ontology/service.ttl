@@ -20,11 +20,11 @@ svc: rdf:type owl:Ontology ;
 
 svc:Service rdf:type owl:Class ;
     rdfs:label "Service" ;
-    rdfs:comment "A distributed runtime entity wrapped by a single middleware instance (e.g. a door controller, a screwing-resource controller, a planning service). Typed via a domain-specific subclass of svc:Service that must pre-exist in the ontology. The Service is the graph representation of the middleware; it wraps a Resource but is not itself the Resource." .
+    rdfs:comment "A distributed runtime entity wrapped by a single middleware instance (e.g. a door controller, a tool-station controller, a planning service). Typed via a domain-specific subclass of svc:Service that must pre-exist in the ontology. The Service is the graph representation of the middleware; it wraps a Resource but is not itself the Resource." .
 
 svc:Workflow rdf:type owl:Class ;
     rdfs:label "Workflow" ;
-    rdfs:comment "An invokable function exposed by a Service, registered with @mw.workflow(...). Realizes exactly one Capability. Typed via a domain-specific subclass of svc:Workflow that must pre-exist in the ontology, carrying a SHACL shape describing its arguments (precondition) and return value (outcome). Distinct from AAS-tradition terms like 'Skill' or 'Action'; KAPPS reserves 'Service' for the deployable middleware-wrapped entity and 'Workflow' for what it exposes." .
+    rdfs:comment "An invokable function exposed by a Service, registered with @mw.workflow(...). Realizes exactly one Capability. Typed via a domain-specific subclass of svc:Workflow that must pre-exist in the ontology, carrying a SHACL shape describing its arguments (precondition) and return value (outcome). A Workflow corresponds to a skill of the capability-skill-service (CSS) model, the executable implementation of a function that a capability specifies (Köcher et al. 2023, arXiv 2209.09632, Sec. 3.4); KAPPS keeps the name 'Workflow'. A KAPPS Service, the deployable middleware-wrapped entity, is a service in the IT sense (Sec. 5.1), not a CSS service, which is a set of technical capabilities with an organizational and economic description (Sec. 3.2)." .
 
 svc:StateProperty rdf:type owl:Class ;
     rdfs:label "StateProperty" ;

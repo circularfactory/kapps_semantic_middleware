@@ -124,12 +124,23 @@ class TestTwoInstancesOnOneResource:
 
     def test_heartbeats_are_independent(self, store):
         mw_a, mw_b = _two_registered_instances(store)
-        asyncio.run(mw_a.emit_heartbeat())
 
-        # A shared node reports the resource alive while *either* process lives. This
-        # stops liveness meaning what discovery assumes it means.
-        assert len(store.triples_get(sub=mw_a.service_iri, pred=SVC.lastHeartbeat)) == 1
-        assert len(store.triples_get(sub=mw_b.service_iri, pred=SVC.lastHeartbeat)) == 0
+        def heartbeats(mw) -> list[str]:
+            return [str(t[2]) for t in store.triples_get(sub=mw.service_iri, pred=SVC.lastHeartbeat)]
+
+        # Registration writes each Service's first heartbeat with its address.
+        assert len(heartbeats(mw_a)) == 1
+        assert len(heartbeats(mw_b)) == 1
+        b_before = heartbeats(mw_b)
+
+        # A beat of one instance moves its own heartbeat only. A shared node would report the
+        # resource alive while *either* process lives, which stops liveness meaning what
+        # discovery assumes it means.
+        a_later = datetime.now(timezone.utc) + timedelta(minutes=5)
+        update_heartbeat(mw_a.ogm, mw_a.service_iri, timestamp=a_later)
+        assert len(heartbeats(mw_a)) == 1
+        assert heartbeats(mw_a) != b_before
+        assert heartbeats(mw_b) == b_before
 
     def test_stopping_one_leaves_the_other_discoverable_and_alive(self, store):
         mw_a, mw_b = _two_registered_instances(store)
@@ -158,8 +169,8 @@ class TestTwoInstancesOnOneResource:
     def test_only_the_stale_instance_is_swept(self, store):
         """A crashed instance goes stale on its own. Its sibling keeps reachability.
 
-        What the watchdog does with the *resource* stranded Operations once a resource
-        carries several Services is a separate question. A harder one, and open.
+        What the watchdog does with the resource's Operations once a resource carries several
+        Services is decided per Operation; test_liveness_integration covers it.
         """
         mw_live, mw_dead = _two_registered_instances(store)
         ogm = OGM(db=store)

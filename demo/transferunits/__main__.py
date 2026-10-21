@@ -11,6 +11,8 @@ import argparse
 
 import uvicorn
 
+from kapps_semantic_middleware.credentials import DEMO_DATASET
+
 from . import index
 from .launcher import Factory
 
@@ -24,13 +26,28 @@ def main() -> None:
     parser.add_argument(
         "--force", action="store_true", help="Clear the graph even if a live factory runs"
     )
+    parser.add_argument(
+        "--no-watchdog",
+        action="store_true",
+        help="Do not start the watchdog process (default: one watchdog-mode middleware runs)",
+    )
+    parser.add_argument(
+        "--dataset",
+        type=str,
+        default=DEMO_DATASET,
+        help=(
+            "The dataset the factory seeds and every graph-side child joins "
+            f"(default: {DEMO_DATASET}, the one the shipped Docker setup creates). "
+            "The environment cannot name it."
+        ),
+    )
     args = parser.parse_args()
 
-    factory = Factory()
+    factory = Factory(dataset=args.dataset)
     launcher_address = f"http://{LAUNCHER_HOST}:{LAUNCHER_PORT}/"
 
     try:
-        factory.start(args.units, force=args.force)
+        factory.start(args.units, force=args.force, watchdog=not args.no_watchdog)
         index.configure_factory(factory, launcher_address)
         print(f"\nFactory running. Index page at {launcher_address}", flush=True)
         uvicorn.run(index.app, host=LAUNCHER_HOST, port=LAUNCHER_PORT, log_level="warning")

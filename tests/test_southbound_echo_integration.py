@@ -6,18 +6,14 @@ to re-derive its slice at the wrong moment publishes an *observation* onto a **c
 channel. The device reads its own actual speed back as a new setpoint, the ramp finds
 itself converged, and the belt freezes short of where it was sent.
 
-Two triggers reach that same wrong moment, and the fan-out
-(``PersistedConnector._notify_synced_connectors``) is the common path:
+The trigger is **a sibling's device read**, and the fan-out
+(``PersistedConnector._notify_synced_connectors``) is its path. The PLC republishes a barrier.
+That reaches persistence, the fan-out asks *every* write leg on the unit to re-derive, and the
+left belt's write leg publishes its current actual speed to ``speed_set``. The origin skip
+cannot help: the origin is the *barrier's* ``ConnectionInfo``, not the speed's.
 
-1. **A sibling's device read.** The PLC republishes a barrier. That reaches persistence,
-   the fan-out asks *every* write leg on the unit to re-derive, and the left belt's write
-   leg publishes its current actual speed to ``speed_set``. The origin skip cannot help:
-   the origin is the *barrier's* ``ConnectionInfo``, not the speed's.
-
-2. **An external write to a sibling field.** A PUT to the left belt arrives with no origin
-   at all, so the fan-out reaches the *right* belt's write leg, which republishes the right
-   belt's last observed speed. This is the demo algorithm's ordinary behaviour -- write one
-   belt while another is mid-ramp.
+The served data model is read-only, so no northbound write reaches the fan-out: the routes
+these tests read are GET routes.
 
 These tests spy on the real set topics with a real broker, a real store and a real
 ``SemanticMiddleware`` in ``BIDIRECTIONAL`` mode. ``test_northbound_sync_integration.py``
@@ -109,8 +105,7 @@ def _speed_route_suffix(belt_iri):
 class SetTopicSpy:
     """Every message that lands on any belt's set topic, with the topic it landed on.
 
-    A plain counter would not distinguish "the belt we commanded" from "its sibling",
-    which is the whole difference between the two triggers.
+    A plain counter would not tell which belt's set topic a message landed on.
     """
 
     def __init__(self):
@@ -195,13 +190,6 @@ async def _read(url):
         return response.json()
 
 
-async def _put(url, body):
-    async with httpx.AsyncClient() as client:
-        response = await client.put(url, json=body, timeout=5.0)
-        response.raise_for_status()
-        return response
-
-
 async def _wait_for_value(url, expected, timeout=10.0):
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
@@ -284,88 +272,3 @@ class TestADeviceReadNeverTravelsBackDown:
                 assert unit.speeds["left"] == 2.5
             finally:
                 await unit.set_throughput_simulation(False)
-
-
-@requires_store
-@pytest.mark.asyncio
-class TestAWriteToOneParameterLeavesItsSiblingsAlone:
-    """Trigger 2: a PUT carries no origin, so the fan-out reaches every write leg.
-
-    Derived from `rest_router._make_put_handler` by reading, then asserted here. This is
-    the trigger the demo algorithm hits in ordinary operation, and no test covered it.
-    """
-
-    async def test_a_put_to_one_belt_publishes_nothing_on_the_other(self, running_unit):
-        mw, host, port = running_unit
-        left = await _route_ending(mw, _speed_route_suffix(seed.CONVEYOR_BELT_LEFT))
-        right = await _route_ending(mw, _speed_route_suffix(seed.CONVEYOR_BELT_RIGHT))
-        left_url = f"http://127.0.0.1:{PORT}{left}"
-        right_url = f"http://127.0.0.1:{PORT}{right}"
-
-        async with TransferUnit(
-            broker=host,
-            port=port,
-            publish_interval=0.5,
-            initial_speeds={"left": 0.0, "right": 1.4},
-        ) as unit:
-            assert await _wait_for_value(right_url, 1.4), "right belt never reached persistence"
-            assert await _wait_for_value(left_url, 0.0), "left belt never reached persistence"
-
-            async with spying_on_set_topics(host, port) as spy:
-                # Command the LEFT belt only. Read the node and put it back with a new
-                # value, which is what the station board's own write path does.
-                [node] = await _read(left_url)
-                node[INF.hasValue.lined] = [2.0]
-                await _put(left_url, [node])
-                await asyncio.sleep(4.0)
-
-                assert spy.values_on("right") == [], (
-                    "a PUT to the left belt published onto the RIGHT belt's set topic: "
-                    f"{spy.values_on('right')}"
-                )
-
-            assert unit.speeds["right"] == 1.4, (
-                f"the right belt moved to {unit.speeds['right']} because its sibling was "
-                "commanded"
-            )
-
-
-@requires_store
-@pytest.mark.asyncio
-class TestACommandStillReachesTheDevice:
-    """The southbound path must not be simply switched off."""
-
-    async def test_a_commanded_setpoint_reaches_the_device_and_the_belt_converges(
-        self, running_unit
-    ):
-        mw, host, port = running_unit
-        route = await _route_ending(mw, _speed_route_suffix(seed.CONVEYOR_BELT_LEFT))
-        url = f"http://127.0.0.1:{PORT}{route}"
-
-        async with TransferUnit(
-            broker=host,
-            port=port,
-            publish_interval=0.5,
-            # Both belts, always: `_throughput_loop` reads `speeds["right"]`
-            # (transfer_unit.py:346), so a one-belt dict KeyErrors the moment the
-            # throughput simulation runs.
-            initial_speeds={"left": 0.0, "right": 0.0},
-        ) as unit:
-            assert await _wait_for_value(url, 0.0), "startup publish never reached persistence"
-
-            async with spying_on_set_topics(host, port) as spy:
-                [node] = await _read(url)
-                node[INF.hasValue.lined] = [1.5]
-                await _put(url, [node])
-
-                await _await_true(
-                    lambda: 1.5 in spy.values_on("left"),
-                    10.0,
-                    "a commanded setpoint never reached the device's set topic",
-                )
-
-            await _await_true(
-                lambda: unit.speeds["left"] == 1.5,
-                10.0,
-                f"the belt never converged to the commanded 1.5 (at {unit.speeds['left']})",
-            )

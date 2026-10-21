@@ -113,6 +113,32 @@ def test_a_refused_write_is_recorded_and_its_error_reaches_the_caller_unchanged(
     assert before <= recorded.time <= datetime.now(timezone.utc)
 
 
+def test_a_commit_that_names_the_handover_records_its_refusal_as_a_handover():
+    """The possession extension's handover commits with ``verb="handover"``."""
+    ogm = _RefusingOGM()
+    mw = _middleware(ogm)
+    ogm.refusal = _refusal()
+
+    with pytest.raises(ShaclValidationError):
+        with mw.commit(OP, entry=_status("running"), verb="handover"):
+            pytest.fail("the body of a refused commit ran")
+
+    assert [refused.verb for refused in mw.refused_writes] == ["handover"]
+
+
+@pytest.mark.parametrize("verb", ["create", "hand_over", "Handover", "", None])
+def test_a_commit_refuses_any_other_verb_before_anything_is_written(verb):
+    """``create`` is the verb of ``mw.create()``, not one that a commit may claim."""
+    ogm = _RefusingOGM()
+    mw = _middleware(ogm)
+
+    with pytest.raises(ValueError, match="verb 'commit' or 'handover'"):
+        mw.commit(OP, entry=_status("running"), verb=verb)
+
+    assert ogm.written == []
+    assert mw.refused_writes == []
+
+
 def test_a_creation_that_joins_a_refused_commit_is_recorded_once_as_that_commit():
     """The creation's changes join the commit's exit, so the store refuses one write: the commit."""
     ogm = _RefusingOGM()

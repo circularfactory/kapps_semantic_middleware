@@ -13,7 +13,8 @@ apart is a decided boundary.
 
 from __future__ import annotations
 
-from typing import Any, List, Sequence, Tuple
+from datetime import datetime, timezone
+from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 from kapps_semantic_middleware.dashboard import (
     SHORTENING_NOTE,
@@ -25,6 +26,7 @@ from kapps_semantic_middleware.dashboard import (
 from kapps_triplestore_interface import IRI
 
 from kapps_semantic_middleware.modes import Mode
+from kapps_semantic_middleware.observation import CallError, is_connection_metadata
 from kapps_semantic_middleware.validation_report import render_refused_write
 from kapps_semantic_middleware.vocabulary import INF
 
@@ -246,6 +248,63 @@ def _demangle_fragment(prop: str) -> str:
     return prop.rsplit("#", 1)[-1].rsplit("/", 1)[-1] or prop
 
 
+#: What a time cell says when nothing happened yet.
+_NOTHING_YET = "none since the instance started"
+
+#: What a last-sync cell says when no value moved yet.
+_NO_SYNC_YET = "no sync since the instance started"
+
+
+def _ago(seconds: float) -> str:
+    """A duration as a person reads it: "4 s", "3 min", "2 h", "5 d"."""
+    seconds = max(0.0, seconds)
+    if seconds < 120:
+        return f"{seconds:.0f} s"
+    if seconds < 2 * 3600:
+        return f"{seconds / 60:.0f} min"
+    if seconds < 2 * 86400:
+        return f"{seconds / 3600:.0f} h"
+    return f"{seconds / 86400:.0f} d"
+
+
+def _when(moment: Optional[datetime], now: datetime, nothing: str = _NOTHING_YET) -> str:
+    """A moment as its age and its time of day in UTC, "4 s ago (14:03:12 UTC)", or ``nothing``.
+
+    The age is computed here, at the render, from a time the record holds: a record holds no age.
+    """
+    if moment is None:
+        return nothing
+    clock = moment.astimezone(timezone.utc).strftime("%H:%M:%S")
+    return f"{_ago((now - moment).total_seconds())} ago ({clock} UTC)"
+
+
+def _error_text(error: Optional[CallError], now: datetime, dev: bool) -> str:
+    """The last error: its type and when, and its message on a development page only.
+
+    Which part of the error is left out is what its record marks as connection metadata, and no
+    list kept here: an error's message names the host, port, topic or URL it could not reach.
+    """
+    if error is None:
+        return _NOTHING_YET
+    text = f"{error.type}, {_when(error.time, now)}"
+    if dev or not is_connection_metadata(error, "message"):
+        text += f": {error.message}"
+    return text
+
+
+def _state(connected: Optional[bool]) -> str:
+    """A connector's state, as the framework's calls of its ``connect`` and ``disconnect`` set it."""
+    if connected is None:
+        return "never connected"
+    return "connected" if connected else "not connected"
+
+
+def _newest(moments: Iterable[Optional[datetime]]) -> Optional[datetime]:
+    """The newest of ``moments`` that is known, or ``None``: the last sync of several connectors."""
+    known = [m for m in moments if m is not None]
+    return max(known) if known else None
+
+
 def register(registry: DashboardRegistry) -> None:
     """Register KSM's own five boxes on the given registry.
 
@@ -322,7 +381,7 @@ def register(registry: DashboardRegistry) -> None:
         # crash.
         dataset: Any = getattr(getattr(attr("ogm"), "db", None), "dataset", None)
 
-        graph_rows: Sequence[Tuple[str, Any]] = [
+        graph_rows: List[Tuple[str, Any]] = [
             ("Dataset", dataset),
             # `None` here is not missing information. The instance writes to the default
             # graph, which is what the demo does. An em dash would read as "unknown".
@@ -333,6 +392,17 @@ def register(registry: DashboardRegistry) -> None:
                 else "default graph",
             ),
         ]
+        # What the instance has seen of the store: the last read and write that it answered,
+        # and the last call that did not reach it. A refused write is an answer, and shows in
+        # Refused writes. Read from the instance's memory, so the box causes no store call.
+        binding = attr("graph_binding")
+        if binding is not None:
+            now = datetime.now(timezone.utc)
+            graph_rows += [
+                ("Last read", _when(binding.last_read, now)),
+                ("Last write", _when(binding.last_write, now)),
+                ("Last error", _error_text(binding.last_error, now, registry.dev)),
+            ]
 
         return (
             "<h3>Identity</h3>"
@@ -381,6 +451,14 @@ def register(registry: DashboardRegistry) -> None:
                     key = str(binding.parameter_property)
                     bindings_by_property.setdefault(key, []).append(binding)
 
+                # A binding may have several connectors, one for each direction. Its value's
+                # state is theirs together, and its last sync the newest of theirs.
+                records_by_value: Dict[Tuple[str, str], list] = {}
+                for record in getattr(middleware, "connections", None) or []:
+                    value_key = (str(record.holder), str(record.field))
+                    records_by_value.setdefault(value_key, []).append(record)
+                now = datetime.now(timezone.utc)
+
                 rows.append("<h3>Interface-accessible parameters</h3>")
                 rows.append(hint(SHORTENING_NOTE))
 
@@ -409,7 +487,8 @@ def register(registry: DashboardRegistry) -> None:
                         # The disclosure belongs on this path too. A parameter no descriptor
                         # matched is exactly the case the northbound projection exists to
                         # catch, and showing only a count would hide what was stripped.
-                        rows.append(_disclosure(pruned_set, None))
+                        if registry.dev:
+                            rows.append(_disclosure(pruned_set, None))
                         continue
 
                     binding_rows = []
@@ -427,6 +506,22 @@ def register(registry: DashboardRegistry) -> None:
                         topic_html = (
                             escape(_scalar(topic)) if topic is not None else "&mdash;"
                         )
+                        topic_cell = f"<td>{topic_html}</td>" if registry.dev else ""
+
+                        records = records_by_value.get(
+                            (str(binding.resource_iri), str(binding.field_id)), []
+                        )
+                        if records:
+                            state_text = ", ".join(
+                                sorted({_state(r.connected) for r in records})
+                            )
+                            sync_text: Optional[str] = _when(
+                                _newest(r.last_sync for r in records), now, _NO_SYNC_YET
+                            )
+                        else:
+                            # No connector serves the value: the instance wires none for it.
+                            state_text = "not wired"
+                            sync_text = None
 
                         routes = getattr(middleware, "_parameter_routes", None) or []
                         resource_lined = (
@@ -449,19 +544,27 @@ def register(registry: DashboardRegistry) -> None:
                             f"<td>{_iri_cell(prop_str)}</td>"
                             f"<td>{_lined_cell(binding.field_id)}</td>"
                             f"<td>{escape(binding.access_mode)}</td>"
-                            f"<td>{topic_html}</td>"
+                            f"{topic_cell}"
                             f"<td>{route}</td>"
+                            f"<td>{escape(state_text)}</td>"
+                            f"<td>{escape(sync_text)}</td>"
                             "</tr>"
                         )
 
+                    topic_head = "<th>MQTT topic</th>" if registry.dev else ""
                     rows.append(
                         '<div class="table-scroll"><table>'
                         "<thead><tr><th>Holder</th><th>Property</th><th>Field</th>"
-                        "<th>Access</th><th>MQTT topic</th><th>Northbound route</th></tr></thead>"
+                        f"<th>Access</th>{topic_head}<th>Northbound route</th>"
+                        "<th>State</th><th>Last sync</th></tr></thead>"
                         f"<tbody>{''.join(binding_rows)}</tbody></table></div>"
                     )
 
-                    rows.append(_disclosure(pruned_set, _marker_of(matching)))
+                    # Which properties the projection stripped is connection metadata too: the
+                    # count in the heading stays, and the list is shown on a development page
+                    # only.
+                    if registry.dev:
+                        rows.append(_disclosure(pruned_set, _marker_of(matching)))
 
         return "".join(rows)
 
@@ -545,9 +648,27 @@ def register(registry: DashboardRegistry) -> None:
         if plan is None or not plan.registrations:
             return "<p>No connectors wired.</p>"
 
+        # `connections` holds one record per wired connector, in the order of the wiring, so
+        # the n-th record is the n-th registration's. A middleware without the records, or with
+        # another count, shows no live state rather than a wrong one.
+        records: list = list(getattr(middleware, "connections", None) or [])
+        if len(records) != len(plan.registrations):
+            records = [None] * len(plan.registrations)
+        now = datetime.now(timezone.utc)
+
         rows = []
-        for binding, registration in plan.registrations:
+        for (binding, registration), record in zip(plan.registrations, records):
             suffix = registration.suffix if registration.suffix else "—"
+            if record is None:
+                live = "<td>&mdash;</td><td>&mdash;</td><td>&mdash;</td>"
+            else:
+                sync = _when(record.last_sync, now, _NO_SYNC_YET)
+                error = _error_text(record.last_error, now, registry.dev)
+                live = (
+                    f"<td>{escape(_state(record.connected))}</td>"
+                    f"<td>{escape(sync)}</td>"
+                    f"<td>{escape(error)}</td>"
+                )
             rows.append(
                 "<tr>"
                 f"<td>{_iri_cell(binding.resource_iri)}</td>"
@@ -556,20 +677,23 @@ def register(registry: DashboardRegistry) -> None:
                 f"<td>{escape(registration.sync_direction)}</td>"
                 f"<td>{escape(registration.sync_role)}</td>"
                 f"<td>{escape(suffix)}</td>"
-                "<td>—</td>"
+                f"{live}"
                 "</tr>"
             )
 
-        # Connection state and last-sync age are deliberately absent. Nothing
-        # in this project or in ``transitional_sync_middleware`` records them
-        # today. Inventing a value would be worse than the em dash. The
-        # ``Live state`` column makes the gap visible on the page rather than
-        # silently missing.
+        # The last sync is when a value last moved: the last value received, or the last one
+        # written. Not the last provide: a pushing connector answers that from a value it
+        # holds, so it says nothing of the value's age.
         return (
-            hint(SHORTENING_NOTE) + '<div class="table-scroll"><table>'
+            hint(SHORTENING_NOTE)
+            + hint(
+                "State, last sync and last error are what this instance has seen since it "
+                "started. The last sync is the last value received or written."
+            )
+            + '<div class="table-scroll"><table>'
             "<thead><tr><th>Holder</th><th>Field</th><th>Connector class</th>"
             "<th>Sync direction</th><th>Sync role</th><th>Suffix</th>"
-            "<th>Live state</th></tr></thead>"
+            "<th>State</th><th>Last sync</th><th>Last error</th></tr></thead>"
             f"<tbody>{''.join(rows)}</tbody></table></div>"
         )
 

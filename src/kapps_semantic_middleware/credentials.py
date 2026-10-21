@@ -4,8 +4,8 @@ The triple store interface reads ``TRIPLESTORE_DATASET`` when a caller names no 
 that remains correct for consumer code, which connects to whatever dataset the user configured.
 It is wrong for this project's tests and demos, because both of them *wipe* the dataset they
 connect to (``seeding.clear_dataset``). Inheriting that name from the ambient environment is how
-a stray variable gets somebody else's data cleared -- the KIT server is shared, and the dataset
-names on it include ``Production``.
+a stray variable gets somebody else's data cleared -- a shared server carries datasets that
+other people depend on.
 
 So every construction site here passes its dataset explicitly, and this module is the only
 sanctioned way to do it. A store built from ``TripleStoreEndpoint.from_env()`` without a dataset

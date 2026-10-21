@@ -39,7 +39,8 @@ def test_the_endpoints_of_named_workflows_and_state_properties_are_cleared():
     deregister_service(ogm, SERVICE)
 
     cleared = [call.kwargs["instance_iri"] for call in ogm.commit.call_args_list]
-    assert cleared == [SERVICE, WORKFLOW]
+    # The endpoints first, the address last (see tests/test_liveness_loops.py for why).
+    assert cleared == [WORKFLOW, SERVICE]
 
 
 @pytest.mark.parametrize("role", ["workflow", "state property"])

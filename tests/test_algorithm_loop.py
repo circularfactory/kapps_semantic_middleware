@@ -1,16 +1,17 @@
-"""Unit tests for the demonstration algorithm's background loop: pause, mode switch, and
-event-driven quiescence.
+"""Unit tests for the demonstration algorithm's background loop: pause, quiescence, and a
+reaction that only reads.
 
 No store and no live peer process here -- ``run_algorithm_loop``/``run_algorithm_once`` only
-ever touch ``controller.units`` (plain attribute access), ``controller.push()`` and
-``controller.writes``, so a duck-typed fake stands in for both the ``Controller``
-and its loaded units. The real wiring/fetch/REST path is covered separately, against a live
-store and a real peer process, in ``tests/test_controller_view.py``.
+ever touch ``controller.units`` (plain attribute access) and ``controller.rebuild_lock``, so a
+duck-typed fake stands in for both the ``Controller`` and its loaded units. The real
+wiring/fetch/REST path is covered separately, against a live store and a real peer process,
+in ``tests/test_controller_view.py``.
 """
 
 from __future__ import annotations
 
 import asyncio
+import copy
 import sys
 import time
 from pathlib import Path
@@ -22,8 +23,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from demo.transferunits import algorithm as algorithm_module  # noqa: E402
 from demo.transferunits import seed  # noqa: E402
-from demo.transferunits.algorithm import AlgorithmMode, AlgorithmState  # noqa: E402
-from demo.transferunits.controller import WriteTracker  # noqa: E402
+from demo.transferunits.algorithm import AlgorithmState  # noqa: E402
 from kapps_semantic_middleware.vocabulary import INF  # noqa: E402
 
 
@@ -60,115 +60,111 @@ def _set_occupied(unit: SimpleNamespace, occupied: bool) -> None:
     setattr(param, INF.hasValue.lined, [occupied])
 
 
+def _speed_of(unit: SimpleNamespace):
+    belt = getattr(unit, seed.TU_HAS_CONVEYOR_BELT.lined)[0]
+    return getattr(getattr(belt, seed.TU_HAS_CONVEYOR_SPEED.lined)[0], INF.hasValue.lined)
+
+
 class FakeController:
     """Duck-typed stand-in for everything ``run_algorithm_loop``/``run_algorithm_once``
     touch on a real ``Controller`` -- deliberately not a real one, so these tests need
-    no graph and no network."""
+    no graph and no network. It has no write method at all: a reaction that tried to
+    drive a unit would fail here with an ``AttributeError``."""
 
     def __init__(self, units):
         self.units = units
         self.rebuild_lock = asyncio.Lock()
-        self.pushed: list[str] = []
-        # The real thing, not a stub: it holds no graph, connector or network, so a fake
-        # of it would only be a second implementation of the rules to keep in step.
-        self.writes = WriteTracker()
-
-    async def push(self, resource_iri):
-        self.pushed.append(str(resource_iri))
 
 
-async def _run_briefly(controller, state, seconds: float) -> None:
-    task = asyncio.create_task(algorithm_module.run_algorithm_loop(controller, state))
+@pytest.fixture
+def reactions(monkeypatch):
+    """Count the reactions the loop fires, while still running the real one."""
+    fired: list[object] = []
+    real = algorithm_module.run_algorithm_once
+
+    async def counting(controller):
+        fired.append(await real(controller))
+        return fired[-1]
+
+    monkeypatch.setattr(algorithm_module, "run_algorithm_once", counting)
+    monkeypatch.setattr(algorithm_module, "WATCH_INTERVAL_SECONDS", 0.02)
+    return fired
+
+
+def _two_units():
+    unit_a = _fake_unit(1.0, False, "http://example.org/belt-a")
+    unit_b = _fake_unit(2.0, False, "http://example.org/belt-b")
+    return unit_a, unit_b, FakeController(
+        {"http://example.org/a": unit_a, "http://example.org/b": unit_b}
+    )
+
+
+async def _stop(task) -> None:
+    task.cancel()
     try:
-        await asyncio.sleep(seconds)
-    finally:
-        task.cancel()
-        try:
-            await task
-        except asyncio.CancelledError:
-            pass
+        await task
+    except asyncio.CancelledError:
+        pass
 
 
 @pytest.mark.asyncio
 class TestPause:
-    async def test_paused_never_ticks(self):
-        controller = FakeController(
-            {
-                "http://example.org/u1": _fake_unit(1.0, False, "http://example.org/belt1"),
-                "http://example.org/u2": _fake_unit(2.0, False, "http://example.org/belt2"),
-            }
-        )
-        state = AlgorithmState(tick_seconds=0.03, paused=True)
-
-        await _run_briefly(controller, state, 0.3)
-
-        assert controller.pushed == []
-        assert state.last_tick_at is None
-
-    async def test_a_rebuild_in_progress_pauses_ticking_and_resumes_after(self):
-        controller = FakeController(
-            {
-                "http://example.org/u1": _fake_unit(1.0, False, "http://example.org/belt1"),
-                "http://example.org/u2": _fake_unit(2.0, False, "http://example.org/belt2"),
-            }
-        )
-        state = AlgorithmState(tick_seconds=0.03)
-
-        await controller.rebuild_lock.acquire()
-        task = asyncio.create_task(algorithm_module.run_algorithm_loop(controller, state))
-        try:
-            await asyncio.sleep(0.3)
-            assert controller.pushed == [], "must not tick while a rebuild holds the lock"
-        finally:
-            controller.rebuild_lock.release()
-
-        await asyncio.sleep(0.3)
-        task.cancel()
-        try:
-            await task
-        except asyncio.CancelledError:
-            pass
-        assert controller.pushed, "must resume ticking once the rebuild lock is released"
-
-
-@pytest.mark.asyncio
-class TestTimedMode:
-    async def test_ticks_repeatedly_at_the_configured_interval(self):
-        controller = FakeController(
-            {
-                "http://example.org/u1": _fake_unit(1.0, False, "http://example.org/belt1"),
-                "http://example.org/u2": _fake_unit(2.0, False, "http://example.org/belt2"),
-            }
-        )
-        state = AlgorithmState(tick_seconds=0.03, mode=AlgorithmMode.TIMED)
-
-        await _run_briefly(controller, state, 0.35)
-
-        assert len(controller.pushed) >= 3, controller.pushed
-        assert state.last_tick_at is not None
-
-
-@pytest.mark.asyncio
-class TestEventDrivenMode:
-    async def test_quiescent_on_the_first_sample_then_fires_exactly_once_on_a_change(
-        self, monkeypatch
-    ):
-        monkeypatch.setattr(algorithm_module, "WATCH_INTERVAL_SECONDS", 0.02)
-        unit_a = _fake_unit(1.0, False, "http://example.org/belt-a")
-        unit_b = _fake_unit(2.0, False, "http://example.org/belt-b")
-        controller = FakeController({"http://example.org/a": unit_a, "http://example.org/b": unit_b})
-        state = AlgorithmState(tick_seconds=999.0, mode=AlgorithmMode.EVENT_DRIVEN)
+    async def test_paused_never_reacts(self, reactions):
+        unit_a, _, controller = _two_units()
+        state = AlgorithmState(paused=True)
 
         task = asyncio.create_task(algorithm_module.run_algorithm_loop(controller, state))
         try:
             await asyncio.sleep(0.08)
-            assert controller.pushed == [], "must not fire on the very first sample"
+            _set_occupied(unit_a, True)
+            await asyncio.sleep(0.08)
+        finally:
+            await _stop(task)
+
+        assert reactions == []
+        assert state.last_reaction_at is None
+
+    async def test_a_rebuild_in_progress_pauses_reacting_and_resumes_after(self, reactions):
+        unit_a, _, controller = _two_units()
+        state = AlgorithmState()
+
+        await controller.rebuild_lock.acquire()
+        task = asyncio.create_task(algorithm_module.run_algorithm_loop(controller, state))
+        try:
+            await asyncio.sleep(0.08)
+            _set_occupied(unit_a, True)
+            await asyncio.sleep(0.08)
+            assert reactions == [], "must not react while a rebuild holds the lock"
+        finally:
+            controller.rebuild_lock.release()
+
+        try:
+            await asyncio.sleep(0.08)
+            _set_occupied(unit_a, False)
+            await asyncio.sleep(0.08)
+        finally:
+            await _stop(task)
+        assert reactions, "must resume reacting once the rebuild lock is released"
+
+
+@pytest.mark.asyncio
+class TestABarrierChangeFiresOneReaction:
+    async def test_quiescent_on_the_first_sample_then_fires_exactly_once_on_a_change(
+        self, reactions
+    ):
+        unit_a, _, controller = _two_units()
+        state = AlgorithmState()
+
+        task = asyncio.create_task(algorithm_module.run_algorithm_loop(controller, state))
+        try:
+            await asyncio.sleep(0.08)
+            assert reactions == [], "must not fire on the very first sample"
             assert state.waiting_since is not None, "must show an explicit waiting state"
 
             change_at = time.monotonic()
             _set_occupied(unit_a, True)
             await asyncio.sleep(0.08)
-            assert len(controller.pushed) == 1, controller.pushed
+            assert len(reactions) == 1, reactions
             # The loop re-arms `waiting_since` on the very next watch tick after it
             # fires -- correct, since it goes straight back to watching for the *next*
             # change (idle must never look broken, including right after a
@@ -181,44 +177,29 @@ class TestEventDrivenMode:
 
             # No further change -- must not fire again on a steady reading.
             await asyncio.sleep(0.08)
-            assert len(controller.pushed) == 1
+            assert len(reactions) == 1
         finally:
-            task.cancel()
-            try:
-                await task
-            except asyncio.CancelledError:
-                pass
+            await _stop(task)
 
-    async def test_mode_switch_takes_effect_on_the_same_running_loop(self, monkeypatch):
-        """Flipping state.mode at runtime -- what a station-board route does -- must be
-        honoured by the loop already running, with no restart: the toggle switches
-        between them at runtime."""
-        monkeypatch.setattr(algorithm_module, "WATCH_INTERVAL_SECONDS", 0.02)
-        unit_a = _fake_unit(1.0, False, "http://example.org/belt-a")
-        unit_b = _fake_unit(2.0, False, "http://example.org/belt-b")
-        controller = FakeController({"http://example.org/a": unit_a, "http://example.org/b": unit_b})
-        # Start in EVENT_DRIVEN rather than TIMED: TIMED fires its first tick
-        # immediately (see TestTimedMode), which would make "no push yet" trivially
-        # false regardless of whether a mode switch works at all. EVENT_DRIVEN's own
-        # sleep granularity is the small WATCH_INTERVAL_SECONDS patched above, so a
-        # switch made while it is running is picked up on the very next watch tick --
-        # unlike a switch made while TIMED is mid-sleep for a long tick_seconds, which
-        # only takes effect once that sleep completes (a separate, coarser-grained
-        # property this test does not need to exercise).
-        state = AlgorithmState(tick_seconds=0.03, mode=AlgorithmMode.EVENT_DRIVEN)
 
-        task = asyncio.create_task(algorithm_module.run_algorithm_loop(controller, state))
-        try:
-            await asyncio.sleep(0.08)
-            assert controller.pushed == [], "must be quiescent before any barrier changes"
+@pytest.mark.asyncio
+class TestAReactionOnlyReads:
+    async def test_a_reaction_leaves_every_loaded_unit_as_it_was(self):
+        """The reaction reads a barrier and a speed. It assigns nothing: the loaded units
+        compare equal before and after, and the fake controller it ran against has no
+        write method it could have called."""
+        unit_a, unit_b, controller = _two_units()
+        before = copy.deepcopy(controller.units)
 
-            state.mode = AlgorithmMode.TIMED
-            await asyncio.sleep(0.15)
+        observed = await algorithm_module.run_algorithm_once(controller)
 
-            assert controller.pushed, "the running loop must honour the mode switch"
-        finally:
-            task.cancel()
-            try:
-                await task
-            except asyncio.CancelledError:
-                pass
+        assert observed is not None
+        assert _speed_of(unit_a) == _speed_of(before["http://example.org/a"]) == [1.0]
+        assert _speed_of(unit_b) == _speed_of(before["http://example.org/b"]) == [2.0]
+
+    async def test_fewer_than_two_units_observes_nothing(self):
+        controller = FakeController(
+            {"http://example.org/a": _fake_unit(1.0, False, "http://example.org/belt-a")}
+        )
+
+        assert await algorithm_module.run_algorithm_once(controller) is None

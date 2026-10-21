@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import sys
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -28,6 +29,7 @@ from kapps_semantic_middleware.registration import (
     mint_workflow_iri,
     register_service,
     register_workflow,
+    update_heartbeat,
 )
 from kapps_semantic_middleware.vocabulary import CFC, OperationStatus, SVC
 
@@ -143,7 +145,10 @@ def test_watchdog_sweeps_stranded_operations(store):
     queued_op = _create_op(ogm, cap_iri, OperationStatus.QUEUED)
     running_op = _create_op(ogm, cap_iri, OperationStatus.RUNNING)
 
-    # The service advertised an address but never heartbeated -> stale. A watchdog sweeps it.
+    # The service advertised an address, and its heartbeat is an hour old -> stale. (The
+    # registration wrote a fresh heartbeat with the address; this one replaces it.) A watchdog
+    # sweeps it.
+    update_heartbeat(ogm, service_iri, timestamp=datetime.now(timezone.utc) - timedelta(hours=1))
     watchdog = SemanticMiddleware(mode="watchdog", ogm=OGM(db=triplestore_for(store.dataset)))
     swept = asyncio.run(watchdog.sweep())
 

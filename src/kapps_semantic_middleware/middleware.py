@@ -4,8 +4,9 @@ Extends transitional_sync_middleware.Middleware with knowledge-graph registratio
 and execution capabilities. Supports three modes -- see `modes.Mode`
 for what each one means and which are implemented.
 
-Operation execution: an Operation resolves via its implemented
-Capability to a Workflow endpoint, which the system then invokes over HTTP.
+Operation execution: an Operation resolves via its implemented Capability to the Service
+that realizes it; the dispatcher posts the Operation's IRI to that Service's event trigger, and the
+Service claims the Operation and runs the Workflow in-process.
 """
 
 from __future__ import annotations
@@ -23,7 +24,21 @@ import threading
 import time
 import warnings
 import weakref
-from typing import Any, Callable, Deque, Dict, List, Mapping, NamedTuple, Optional, Sequence
+from typing import (
+    Any,
+    Callable,
+    ContextManager,
+    Deque,
+    Dict,
+    List,
+    Literal,
+    Mapping,
+    NamedTuple,
+    Optional,
+    Sequence,
+    Tuple,
+    get_args,
+)
 
 import anyio
 import httpx
@@ -33,7 +48,6 @@ from fastapi.routing import APIRoute
 from kapps_ogm import Update
 from kapps_ogm.utils.class_scope import ClassScope
 from kapps_triplestore_interface import IRI
-from kapps_triplestore_interface.exceptions import PreconditionFailedError
 from pydantic import BaseModel
 
 from transitional_sync_middleware import Middleware
@@ -47,9 +61,18 @@ from kapps_semantic_middleware.connectors.semantic import (
     default_registry,
 )
 from kapps_semantic_middleware.connectors.wiring import WiringPlan, plan_wiring
-from kapps_semantic_middleware import modes
+from kapps_semantic_middleware import _deprecation, modes
 from kapps_semantic_middleware.modes import Mode
 from kapps_semantic_middleware.activity import ActivityFeed, enable_activity_feed
+from kapps_semantic_middleware.observation import (
+    ConnectionRecord,
+    GraphBindingRecord,
+    _connection_record,
+    _ConnectorObservation,
+    _graph_binding_record,
+    _observe_store,
+    _observed_connector,
+)
 from kapps_semantic_middleware.commit import (
     Change,
     ErrorTransition,
@@ -58,18 +81,17 @@ from kapps_semantic_middleware.commit import (
     _Creation,
     _nothing_to_join,
     _property,
+    _as_references,
 )
 from kapps_semantic_middleware.operation import (
     _implemented_capabilities,
     _received_scope,
     operation,
 )
-from kapps_semantic_middleware.possession import _switch_conflict, possession_change
 from kapps_semantic_middleware.rest_router import generate_recursive_rest_api
 from kapps_semantic_middleware.errors import (
     DeploymentRuntimeError,
     DeploymentValueError,
-    HandoverPreconditionError,
     NotificationReceiverAmbiguousError,
     NotificationReceiverUnavailableError,
     OperationQueueEmpty,
@@ -77,7 +99,7 @@ from kapps_semantic_middleware.errors import (
 )
 from kapps_semantic_middleware.registration import (
     _issuers,
-    _operation_status_update,
+    _claim_update,
     _operation_statuses,
     _read_notified,
     _resolve_claim,
@@ -86,10 +108,9 @@ from kapps_semantic_middleware.registration import (
     build_event_trigger_url,
     build_state_endpoint,
     build_workflow_endpoint,
-    counterpart_has_complementary_ability,
     deregister_service,
-    find_possession_state,
     find_resource_operations,
+    find_stranded_operations,
     mark_operation_failed,
     mint_capability_iri,
     mint_service_iri,
@@ -101,6 +122,7 @@ from kapps_semantic_middleware.registration import (
     register_workflow,
     resolve_dispatch_target,
     update_heartbeat,
+    _LIVENESS_STORE_ERRORS,
 )
 from kapps_semantic_middleware.validation_report import RefusedWrite, _RefusedWrites, _Verb
 from kapps_semantic_middleware.vocabulary import SVC, OperationStatus
@@ -111,8 +133,15 @@ logger = logging.getLogger(__name__)
 # sleep, which the rest of the module also uses.
 _heartbeat_wait = asyncio.sleep
 _heartbeat_phase = random.uniform
+# The sweep loop's wait, replaced by a test in the same way.
+_sweep_wait = asyncio.sleep
 
 __all__ = ["SemanticMiddleware", "IssuedOperation", "OperationResolutionError", "Mode"]
+
+#: The verbs that ``SemanticMiddleware.commit`` takes: its own, and that of the one function
+#: built on it that names itself, the extension's handover.
+_CommitVerb = Literal["commit", "handover"]
+_COMMIT_VERBS: frozenset[str] = frozenset(get_args(_CommitVerb))
 
 #: The statuses of an Operation that a resource has claimed: it runs, or it has ended.
 _CLAIMED = frozenset({OperationStatus.RUNNING, OperationStatus.DONE, OperationStatus.FAILED})
@@ -155,7 +184,8 @@ class IssuedOperation:
     """The Operation that ``issue_operation()`` issues: its draft in the block, its handle after it.
 
     ``issue_operation()`` makes it; a caller does not. In the block of ``with mw.issue_operation(...) as op:``,
-    ``op.data`` takes the Operation's domain properties, as ``{property IRI: [values]}``.
+    ``op.data`` takes the Operation's domain properties, as ``{property IRI: [values]}``, and
+    ``op.update(instance_iri, data)`` changes an existing instance in the same commit.
     ``op.iri`` is the Operation's IRI. After the block, the Operation is in the graph, ``queued``.
     ``op.issuer`` is its issuer: the Resource of the middleware that issued it. ``svc:issuedBy``
     records it. Then ``op`` waits for the Operation, in a coroutine::
@@ -183,6 +213,9 @@ class IssuedOperation:
         #: The Operation's domain properties, set in the block of ``issue_operation()``.
         self.data: Dict[str, list] = {}
         self._middleware = middleware
+        # The changes of existing instances, set in the block; and whether the block is open.
+        self._updates: list[Update] = []
+        self._open = True
         # Whether the Operation is in the graph: only then can a wait read its status.
         self._in_graph = False
         # The notifications of the Operation that the issuer's event trigger took, counted, and
@@ -191,6 +224,37 @@ class IssuedOperation:
         self._arrivals = 0
         # The event of each waiting coroutine, with the event loop that it runs on.
         self._waiters: set = set()
+
+    def update(self, instance_iri: str, data: dict) -> None:
+        """Change an existing instance in the commit that creates the Operation.
+
+        It writes as the ``update`` of a :meth:`SemanticMiddleware.commit` transition does:
+        ``data`` is ``{property IRI: [values]}``, each property it names replaces the stored
+        values, and ``[]`` removes the property. Its values are read as in the ``update`` of a
+        :meth:`SemanticMiddleware.create`: they must be lists, and a value that is an IRI, such
+        as ``op.iri``, is a reference. An empty ``data`` changes nothing. Two updates of one instance
+        merge, the later value winning. The updates are staged after ``op.data`` and after every
+        creation nested in the block, so an update of an instance created in the block folds
+        into its ``Create``, and the update's value wins. The store admits or refuses them
+        together with the Operation; an error in the block drops them.
+
+        Raises:
+            ValueError: If ``instance_iri`` is the Operation itself (set its properties in
+                ``op.data``), or the values of a property are not a list.
+            RuntimeError: If the block of ``issue_operation()`` has ended.
+        """
+        if not self._open:
+            raise RuntimeError(
+                f"the block of issue_operation() for {self.iri} has ended: change "
+                f"{instance_iri} in a mw.commit() of its own"
+            )
+        if IRI(instance_iri) == IRI(self.iri):
+            raise ValueError(
+                f"op.update() names the Operation {self.iri} itself: set its properties in op.data"
+            )
+        changed = _as_references(data)
+        if changed:
+            self._updates.append(Update(instance_iri=IRI(instance_iri), data=changed))
 
     async def claimed(self, timeout: Optional[float] = 30) -> bool:
         """Wait until the Operation is claimed.
@@ -515,8 +579,9 @@ class SemanticMiddleware(Middleware):
     ``mode`` accepts a ``Mode`` constant or the equivalent bare string -- ``Mode`` is a
     ``str`` subclass, so existing ``mode="resource"`` callers are unaffected.
 
-    Operation execution: an Operation resolves via its implemented
-    Capability to a Workflow endpoint, which is then invoked over HTTP.
+    Operation execution: an Operation resolves via its implemented Capability to the Service
+    that realizes it; the dispatcher posts the Operation's IRI to that Service's event trigger,
+    and the Service claims the Operation and runs the Workflow in-process.
     """
 
     #: What this product calls itself. The base class names the framework it is built on,
@@ -530,7 +595,10 @@ class SemanticMiddleware(Middleware):
         "wires its connectors from what it finds there, and serves the resulting datamodel."
     )
     APP_WELCOME = "Welcome to semantic middleware!"
-    APP_CONTACT = {"name": "Etienne Hoffmann", "email": "etienne.hoffmann@kit.edu"}
+    APP_CONTACT = {
+        "name": "kapps-semantic-middleware maintainers",
+        "url": "https://github.com/circularfactory/kapps_semantic_middleware",
+    }
 
     @staticmethod
     def _app_version() -> str:
@@ -656,11 +724,15 @@ class SemanticMiddleware(Middleware):
                 The constructor converts it to an ``IRI``; a string that is no IRI raises
                 ``InvalidIRIError`` here. None is the default graph.
             heartbeat_interval: Seconds between heartbeat updates (resource mode).
-            staleness_threshold: Seconds before a service is considered stale (watchdog mode).
+            staleness_threshold: Seconds before a service is considered stale: in watchdog
+                mode for the sweep, in resource mode for the startup reconstruction's test of
+                a live sibling Service.
             sweep_interval: Seconds between staleness sweeps (watchdog mode).
             class_scope: The consumer's view for parameter recognition and wiring.
             autoregister_connectors: Enable automatic connector registration. Default is True.
             connector_sync_direction: The sync direction for connectors. Default is BIDIRECTIONAL.
+                A REST binding only observes, so a settable parameter that binds over REST
+                needs TO_PERSISTENCE: under BIDIRECTIONAL its wiring raises ``ValueError``.
             connector_registry: The semantic connector registry. Uses default_registry if None.
             ensure_transport: A callback to start transport brokers before connector creation.
             activity_feed: Enable the activity feed for observability. Default is False.
@@ -686,9 +758,14 @@ class SemanticMiddleware(Middleware):
 
         self.mode = mode
         self.ogm = ogm
+        # What this instance sees of its graph binding and of each connector it wires, in memory
+        # only. The store is observed before anything reads the graph: the wiring below reads it
+        # at construction. `graph_binding` and `connections` read them.
+        self._graph_observation = _observe_store(ogm)
+        self._observed_connections: List[Tuple[str, Any, Any, _ConnectorObservation]] = []
         # The writes of this instance that the store's shapes refused, the newest of them, in
-        # memory only. `commit`, `create` and `handover` record each refusal where it reaches
-        # the caller, and `refused_writes` reads them.
+        # memory only. `commit` and `create`, and every function built on them, record each
+        # refusal where it reaches the caller, and `refused_writes` reads them.
         self._refused_writes = _RefusedWrites()
         self.host = host
         self.port = port
@@ -761,6 +838,10 @@ class SemanticMiddleware(Middleware):
             # Capability that it realizes. The intake's match is a lookup here, never a query,
             # and it knows no workflow of an earlier run of the same resource.
             self._workflow_functions: Dict[IRI, Callable[..., Any]] = {}
+            # This instance's own Workflow of each exposed workflow, by the IRI of the Capability
+            # that it realizes. A claim records it as the Operation's executor
+            # (`svc:executedByWorkflow`), so the watchdog asks whether the claimer still lives.
+            self._workflow_iris: Dict[IRI, IRI] = {}
             # The intake's FIFO, and whether its one worker is at work.
             self._intake: Deque[_Received] = collections.deque()
             self._intake_working = False
@@ -863,25 +944,40 @@ class SemanticMiddleware(Middleware):
         self._heartbeat_task = asyncio.create_task(self._heartbeat_loop())
 
     async def _heartbeat_loop(self) -> None:
-        """Refresh svc:lastHeartbeat once at startup, after a random phase, then every ``heartbeat_interval`` seconds, until the system cancels it."""
+        """Refresh svc:lastHeartbeat once at startup, after a random phase, then every ``heartbeat_interval`` seconds, until the system cancels it.
+
+        A beat that fails on a store error is logged as one warning; the next beat is at the next
+        interval. Any other error ends the loop, logged at ERROR, and is raised.
+        """
         # The loop is only started when a positive interval was configured.
         interval = self.heartbeat_interval or 30.0
         own = self._own_iris("the heartbeat is only valid in resource mode")
 
         async def beat() -> None:
-            await anyio.to_thread.run_sync(
-                functools.partial(
-                    update_heartbeat,
-                    self.ogm,
-                    own.service,
-                    named_graph=self.named_graph,
+            # A store error costs this beat, not the loop: the next one is due at the next
+            # interval, and the staleness threshold spans several intervals.
+            try:
+                await anyio.to_thread.run_sync(
+                    functools.partial(
+                        update_heartbeat,
+                        self.ogm,
+                        own.service,
+                        named_graph=self.named_graph,
+                    )
                 )
-            )
+            except _LIVENESS_STORE_ERRORS as error:
+                logger.warning(
+                    "The heartbeat of %s failed and is retried in %g s: %r",
+                    own.service,
+                    interval,
+                    error,
+                )
 
         try:
-            # The first beat is at startup, so a reader sees a fresh heartbeat right after
-            # registration. The random phase follows it: instances started together would
-            # otherwise beat together for life, and a grid's writes would land in one burst.
+            # The first beat is at startup, after the registration that wrote the first
+            # heartbeat with the address. The random phase follows it: instances started
+            # together would otherwise beat together for life, and a grid's writes would land
+            # in one burst.
             await beat()
             await _heartbeat_wait(_heartbeat_phase(0.0, interval))
             while True:
@@ -889,6 +985,9 @@ class SemanticMiddleware(Middleware):
                 await _heartbeat_wait(interval)
         except asyncio.CancelledError:
             pass
+        except Exception:
+            logger.error("The heartbeat loop of %s ended", own.service, exc_info=True)
+            raise
 
     async def _stop_heartbeat(self) -> None:
         """Cancel the heartbeat loop on shutdown."""
@@ -921,13 +1020,27 @@ class SemanticMiddleware(Middleware):
         self._sweep_task = asyncio.create_task(self._sweep_loop())
 
     async def _sweep_loop(self) -> None:
-        """Sweep stale services every ``sweep_interval`` seconds, until canceled."""
+        """Sweep stale services every ``sweep_interval`` seconds, until canceled.
+
+        A sweep that fails on a store error is logged as one warning and tried again at the
+        next interval. Any other error ends the loop, logged at ERROR, and is raised.
+        """
         try:
             while True:
-                await self.sweep()
-                await asyncio.sleep(self.sweep_interval)
+                try:
+                    await self.sweep()
+                except _LIVENESS_STORE_ERRORS as error:
+                    logger.warning(
+                        "The watchdog's sweep failed and is retried in %g s: %r",
+                        self.sweep_interval,
+                        error,
+                    )
+                await _sweep_wait(self.sweep_interval)
         except asyncio.CancelledError:
             pass
+        except Exception:
+            logger.error("The watchdog's sweep loop ended", exc_info=True)
+            raise
 
     async def _stop_sweep(self) -> None:
         """Cancel the sweep loop on shutdown."""
@@ -940,6 +1053,9 @@ class SemanticMiddleware(Middleware):
 
     async def sweep(self) -> List[str]:
         """Deregister every stale service once. Returns the swept service IRIs (as str).
+
+        A store error that hits one stale Service or one of its Operations is logged, and that
+        Service is left for the next sweep (and not returned); the others are swept.
 
         A watchdog-mode instance calls this on its ``sweep_interval``. It is also a
         plain method, so a test or operator triggers a sweep directly. The issuer of each
@@ -967,6 +1083,7 @@ class SemanticMiddleware(Middleware):
         entry: Sequence[Change] = (),
         exit: ExitTransition = (),
         error: ErrorTransition = (),
+        verb: _CommitVerb = "commit",
     ) -> _Commit:
         """A state transition that the store admits before the work it describes begins.
 
@@ -979,8 +1096,8 @@ class SemanticMiddleware(Middleware):
             async with mw.commit(
                 op, class_scope=scope, entry=running, exit=done, error=failed
             ) as transition:
-                torque = await robot.screw(transition.node.instance)  # the physical work
-                transition.update(op, {str(SVC.executionResult): [torque]})
+                reading = await tool.apply(transition.node.instance)  # the physical work
+                transition.update(op, {str(SVC.executionResult): [reading]})
 
         and the same with ``with`` in code that runs in a worker thread, such as a callback, a
         notification handler or a script. ``entry``, ``exit`` and ``error`` are lists of
@@ -1053,6 +1170,10 @@ class SemanticMiddleware(Middleware):
         value that is no longer there, because another write changed it after kapps_ogm read
         it. The error is not caught: for a ``Create``, it signals a reused IRI.
 
+        **A refusal by the store's shapes is recorded** in :attr:`refused_writes`, labelled with
+        ``verb``: ``commit`` by default, or ``handover``, which an extension's handover passes,
+        because it commits through here.
+
         Raises:
             kapps_triplestore_interface.exceptions.TripleStoreInterfaceError: If the store
                 refuses a transition. A SHACL refusal is ``ShaclValidationError``, whose
@@ -1060,11 +1181,18 @@ class SemanticMiddleware(Middleware):
                 ``PreconditionFailedError``.
             ValueError: If a change does not fit its class, two changes of one transition write
                 one instance (these from kapps_ogm), or a ``Create`` carries data but no
-                ``class_scope``.
+                ``class_scope``. Also if ``verb`` is neither ``commit`` nor ``handover``, when
+                the call is made, before anything is written.
             requests.exceptions.RequestException: If the store cannot be reached.
         """
+        if verb not in _COMMIT_VERBS:
+            allowed = " or ".join(repr(name) for name in sorted(_COMMIT_VERBS))
+            raise ValueError(
+                f"commit() takes verb {allowed}, the label of a refused write in refused_writes; "
+                f"got {verb!r}"
+            )
         return self._transition(
-            *instances, class_scope=class_scope, entry=entry, exit=exit, error=error
+            *instances, class_scope=class_scope, entry=entry, exit=exit, error=error, verb=verb
         )
 
     def _transition(
@@ -1080,7 +1208,7 @@ class SemanticMiddleware(Middleware):
         """The commit of :meth:`commit`, and of a special function that already read the issuers
         of the Operations that it moves: ``issuers`` maps such an Operation to its issuer, or to
         None when it has none, so that it is not read again after the write. ``verb`` names the
-        call that writes, for the record of a refusal: ``handover`` commits through here too."""
+        call that writes, for the record of a refusal."""
         return _Commit(
             self.ogm,
             instances=instances,
@@ -1097,13 +1225,14 @@ class SemanticMiddleware(Middleware):
     def refused_writes(self) -> List[RefusedWrite]:
         """The writes of this instance that the store's shapes refused, the newest first.
 
-        :meth:`commit`, :meth:`create` and :meth:`handover` record each such refusal when it
-        reaches the caller (``ShaclValidationError``), and raise the error unchanged. So does the
-        write of the error transition of :meth:`commit`, which the store's shapes may refuse
-        when the body failed: its record has the verb ``commit``, and its first line reads
-        ``commit (error transition) refused by ...``. The caller still gets the error of the
-        body, with a note that the error transition was not committed. The record holds the
-        time, the verb, the rules that the report names, and the report. The instance keeps the
+        :meth:`commit` and :meth:`create` record each such refusal when it reaches the caller
+        (``ShaclValidationError``), and raise the error unchanged; a function built on
+        :meth:`commit` names itself with its ``verb``, as an extension's handover does. So does
+        the write of the error transition of :meth:`commit`, which the store's shapes may refuse
+        when the body failed: its record has the verb of the commit, ``commit`` unless the call
+        named another, and its first line reads ``<verb> (error transition) refused by ...``. The
+        caller still gets the error of the body, with a note that the error transition was not
+        committed. The record holds the time, the verb, the rules that the report names, and the report. The instance keeps the
         newest 50 in memory, and nothing in the graph; an older one drops. A refusal that is no
         refusal by the shapes, such as a false precondition, is not recorded.
 
@@ -1114,9 +1243,47 @@ class SemanticMiddleware(Middleware):
         return self._refused_writes.newest_first()
 
     @property
+    def connections(self) -> List[ConnectionRecord]:
+        """What this instance has seen of each connector it wired, in the order of the wiring.
+
+        One ``ConnectionRecord`` per wired connector: whether it is connected, its last provide,
+        consume and receive, and its last error, with this instance's resource and service IRI.
+        Empty for an instance that wires no connector. Read from memory: it causes no traffic.
+        """
+        own = getattr(self, "service_iri", None)
+        return [
+            _connection_record(
+                resource=self.resource_iri,
+                service=own,
+                connector_id=connector_id,
+                binding=binding,
+                registration=registration,
+                observation=observation,
+            )
+            for connector_id, binding, registration, observation in self._observed_connections
+        ]
+
+    @property
+    def graph_binding(self) -> GraphBindingRecord:
+        """What this instance has seen of its graph binding, the store behind its OGM.
+
+        A ``GraphBindingRecord``: the dataset, the named graph, the last read and write that the
+        store answered, and the last error of the binding, with this instance's resource and
+        service IRI. Instances that share an OGM share its store, and see the same reads and
+        writes. Read from memory: it causes no traffic.
+        """
+        return _graph_binding_record(
+            resource=self.resource_iri,
+            service=getattr(self, "service_iri", None),
+            ogm=self.ogm,
+            named_graph=getattr(self, "named_graph", None),
+            observation=self._graph_observation,
+        )
+
+    @property
     def resource(self) -> Optional[IRI]:
-        """This middleware's own Resource: the short form where a Resource is named, as in
-        ``workpiece(scope, possessor=mw.resource)``. None in a mode without a Resource."""
+        """This middleware's own Resource: the short form where a Resource is named, such as the
+        input of a predefined scope. None in a mode without a Resource."""
         return self.resource_iri
 
     def _own_iris(self, refusal: str) -> _OwnIris:
@@ -1145,7 +1312,7 @@ class SemanticMiddleware(Middleware):
         Usage::
 
             with mw.create(SNAPSHOT, snapshot_scope) as snapshot:
-                snapshot.update({str(EX.decision): ["unscrew"]})
+                snapshot.update({str(EX.decision): ["rework"]})
 
         and ``async with`` in a coroutine, as for :meth:`commit`. For new work for a resource that
         realizes a Capability, use :meth:`issue_operation`: it creates the Operation with this method, and
@@ -1164,9 +1331,9 @@ class SemanticMiddleware(Middleware):
           :meth:`create` of this middleware whose write is still to come, the same changes join
           that write instead: they are admitted or refused together with it, and an error in its
           body drops them. A creation commits on its own inside a body whose commit has already
-          happened, such as that of :meth:`handover`, and inside a write of another middleware
-          (another OGM or another named graph), such as a planner's beside a resource's in one
-          process.
+          happened, such as that of an extension's handover, and inside a write of another
+          middleware (another OGM or another named graph), such as a planner's beside a
+          resource's in one process.
         - **Error in the body.** Nothing is written or joined, and the error is raised again.
           Nothing exists yet that could carry an error transition.
 
@@ -1176,8 +1343,9 @@ class SemanticMiddleware(Middleware):
 
         ``scope`` is a ClassScope of the class, or a predefined scope, which brings the rules for
         creating an instance of its class: a domain module gives it, and it may require inputs and
-        add changes to the same commit. The ``Create`` names every property that ``scope`` names
-        and every property that the body sets, so kapps_ogm drops none of them.
+        add changes to the same commit. The ``Create``'s class scope names every property that
+        ``scope`` names and every property that the body sets, and kapps_ogm refuses a value
+        outside it.
 
         **kapps_ogm's rules apply.** An ``instance_iri`` that the store already holds is refused
         with ``PreconditionFailedError`` at the commit, and nothing is written.
@@ -1302,6 +1470,7 @@ class SemanticMiddleware(Middleware):
             # The intake's match: a notified Operation that implements this Capability runs
             # this function.
             self._workflow_functions[capability_iri] = func
+            self._workflow_iris[capability_iri] = workflow_iri
 
             async def register_workflow_callback() -> None:
                 """Register the Workflow and Capability instances in the knowledge graph.
@@ -1728,7 +1897,7 @@ class SemanticMiddleware(Middleware):
         This is a plain blocking call. From a coroutine, run it off the event loop::
 
             await anyio.to_thread.run_sync(
-                functools.partial(mw.notify, operation=op, resource=wms)
+                functools.partial(mw.notify, operation=op, resource=peer)
             )
         """
 
@@ -1799,7 +1968,8 @@ class SemanticMiddleware(Middleware):
         Usage::
 
             with mw.issue_operation(capability_class=cap, operation_class=op_cls) as op:
-                op.data[str(EX.hasScrew)] = [{"id": str(screw)}]  # its domain fields, if any
+                op.data[str(EX.hasPart)] = [{"id": str(part)}]  # its domain fields, if any
+                op.update(part, {str(EX.hasOperation): [op.iri]})  # an existing instance
             if await op.claimed(timeout=30):
                 status = await op.ended()  # "done" or "failed"
 
@@ -1813,14 +1983,17 @@ class SemanticMiddleware(Middleware):
           but no Service of it is live now, and ``CapabilityNotRealizedError`` (Repair) when no
           Workflow realizes it.
         - **The block.** It sets the Operation's domain properties in ``op.data``, as
-          ``{property IRI: [values]}``, and may read ``op.iri``. An error in the block writes
-          nothing.
+          ``{property IRI: [values]}``, and may read ``op.iri``. With
+          ``op.update(instance_iri, data)`` it changes an existing instance in the Operation's
+          commit, such as a back-link to the Operation (see :meth:`IssuedOperation.update`). An
+          error in the block writes nothing.
         - **Create.** At the end of the block, one :meth:`create` of the Operation writes it,
           under the operation scope. It writes the type, the ``cfc:implementsCapability`` link
           to the Capability that discovery found, the status ``queued`` and ``op.data``. It also
           writes ``svc:issuedBy``, the issuer: this middleware's Resource, ``op.issuer``. The
-          store admits all of it or none of it. A refusal is raised, and nobody is notified. An
-          ``operation_iri`` that the store already holds is refused with
+          same commit holds the updates of ``op.update()``, staged after the creations nested in
+          the block. The store admits all of it or none of it. A refusal is raised, and nobody is
+          notified. An ``operation_iri`` that the store already holds is refused with
           ``PreconditionFailedError``, and that Operation is not touched. If ``op.data`` sets
           ``svc:issuedBy``, ``ValueError`` is raised before anything is written.
         - **Notify.** With the Operation in the graph, the Service that discovery found is
@@ -1837,7 +2010,8 @@ class SemanticMiddleware(Middleware):
 
         The Operation commits on its own, also inside the block of another :meth:`commit` or
         :meth:`create`, because the receiver reads it after the notification. A :meth:`create`
-        nested in this block joins the Operation's commit.
+        nested in this block joins the Operation's commit, and so do the updates of
+        ``op.update()``: they never join the outer commit.
 
         This is the in-process caller face — not REST-exposed.
         """
@@ -1863,7 +2037,10 @@ class SemanticMiddleware(Middleware):
             instance_iri=operation_iri or None,
         ) as created:
             issued = IssuedOperation(self, created.iri, own.resource)
-            yield issued
+            try:
+                yield issued
+            finally:
+                issued._open = False
             if any(_property(key) == SVC.issuedBy for key in issued.data):
                 raise ValueError(
                     f"the data of {created.iri} sets {SVC.issuedBy}, which issue_operation() sets "
@@ -1872,6 +2049,10 @@ class SemanticMiddleware(Middleware):
             created.update({str(SVC.operationStatus): [OperationStatus.QUEUED]})
             created.update(issued.data)
             created.update({str(SVC.issuedBy): [{"id": str(own.resource)}]})
+            # Staged last, after the creations nested in the block: an update of an instance
+            # created there folds into its Create, and the update's value wins.
+            for change in issued._updates:
+                created._stage(change)
 
         # The Operation is in the graph: its handle can wait, and only now is the receiver
         # notified, through the delivery of notify().
@@ -1919,7 +2100,9 @@ class SemanticMiddleware(Middleware):
 
         - **Entry.** `__enter__` takes the next `queued` Operation from this instance's
           in-memory queue (FIFO order, raises `OperationQueueEmpty` if none), and commits the
-          claim, `queued` to `running`, before the body runs. If the store refuses the claim, its
+          claim, `queued` to `running`, before the body runs. When this instance exposes a
+          workflow for the Operation's Capability, the claim also records that Workflow as the
+          executor (`svc:executedByWorkflow`), in the same commit; the end writes it again. If the store refuses the claim, its
           error is raised and the body does not run; the Operation has left the in-memory queue,
           and the graph keeps it as it was. Then the Operation is re-fetched under the
           domain-supplied `ClassScope`, so the body gets exactly the object shape it needs.
@@ -1936,8 +2119,9 @@ class SemanticMiddleware(Middleware):
           (`svc:issuedBy`) is notified, as after any :meth:`commit` that moves an Operation.
           The read before the claim finds the issuer, so the claim reads nothing more for it.
 
-        Two claimants of one Operation are not told apart yet: the claim of an Operation that is
-        already `running` changes nothing, and the store admits it.
+        Two claimants of one Operation are not told apart yet: the store admits the claim of an
+        Operation that is already `running`, and that claim records its own Workflow as the
+        executor, so the executor recorded is the last claimer's.
 
         This is the in-process receiver face — not REST-exposed.
         """
@@ -1956,7 +2140,13 @@ class SemanticMiddleware(Middleware):
         # stays queued (in the graph and this in-memory queue) for a later retry. The same read
         # finds the Operation's issuer, whom the claim and the end notify.
         read = _resolve_claim(self.ogm, op_iri, named_graph=self.named_graph)
-        workflow_iri = read.workflow
+        # The executor: this instance's own Workflow of the Operation's Capability, when it
+        # exposes one. The claim records it, so the watchdog sweep and a restart's reconstruction
+        # fail the running Operation when this instance's Service goes stale, and not while it
+        # lives. Without one, the claim records none, and the end records the Workflow that
+        # realizes the Capability.
+        executor = self._workflow_iris.get(read.capability) if read.capability else None
+        workflow_iri = executor or read.workflow
 
         # Preconditions passed: dequeue, then claim it in the commit's entry. A refused claim has
         # therefore left the in-memory queue, as a failed `running` write always has.
@@ -1987,7 +2177,7 @@ class SemanticMiddleware(Middleware):
         with self._transition(
             op_iri,
             class_scope=scope,
-            entry=[_operation_status_update(op_iri, OperationStatus.RUNNING)],
+            entry=[_claim_update(op_iri, executor)],
             exit=done,
             error=failed,
             issuers={op_iri: read.issuer},
@@ -1995,7 +2185,9 @@ class SemanticMiddleware(Middleware):
             claimed.operation = transition.node
             yield claimed
 
-    @contextlib.contextmanager
+    # The deprecated alias of the extension's handover: the one name of this module that still
+    # speaks of the extension. The contract step removes it.
+    @_deprecation.renamed("kapps_semantic_middleware.possession.handover(mw, ...)")
     def handover(
         self,
         *,
@@ -2005,191 +2197,24 @@ class SemanticMiddleware(Middleware):
         workpiece_update: Optional[Dict[str, List[Any]]] = None,
         operation: Any = None,
         entry: Optional[Sequence[Change]] = None,
-    ):
-        """Hand a workpiece to a counterpart: the possession changes first, then the body moves it.
+    ) -> ContextManager[None]:
+        """Deprecated: use ``possession.handover(mw, ...)``, which replaces it.
 
-        Usage::
-
-            with mw.handover(mode=MES.Pass, workpiece=box, counterpart=next_module, operation=op):
-                conveyor.pass_box()  # the physical move, owned by the domain
-
-        and, with more changes that must be admitted together with the possession change, such as
-        a transport that the next module now executes::
-
-            moved_on = Update(
-                instance_iri=transport,
-                data={
-                    str(CFC.executedOn): [{"id": next_module}],
-                    str(CFC.implementsCapability): [{"id": next_capability}],
-                },
-            )
-            with mw.handover(
-                mode=MES.Pass, workpiece=box, counterpart=next_module, entry=[moved_on]
-            ):
-                conveyor.pass_box()
-
-        The entry checks two preconditions before anything is written: this resource currently
-        possesses the workpiece (the workpiece points at a `cfc:PossessionState` whose possessor
-        is this resource), and the counterpart carries the `mes:hasHandoverAbility` complementary
-        to `mode`. There is deliberately no check that the counterpart is free: a resource may
-        possess any number of workpieces unless a domain rule limits it.
-
-        Then the entry commits the possession change through :meth:`commit`, as one commit. The
-        workpiece's `cfc:hasPossessedWorkpiece` points at the counterpart's one possession state;
-        `workpiece_update` sets more properties of the workpiece that must change together with
-        its possessor, such as its transport state; `operation`, the Operation that this
-        handover completes, becomes `done`; and `entry`, the caller's own kapps_ogm changes, is
-        written too. When the counterpart has no state yet, the same commit creates
-        `<counterpart>_possession` and links the counterpart to it. Nothing writes the
-        `cfc:hasPossessor` link of this resource, or of a counterpart that has a state.
-
-        If the store refuses the commit, its error is raised (a SHACL refusal is
-        `ShaclValidationError`, with the store's validation report as its `report`), nothing is
-        written, neither the possession change nor a change of `entry`, and the body does not run.
-        The body is the move: the physical transport, and any coordination with the counterpart, for
-        example through an `issue_operation(...)`. A clean exit writes nothing more. An error in the body is
-        raised as it is and undoes nothing: the possession has already changed, so the caller
-        records what really happened.
-
-        Core says that a resource and a workpiece each have exactly one possession state. That is
-        OWL: it licenses inferences and refuses no write. What refuses a handover at commit is the
-        domain's SHACL shape, for example the one that allows one box on a conveyor module.
-
-        A first handover to a counterpart without a state can race another write that creates
-        that state. Two commits that truly coincide both write the same state triples, and one
-        state results. When the other write lands between this handover's read and its commit,
-        the store refuses the second creation of the state (`PreconditionFailedError`), and
-        writes nothing of it. The handover then checks both preconditions again and commits once
-        more, with the state that exists now; if a precondition no longer holds, for example
-        because the other write handed this same workpiece, it raises
-        `HandoverPreconditionError`, and the body does not run.
-
-        A second handover of the same workpiece at the same moment is refused only in part.
-        Both pass the preconditions before either commits. Inside its commit, kapps_ogm compares
-        the workpiece with a fresh read of it. If the other handover's commit landed between that
-        read and this commit's write, the store refuses this commit and writes nothing of it, and
-        the handover raises `PossessionSwitchConflict` before the body runs. Known limit: if the
-        other handover's commit landed before that read, this commit overwrites its possession
-        change, both succeed, and both bodies run.
-
-        Args:
-            mode: This resource's handover ability, such as `MES.Pass`. The counterpart must
-                carry the complementary one.
-            workpiece: The workpiece that this resource possesses.
-            counterpart: The resource that takes the workpiece over.
-            workpiece_update: More properties of the workpiece to set in the same commit, as
-                `{property IRI: [values]}`; each listed property is replaced. A value that is an
-                IRI (an `IRI` or an rdflib `URIRef`), or `{"id": iri}`, is a reference to that
-                object. Any other value goes to the OGM as it is: a plain `str` is a literal,
-                which the OGM refuses for an object property with `ValueError`, before any write.
-            operation: The Operation that this handover completes. Its `svc:operationStatus`
-                becomes `done` in the same commit.
-            entry: More kapps_ogm `Create` and `Update` changes, built by the caller, that the
-                store admits or refuses in the same commit as the possession change, before the
-                body. A change of the workpiece or of `operation` belongs in `workpiece_update` or
-                is made by `operation`: kapps_ogm refuses two changes of one instance in one
-                commit, with `ValueError`.
-
-        Raises:
-            RuntimeError: If this instance is not in resource mode.
-            HandoverPreconditionError: If a precondition fails. Nothing is written.
-            PossessionSwitchConflict: If the store found the precondition of the entry's
-                commit false (`PreconditionFailedError`, the cause). Usually another write
-                changed what the entry had read, such as a second handover of the workpiece.
-                The store does not say which part of the commit failed, so the same error
-                covers a change of `entry` that creates an instance that the store holds.
-                Nothing is written, and the body does not run.
-            ValueError: If `workpiece_update` names `cfc:hasPossessedWorkpiece`, which the
-                handover sets itself, or a value that does not fit its property, or a change of
-                `entry` does not fit its class or writes an instance that the commit already
-                writes. Nothing is written.
-            DeploymentValueError: If the counterpart has more than one possession state
-                (Repair). It is a ``ValueError``. Nothing is written.
-            kapps_triplestore_interface.exceptions.TripleStoreInterfaceError: If the store
-                refuses the possession change; a SHACL refusal is `ShaclValidationError`.
-                Nothing is written, and the body does not run.
+        Each call emits one ``DeprecationWarning`` that names the successor, then returns the
+        successor's context manager for this instance, with the same arguments. It behaves as
+        the successor does, and raises what the successor raises.
         """
+        from kapps_semantic_middleware.possession import handover
 
-        if self.mode != Mode.RESOURCE:
-            raise RuntimeError(
-                f"handover() is only valid in resource mode; current mode is {self.mode!r}"
-            )
-        workpiece_iri = IRI(workpiece)
-        counterpart_iri = IRI(counterpart)
-        mode_ability_iri = IRI(mode)
-
-        self._check_handover_preconditions(workpiece_iri, counterpart_iri, mode_ability_iri)
-
-        # What the commit carries beside the possession change: the Operation that the handover
-        # completes, and the caller's own changes.
-        alongside: List[Change] = []
-        if operation is not None:
-            done = {str(SVC.operationStatus): [OperationStatus.DONE]}
-            alongside.append(Update(instance_iri=IRI(operation), data=done))
-        alongside.extend(entry or ())
-
-        # The entry commits the possession change; the body is the move; the exit writes nothing.
-        change = possession_change(
-            self.ogm,
-            workpiece_iri=workpiece_iri,
-            possessor_iri=counterpart_iri,
+        return handover(
+            self,
+            mode=mode,
+            workpiece=workpiece,
+            counterpart=counterpart,
             workpiece_update=workpiece_update,
+            operation=operation,
+            entry=entry,
         )
-        with contextlib.ExitStack() as admitted:
-            try:
-                admitted.enter_context(
-                    self._transition(entry=[*change.changes, *alongside], verb="handover")
-                )
-            except PreconditionFailedError as refusal:
-                # The store wrote nothing of the entry. When the entry creates the counterpart's
-                # state, another write may have created that state after it was read: then the
-                # preconditions are checked again, and the entry is committed once more with
-                # that state. Any other refusal is a conflict.
-                again = None
-                if change.creates_state:
-                    again = possession_change(
-                        self.ogm,
-                        workpiece_iri=workpiece_iri,
-                        possessor_iri=counterpart_iri,
-                        workpiece_update=workpiece_update,
-                    )
-                if again is None or again.creates_state:
-                    raise _switch_conflict(workpiece_iri) from refusal
-                self._check_handover_preconditions(workpiece_iri, counterpart_iri, mode_ability_iri)
-                try:
-                    admitted.enter_context(
-                        self._transition(entry=[*again.changes, *alongside], verb="handover")
-                    )
-                except PreconditionFailedError as second_refusal:
-                    raise _switch_conflict(workpiece_iri) from second_refusal
-            # The commit has happened, so a creation in the body commits on its own.
-            admitted.enter_context(_nothing_to_join())
-            yield
-
-    def _check_handover_preconditions(
-        self, workpiece_iri: IRI, counterpart_iri: IRI, mode_ability_iri: IRI
-    ) -> None:
-        """The two preconditions of a handover, read before anything is written.
-
-        Raises:
-            HandoverPreconditionError: If this resource does not possess the workpiece, or the
-                counterpart lacks the handover ability complementary to the mode.
-        """
-        resource_iri = self._own_iris("handover() is only valid in resource mode").resource
-        current_ps = find_possession_state(
-            self.ogm, workpiece_iri, resource_iri, named_graph=self.named_graph
-        )
-        if current_ps is None:
-            raise HandoverPreconditionError(
-                f"{resource_iri} does not currently possess {workpiece_iri}"
-            )
-        if not counterpart_has_complementary_ability(
-            self.ogm, counterpart_iri, mode_ability_iri, named_graph=self.named_graph
-        ):
-            raise HandoverPreconditionError(
-                f"counterpart {counterpart_iri} lacks the handover ability complementary "
-                f"to {mode_ability_iri}"
-            )
 
     def register_callback(self, callback: Any, scope: Any = None) -> None:
         """Register a domain work callback fired on enqueue.
@@ -2317,7 +2342,13 @@ class SemanticMiddleware(Middleware):
         Own orphaned ``running`` Operations (this resource crashed mid-execution) transition to
         ``failed`` first, and never auto-rerun, because a half-done physical action must not
         silently replay. The issuer of each is notified after that commit. That is crash
-        recovery, on every instance. Only then are the own
+        recovery, on every instance. A ``running`` Operation is orphaned only if it is stranded
+        (:func:`~kapps_semantic_middleware.registration.find_stranded_operations`, the
+        predicate of the watchdog sweep): its executor's Service (``svc:executedByWorkflow``,
+        recorded at the claim) has no address, a heartbeat older than ``staleness_threshold``,
+        or is this instance's own Service, which is restarting; a running Operation without a
+        recorded executor is orphaned too. One that a live sibling claimed is left to that
+        sibling. Only then are the own
         ``queued`` Operations taken up, so none that starts now can be taken for an orphan:
 
         - **With a notification handler**, they go into the intake's FIFO, as notifications
@@ -2330,11 +2361,13 @@ class SemanticMiddleware(Middleware):
         resource_iri = own.resource
         orphaned = await anyio.to_thread.run_sync(
             functools.partial(
-                find_resource_operations,
+                find_stranded_operations,
                 self.ogm,
                 resource_iri,
                 [OperationStatus.RUNNING],
-                self.named_graph,
+                self.staleness_threshold,
+                named_graph=self.named_graph,
+                excluding=[own.service],
             )
         )
         for op_iri in orphaned:
@@ -2409,9 +2442,17 @@ class SemanticMiddleware(Middleware):
         )
 
         for binding, registration in self._wiring.registrations:
+            connector_id = f"{binding.resource_iri}#{binding.field_id}#{registration.suffix}"
+            # The framework gets an observing wrapper in place of the connector, and the wiring
+            # keeps the connector itself. This is the one call site every wired connector passes,
+            # so one wrapper covers REST, MQTT and the knowledge graph.
+            observation = _ConnectorObservation()
+            self._observed_connections.append(
+                (connector_id, binding, registration, observation)
+            )
             self.add_synced_connector(
-                connector_id=f"{binding.resource_iri}#{binding.field_id}#{registration.suffix}",
-                connector=registration.connector,
+                connector_id=connector_id,
+                connector=_observed_connector(registration.connector, observation),
                 model_type=registration.model_type,
                 data_model_name="resource",
                 model_id=str(resource_iri),
@@ -2487,7 +2528,7 @@ class SemanticMiddleware(Middleware):
 
         Resource mode builds its REST surface from the graph. It fetches the resource
         individual through the OGM, materializes its transitional_sync_middleware datamodel, and
-        generates the CRUD REST API (``generate_rest_api_for_data_model``). This is
+        serves it read-only: GET routes on the model and on each parameter, no write. This is
         best-effort and additive. The event-trigger and workflow routes are the
         load-bearing surface for this slice. So a resource with no materializable data is
         skipped, with a warning, instead of failing startup.
@@ -2524,12 +2565,11 @@ class SemanticMiddleware(Middleware):
                 # so self._wiring remains None and they keep the behavior unchanged.
                 self._suppress_default_persistence_warning("resource")
                 await self.persist("resource", instance)
-            # The local recursive router, not the framework generator. It still
-            # produces the framework's top-level CRUD -- it calls it -- and then descends the
-            # datamodel tree to give every interface-accessible parameter its own address, so a
-            # setpoint is a PUT to one belt rather than a read-modify-write of the whole list.
-            # With no wiring, no bindings exist, so the system adds nothing and scenarios 1 and 2
-            # keep exactly the surface they have today.
+            # The local recursive router, not the framework generator. It mounts the
+            # framework's top-level reads without its writes, and then descends the datamodel
+            # tree to give every interface-accessible parameter its own GET. The served
+            # datamodel is read-only: a device changes only through a workflow of its service.
+            # With no wiring, no bindings exist, so the system adds no parameter routes.
             self._parameter_routes = generate_recursive_rest_api(
                 self,
                 "resource",

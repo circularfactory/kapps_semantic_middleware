@@ -564,15 +564,20 @@ class TestRESTRecognition:
     def test_rest_binds_when_the_resource_is_live(self, scenario3, unit_scope):
         """With MQTTBinding out of the registry, the same seeded (MQTT-marked) parameters
         still recognise -- through the generic interface root, per the Service-join amendment --
-        and build a REST connector addressed at the live Service."""
+        and build a read-only REST connector addressed at the live Service."""
         store, ogm = scenario3
         address = _publish_service(store, seed.TRANSFER_UNIT_1)
 
-        plan = _plan(ogm, unit_scope, registry=SemanticConnectorRegistry([RESTBinding]))
+        plan = _plan(
+            ogm,
+            unit_scope,
+            registry=SemanticConnectorRegistry([RESTBinding]),
+            flavour=SyncDirection.TO_PERSISTENCE,
+        )
 
         assert len(plan.bindings) == 4
         assert {b.descriptor for b in plan.bindings} == {RESTBinding}
-        assert len(plan.registrations) == 6  # 2 settable belts (rw) + 2 read-only barriers
+        assert len(plan.registrations) == 4  # one read leg per parameter, settable or not
 
         left_speed = next(
             r
@@ -600,11 +605,30 @@ class TestRESTRecognition:
         _, ogm = scenario3
 
         with caplog.at_level(logging.WARNING):
-            plan = _plan(ogm, unit_scope, registry=SemanticConnectorRegistry([RESTBinding]))
+            plan = _plan(
+                ogm,
+                unit_scope,
+                registry=SemanticConnectorRegistry([RESTBinding]),
+                flavour=SyncDirection.TO_PERSISTENCE,
+            )
 
         assert len(plan.bindings) == 4
         assert plan.registrations == []
         assert "no live" in caplog.text
+
+    def test_driving_rest_wiring_is_refused_at_planning(self, scenario3, unit_scope):
+        """A settable parameter under BIDIRECTIONAL would need a REST write leg, and a peer's
+        served data model has no write route. The plan refuses before any connector exists."""
+        store, ogm = scenario3
+        _publish_service(store, seed.TRANSFER_UNIT_1)
+
+        with pytest.raises(ValueError, match="REST wiring is read-only"):
+            _plan(
+                ogm,
+                unit_scope,
+                registry=SemanticConnectorRegistry([RESTBinding]),
+                flavour=SyncDirection.BIDIRECTIONAL,
+            )
 
     def test_a_monitor_builds_read_only_rest_connectors(self, scenario3, unit_scope):
         """readwrite + observing binds read-only, the same rule as MQTT."""

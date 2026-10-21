@@ -3,8 +3,13 @@
 This module holds all the board's HTTP surface: the HTML template route and the JSON API
 routes the page polls and posts to. It gets grafted onto an already-running Controller
 instance's own FastAPI app (the same way index.py grafts onto the Launcher's app, and
-panel.py onto a PLC's). The board reads controller.units and calls controller.push() /
+panel.py onto a PLC's). The board reads controller.units and calls
 controller.rebuild_view() in-process — no second server, no second event loop.
+
+The board is a read-only view. It sends nothing to a unit: in KAPPS a device changes only
+through a workflow of its service, and this demo has no unit workflows yet. Its control
+returns with workflows after the paper. ``tests/test_station_board_guard.py`` pins that no
+demo file sends a write to a unit's served data model.
 
 The split between this file (routes + template) and control_station.py (runner: argparse,
 uvicorn, Controller construction) is enforced by a guard test (tests/test_station_board_guard.py),
@@ -19,8 +24,8 @@ allowed to name one. ``tests/test_station_board_guard.py`` holds this down, so t
 fails a test rather than merely aging badly.
 
 The `inf:` CURIEs below are the exception, and they are not domain terms: `inf:hasValue`
-appears inside a string the page *displays*, to show a reader the Python expression a write
-performs. It is library vocabulary, and it is illustrative text rather than a query.
+appears inside a string the page *displays*, to show a reader the Python expression that
+reaches a value. It is library vocabulary, and it is illustrative text rather than a query.
 
 Usage::
 
@@ -28,8 +33,8 @@ Usage::
     controller = Controller(...)
     hits = controller.view(algorithm.build_view_query())
     controller.wire_view(hits, class_scope=algorithm.unit_class_scope())
-    state = algorithm.AlgorithmState(tick_seconds=args.tick)
-    
+    state = algorithm.AlgorithmState()
+
     # Graft the board onto the same app:
     station_board.mount_onto(
         controller.app,
@@ -77,10 +82,10 @@ TEACH: Dict[str, Dict[str, str]] = {
     },
     "algo-bar": {
         "title": "The demonstration algorithm",
-        "what": "Two modes: timed (a slow, visible tick) and event-driven (fires once "
-        "when a light barrier's reading changes, quiescent otherwise). One global "
-        "pause -- while it runs, every set control below is disabled; pause it to "
-        "drive a unit by hand.",
+        "what": "Fires once when a light barrier's reading changes, quiescent otherwise, "
+        "and only reads: it logs a barrier and a belt speed. It drives nothing -- a "
+        "device changes only through a workflow of its service, and this demo has none "
+        "yet. Pause stops its reactions.",
         "file": "demo/transferunits/algorithm.py",
     },
     "station-card": {
@@ -93,15 +98,14 @@ TEACH: Dict[str, Dict[str, str]] = {
     },
     "param-row": {
         "title": "A parameter row",
-        "what": "A plain number box and a set button -- no slider, because the ontology "
-        "declares no bounds for a parameter. A write goes converging -> settled | "
-        "rejected | diverged. Commanded sits beside actual; diverged means it stopped "
-        "converging, not merely unequal.",
+        "what": "The value the unit's middleware serves, polled over REST and kept "
+        "current behind the card. Read-only: the board has no set control, because "
+        "the demo has no workflow to change a device through yet.",
         "file": "src/kapps_semantic_middleware/connectors/rest_binding.py",
     },
     "show-iris": {
         "title": "Show IRIs",
-        "what": "One toggle, three jobs: the full IRI, the real assignment expression "
+        "what": "One toggle, three jobs: the full IRI, the real value expression "
         "(the skolemized shape made visible), and what prune_southbound "
         "stripped for this exact parameter.",
         "file": "src/kapps_semantic_middleware/projection.py",
@@ -124,7 +128,7 @@ class _BoardState:
 def _local_fragment(iri_string: str) -> str:
     """Extract the local name from an IRI string (after the last '#' or '/').
     
-    Generic helper — no domain knowledge. Used for assignment_expression display
+    Generic helper — no domain knowledge. Used for value_expression display
     and for rendering facet keys/pruned properties in a human-readable form.
     """
     for sep in ("#", "/"):
@@ -225,8 +229,7 @@ def mount_onto(
     
     Called exactly once, from control_station.py's main(), after controller.wire_view(...)
     and before run_server(...). The board reads controller.units and calls
-    controller.push() / controller.rebuild_view() in-process — no second server, no
-    second event loop.
+    controller.rebuild_view() in-process — no second server, no second event loop.
     
     Root route replacement: app already has a GET / route (installed by
     SemanticMiddleware.app's property). Remove it and install our own, using the exact
@@ -281,18 +284,18 @@ def mount_onto(
         
         # Algorithm state.
         now = time.monotonic()
-        seconds_since_last_tick = (
-            (now - algorithm_state.last_tick_at) if algorithm_state.last_tick_at is not None else None
+        seconds_since_last_reaction = (
+            (now - algorithm_state.last_reaction_at)
+            if algorithm_state.last_reaction_at is not None
+            else None
         )
         waiting_seconds = (
             (now - algorithm_state.waiting_since) if algorithm_state.waiting_since is not None else None
         )
         
         algorithm_data = {
-            "mode": algorithm_state.mode.value,
             "paused": algorithm_state.paused,
-            "tick_seconds": algorithm_state.tick_seconds,
-            "seconds_since_last_tick": seconds_since_last_tick,
+            "seconds_since_last_reaction": seconds_since_last_reaction,
             "waiting_seconds": waiting_seconds,
         }
         
@@ -377,30 +380,10 @@ def mount_onto(
                         continue
                     facets[_local_fragment(key)] = _first_value(val)
 
-                # Commanded value.
-                commanded_val = controller.writes.commanded_for(
-                    binding.resource_iri, binding.field_id
-                )
-                if commanded_val is not None:
-                    commanded_data = {
-                        "value": commanded_val.value,
-                        "origin": commanded_val.origin,
-                        "age_seconds": now - commanded_val.at,
-                    }
-                else:
-                    commanded_data = None
-                
-                # Assignment expression — literal "inf:hasValue" substring (illustrative CURIE).
+                # Value expression — literal "inf:hasValue" substring (illustrative CURIE).
                 holder_fragment = _local_fragment(str(binding.resource_iri))
-                assignment_expr = f'{holder_fragment}.{binding.field_id}[0]["inf:hasValue"][0] = {value!r}'
+                value_expr = f'{holder_fragment}.{binding.field_id}[0]["inf:hasValue"][0] == {value!r}'
                 
-                # The write's status, judged server-side: this poll *is* the observation
-                # that advances "has it stopped converging?". The page renders this
-                # verdict rather than reaching its own, so the rule that `diverged` means
-                # stopped converging (not merely unequal) is testable: rejected and
-                # diverged must be distinguishable in a test.
-                status = controller.writes.observe(binding.resource_iri, binding.field_id, value)
-
                 parameters_data.append({
                     "holder_iri": str(binding.resource_iri),
                     "field_id": binding.field_id,
@@ -409,13 +392,8 @@ def mount_onto(
                     "access_mode": binding.access_mode,
                     "value": value,
                     "facets": facets,
-                    "commanded": commanded_data,
-                    "status": status.value if status is not None else None,
-                    "status_error": controller.writes.error_for(
-                        binding.resource_iri, binding.field_id
-                    ),
                     "pruned": pruned_list,
-                    "assignment_expression": assignment_expr,
+                    "value_expression": value_expr,
                 })
             
             units_data.append({
@@ -489,142 +467,4 @@ def mount_onto(
             raise HTTPException(status_code=422, detail=f"Invalid request body: {e}")
         
         algorithm_state.paused = paused
-        return JSONResponse({"ok": True})
-    
-    @app.post("/api/algorithm/mode")
-    async def api_algorithm_mode(request: Request) -> JSONResponse:
-        """Change the algorithm's firing mode.
-        
-        Body: {"mode": "timed"|"event_driven"}. Validates against AlgorithmMode's values.
-        """
-        try:
-            body = await request.json()
-            mode_str = body["mode"]
-        except (KeyError, ValueError, TypeError) as e:
-            raise HTTPException(status_code=422, detail=f"Invalid request body: {e}")
-        
-        # Validate against AlgorithmMode's values.
-        valid_modes = {m.value for m in algorithm.AlgorithmMode}
-        if mode_str not in valid_modes:
-            raise HTTPException(status_code=422, detail=f"Unrecognized mode: {mode_str}")
-        
-        algorithm_state.mode = algorithm.AlgorithmMode(mode_str)
-        return JSONResponse({"ok": True})
-    
-    @app.post("/api/set")
-    async def api_set(request: Request) -> JSONResponse:
-        """Set a parameter value and push it to the unit.
-
-        Body: {"resource_iri": "...", "holder_iri": "...", "field_id": "...", "value": <any>}.
-
-        Steps:
-        0. 409 while the algorithm is running -- the *server-side* half of "set controls
-           are inert while the algorithm runs, and live while it is paused". The
-           frontend's disabled buttons are the other half; neither is trusted alone.
-        1. Look up instance = controller.units.get(resource_iri); 404 if absent.
-        2. Find the WiringPlan for that resource_iri; 404 if not found.
-        3. Find the matching binding; 404 if none matches.
-        4. Re-walk instance through binding.path_steps; 404 if walk fails.
-        5. Get param_list; 422 if empty.
-        6. Coerce value into one-element list shape.
-        7. setattr(param_list[0], INF.hasValue.lined, new_value).
-        8. controller.writes.record_commanded(...) BEFORE the push.
-        9. await controller.push(...); on exception, return {"ok": False, "error": ...} with status 200.
-        10. On success, return {"ok": True}.
-        """
-        from kapps_semantic_middleware.vocabulary import INF
-
-        if not algorithm_state.paused:
-            return JSONResponse(
-                {
-                    "ok": False,
-                    "error": "The algorithm is running. Pause it to drive a unit by hand.",
-                },
-                status_code=409,
-            )
-
-        try:
-            body = await request.json()
-        except (ValueError, TypeError) as e:
-            raise HTTPException(status_code=422, detail=f"Invalid JSON: {e}")
-
-        # Extract required fields.
-        try:
-            resource_iri_str = body["resource_iri"]
-            holder_iri_str = body["holder_iri"]
-            field_id = body["field_id"]
-            value = body["value"]
-        except KeyError as e:
-            raise HTTPException(status_code=422, detail=f"Missing required field: {e}")
-        
-        # 1. Look up instance.
-        instance = controller.units.get(resource_iri_str)
-        if instance is None:
-            raise HTTPException(status_code=404, detail=f"Unit not loaded: {resource_iri_str}")
-        
-        # 2. Find the WiringPlan.
-        wiring_tuple = _find_wiring_for_resource(controller, resource_iri_str)
-        if wiring_tuple is None:
-            raise HTTPException(status_code=404, detail=f"No wiring found for: {resource_iri_str}")
-        
-        _, wiring = wiring_tuple
-        
-        # 3. Find the matching binding.
-        matching_binding = None
-        for binding in wiring.bindings:
-            if str(binding.resource_iri) == holder_iri_str and binding.field_id == field_id:
-                matching_binding = binding
-                break
-        
-        if matching_binding is None:
-            raise HTTPException(status_code=404, detail=f"No binding found for {holder_iri_str}#{field_id}")
-        
-        # 4. Re-walk to holder node.
-        holder_node = _walk_to_holder_node(instance, matching_binding.path_steps)
-        if holder_node is None:
-            raise HTTPException(status_code=404, detail=f"Cannot navigate to holder node for {holder_iri_str}")
-        
-        # 5. Get param_list.
-        param_list = getattr(holder_node, matching_binding.field_id, None) or []
-        if not param_list:
-            raise HTTPException(status_code=422, detail=f"Empty parameter list for {matching_binding.field_id}")
-        
-        # 6. Coerce value.
-        new_value = value if isinstance(value, list) else [value]
-        
-        # 7. Set the value.
-        setattr(param_list[0], INF.hasValue.lined, new_value)
-        
-        # 8. Record commanded BEFORE push. The tracker normalizes the one-element
-        # inf:hasValue list to the scalar /api/state reports, so both write paths can
-        # hand over whatever shape they already hold.
-        controller.writes.record_commanded(
-            matching_binding.resource_iri,
-            matching_binding.field_id,
-            new_value,
-            origin="operator",
-        )
-        
-        # 9. Push -- controller.push_parameter, not controller.push(): push() re-consumes
-        # the whole resource through the persistence fan-out, which the base framework's
-        # own PersistedConnector._notify_synced_connectors catches and only logs a
-        # sibling connector's failure from (by design -- one connector's failure must not
-        # end every other one's sync). That means push() can never actually report a PUT
-        # failure to us. push_parameter reaches the one write connector responsible for
-        # this exact field directly, so a genuine failure propagates here instead of
-        # being swallowed -- see its own docstring on Controller.
-        try:
-            await controller.push_parameter(
-                resource_iri_str, holder_iri_str, matching_binding.field_id, param_list[0]
-            )
-        except Exception as exc:
-            # Recorded on the controller, not just returned: `rejected` has to survive a
-            # page reload and be visible to the next poll, and it must be
-            # distinguishable from `diverged` in a test as well as on screen.
-            controller.writes.record_rejected(
-                matching_binding.resource_iri, matching_binding.field_id, str(exc)
-            )
-            return JSONResponse({"ok": False, "error": str(exc)}, status_code=200)
-
-        # 10. Success.
         return JSONResponse({"ok": True})
