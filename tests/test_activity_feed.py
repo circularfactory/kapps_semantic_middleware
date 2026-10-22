@@ -434,7 +434,7 @@ def test_disabled_allocates_nothing():
 
 
 def test_the_feed_is_mounted_the_same_way_regardless_of_mode():
-    """Controller and monitor inherit the feed from the same code path. No flavour-specific branching exists.
+    """Controller and monitor inherit the feed from the same code path. No connector-wiring-specific branching exists.
 
     Controller and monitor are the same library.
     Configure them differently. Build a middleware in Mode.WATCHDOG with

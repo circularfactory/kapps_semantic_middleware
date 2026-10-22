@@ -28,7 +28,7 @@ from kapps_semantic_middleware.operation import operation
 from kapps_semantic_middleware.possession import handover, workpiece
 from kapps_semantic_middleware.vocabulary import CFC, MES, SVC
 
-EX = "https://example.org/test#"
+EX = "http://example.org/test#"
 OP = IRI(f"{EX}op_1")
 STATUS = IRI(f"{EX}status")
 SNAPSHOT = IRI(f"{EX}DecisionSnapshot")
@@ -108,12 +108,12 @@ def test_a_creation_nested_in_a_commit_joins_its_clean_exit():
     mw = _middleware(ogm)
     with mw.commit(OP, entry=_status("running"), exit=_status("done")):
         with mw.create(SNAPSHOT, ClassScope()) as snapshot:
-            snapshot.update({DECISION: ["unscrew"]})
+            snapshot.update({DECISION: ["drill"]})
     assert _written(ogm) == [
         [("Update", OP, {STATUS: ["running"]})],
         [
             ("Update", OP, {STATUS: ["done"]}),
-            ("Create", snapshot.iri, {DECISION: ["unscrew"]}),
+            ("Create", snapshot.iri, {DECISION: ["drill"]}),
         ],
     ]
 
@@ -125,7 +125,7 @@ def test_an_update_of_a_nested_creation_folds_into_its_create_and_names_its_prop
     mw = _middleware(ogm)
     with mw.commit() as transition:
         with mw.create(SNAPSHOT, ClassScope()) as snapshot:
-            snapshot.update({DECISION: ["unscrew"]})
+            snapshot.update({DECISION: ["drill"]})
         transition.update(snapshot.iri, {STATUS: ["checked"], DECISION: ["keep"]})
     ((create,),) = ogm.written
     assert isinstance(create, Create)
@@ -145,7 +145,7 @@ def test_a_creation_nested_in_an_async_commit_joins_its_clean_exit():
     async def scenario():
         async with mw.commit(OP, entry=_status("running"), exit=_status("done")):
             async with mw.create(SNAPSHOT, ClassScope()) as snapshot:
-                snapshot.update({DECISION: ["unscrew"]})
+                snapshot.update({DECISION: ["drill"]})
         return snapshot
 
     snapshot = asyncio.run(scenario())
@@ -153,7 +153,7 @@ def test_a_creation_nested_in_an_async_commit_joins_its_clean_exit():
         [("Update", OP, {STATUS: ["running"]})],
         [
             ("Update", OP, {STATUS: ["done"]}),
-            ("Create", snapshot.iri, {DECISION: ["unscrew"]}),
+            ("Create", snapshot.iri, {DECISION: ["drill"]}),
         ],
     ]
 
@@ -193,7 +193,7 @@ def test_a_creation_alone_commits_its_create_at_the_exit_with_a_minted_iri():
     ogm = _FakeOGM()
     with _middleware(ogm).create(SNAPSHOT, ClassScope()) as snapshot:
         assert ogm.written == []
-        snapshot.update({DECISION: ["unscrew"]})
+        snapshot.update({DECISION: ["drill"]})
 
     ((create,),) = ogm.written
     assert isinstance(create, Create)
@@ -216,7 +216,7 @@ def test_an_error_in_the_body_of_a_creation_alone_writes_nothing_and_is_raised()
     ogm = _FakeOGM()
     with pytest.raises(RuntimeError, match="camera failed"):
         with _middleware(ogm).create(SNAPSHOT, ClassScope()) as snapshot:
-            snapshot.update({DECISION: ["unscrew"]})
+            snapshot.update({DECISION: ["drill"]})
             raise RuntimeError("camera failed")
     assert ogm.written == []
 
@@ -225,7 +225,7 @@ def test_a_refused_creation_raises_the_stores_error_and_writes_nothing():
     ogm = _FakeOGM(refuse=lambda changes: True)
     with pytest.raises(TripleStoreResponseError, match="SHACL validation failed"):
         with _middleware(ogm).create(SNAPSHOT, ClassScope()) as snapshot:
-            snapshot.update({DECISION: ["unscrew"]})
+            snapshot.update({DECISION: ["drill"]})
     assert ogm.written == []
 
 
@@ -233,7 +233,7 @@ def test_an_attribute_set_on_a_creation_raises_instead_of_being_lost():
     ogm = _FakeOGM()
     with pytest.raises(AttributeError, match=r"creation.update"):
         with _middleware(ogm).create(SNAPSHOT, ClassScope()) as snapshot:
-            snapshot.decision = "unscrew"
+            snapshot.decision = "drill"
     assert ogm.written == []
 
 
@@ -241,7 +241,7 @@ def test_a_value_that_is_no_list_raises_where_it_is_set_and_nothing_is_written()
     ogm = _FakeOGM()
     with pytest.raises(ValueError, match="list"):
         with _middleware(ogm).create(SNAPSHOT, ClassScope()) as snapshot:
-            snapshot.update({DECISION: "unscrew"})
+            snapshot.update({DECISION: "drill"})
     assert ogm.written == []
 
 
@@ -290,7 +290,7 @@ def test_a_refused_outer_commit_leaves_neither_its_change_nor_the_nested_creatio
             OP, entry=_status("running"), exit=_status("done"), error=_status("failed")
         ):
             with mw.create(SNAPSHOT, ClassScope()) as snapshot:
-                snapshot.update({DECISION: ["unscrew"]})
+                snapshot.update({DECISION: ["drill"]})
     assert _written(ogm) == [
         [("Update", OP, {STATUS: ["running"]})],
         [("Update", OP, {STATUS: ["failed"]})],
@@ -343,8 +343,8 @@ def test_a_creation_in_the_body_of_a_handover_commits_on_its_own():
 # The workpiece scope: a Workpiece is created in the possession of its possessor.
 # --------------------------------------------------------------------------- #
 
-WMS = IRI(f"{EX}wms")
-WMS_STATE = IRI(f"{EX}wms_possession")
+PLANNER = IRI(f"{EX}planner")
+PLANNER_STATE = IRI(f"{EX}planner_possession")
 
 
 def _possession_rows(states: dict):
@@ -382,14 +382,14 @@ def test_a_workpiece_without_a_possessor_in_an_outer_body_writes_nothing_of_it()
 
 def test_a_workpiece_whose_possessor_has_no_state_is_created_with_that_state_in_one_commit():
     ogm = _FakeOGM()
-    with _middleware(ogm).create(BOX, workpiece(ClassScope(), possessor=WMS)) as box:
+    with _middleware(ogm).create(BOX, workpiece(ClassScope(), possessor=PLANNER)) as box:
         pass
 
     assert _written(ogm) == [
         [
-            ("Create", box.iri, {str(CFC.hasPossessedWorkpiece): [{"id": str(WMS_STATE)}]}),
-            ("Create", WMS_STATE, {}),
-            ("Update", WMS, {str(CFC.hasPossessor): [{"id": str(WMS_STATE)}]}),
+            ("Create", box.iri, {str(CFC.hasPossessedWorkpiece): [{"id": str(PLANNER_STATE)}]}),
+            ("Create", PLANNER_STATE, {}),
+            ("Update", PLANNER, {str(CFC.hasPossessor): [{"id": str(PLANNER_STATE)}]}),
         ]
     ]
     (create, state, _) = ogm.written[0]
@@ -400,8 +400,8 @@ def test_a_workpiece_whose_possessor_has_no_state_is_created_with_that_state_in_
 def test_a_workpiece_whose_possessor_has_a_state_points_at_it_and_writes_nothing_else():
     seeded_state = IRI(f"{EX}a_state_a_seed_wrote")
     ogm = _FakeOGM()
-    ogm.db.rows = _possession_rows({WMS: seeded_state})
-    with _middleware(ogm).create(BOX, workpiece(ClassScope(), possessor=WMS)) as box:
+    ogm.db.rows = _possession_rows({PLANNER: seeded_state})
+    with _middleware(ogm).create(BOX, workpiece(ClassScope(), possessor=PLANNER)) as box:
         pass
 
     assert _written(ogm) == [
@@ -427,18 +427,18 @@ def test_two_workpieces_of_one_new_possessor_in_one_commit_create_its_state_once
     ogm = _FakeOGM()
     mw = _middleware(ogm)
     with mw.create(TRANSPORT, ClassScope()) as transport:
-        with mw.create(BOX, workpiece(ClassScope(), possessor=WMS)) as first:
+        with mw.create(BOX, workpiece(ClassScope(), possessor=PLANNER)) as first:
             pass
-        with mw.create(BOX, workpiece(ClassScope(), possessor=WMS)) as second:
+        with mw.create(BOX, workpiece(ClassScope(), possessor=PLANNER)) as second:
             pass
 
-    link = {str(CFC.hasPossessedWorkpiece): [{"id": str(WMS_STATE)}]}
+    link = {str(CFC.hasPossessedWorkpiece): [{"id": str(PLANNER_STATE)}]}
     assert _written(ogm) == [
         [
             ("Create", transport.iri, {}),
             ("Create", first.iri, link),
-            ("Create", WMS_STATE, {}),
-            ("Update", WMS, {str(CFC.hasPossessor): [{"id": str(WMS_STATE)}]}),
+            ("Create", PLANNER_STATE, {}),
+            ("Update", PLANNER, {str(CFC.hasPossessor): [{"id": str(PLANNER_STATE)}]}),
             ("Create", second.iri, link),
         ]
     ]
@@ -447,7 +447,7 @@ def test_two_workpieces_of_one_new_possessor_in_one_commit_create_its_state_once
 def test_a_body_that_sets_the_link_that_the_workpiece_scope_sets_raises_and_writes_nothing():
     ogm = _FakeOGM()
     with pytest.raises(ValueError, match="which its scope sets itself"):
-        with _middleware(ogm).create(BOX, workpiece(ClassScope(), possessor=WMS)) as box:
+        with _middleware(ogm).create(BOX, workpiece(ClassScope(), possessor=PLANNER)) as box:
             box.update({CFC.hasPossessedWorkpiece: [IRI(f"{EX}elsewhere")]})
     assert ogm.written == []
 
@@ -492,7 +492,7 @@ def test_opening_a_transport_is_one_commit_of_the_operation_the_box_and_the_firs
     ogm = _FakeOGM()
     mw = _middleware(ogm)
     with mw.create(TRANSPORT, operation(ClassScope(), capability=CAPABILITY)) as transport:
-        with mw.create(BOX, workpiece(ClassScope(), possessor=WMS)) as box:
+        with mw.create(BOX, workpiece(ClassScope(), possessor=PLANNER)) as box:
             pass
         transport.update({HAS_BOX: [box.iri]})
 
@@ -506,9 +506,9 @@ def test_opening_a_transport_is_one_commit_of_the_operation_the_box_and_the_firs
                     str(CFC.implementsCapability): [{"id": str(CAPABILITY)}],
                 },
             ),
-            ("Create", box.iri, {str(CFC.hasPossessedWorkpiece): [{"id": str(WMS_STATE)}]}),
-            ("Create", WMS_STATE, {}),
-            ("Update", WMS, {str(CFC.hasPossessor): [{"id": str(WMS_STATE)}]}),
+            ("Create", box.iri, {str(CFC.hasPossessedWorkpiece): [{"id": str(PLANNER_STATE)}]}),
+            ("Create", PLANNER_STATE, {}),
+            ("Update", PLANNER, {str(CFC.hasPossessor): [{"id": str(PLANNER_STATE)}]}),
         ]
     ]
 
@@ -579,11 +579,11 @@ def test_a_creation_gives_the_changes_it_committed_or_joined_once_its_exit_built
     mw = _middleware(ogm)
     with mw.create(TRANSPORT, ClassScope()) as transport:
         assert transport.changes == ()
-        with mw.create(BOX, workpiece(ClassScope(), possessor=WMS)) as box:
+        with mw.create(BOX, workpiece(ClassScope(), possessor=PLANNER)) as box:
             pass
         # Joined: the box, its possessor's new state, and the possessor's link to it.
-        assert [c.instance_iri for c in box.changes] == [box.iri, WMS_STATE, WMS]
-    assert [c.instance_iri for c in transport.changes] == [transport.iri, box.iri, WMS_STATE, WMS]
+        assert [c.instance_iri for c in box.changes] == [box.iri, PLANNER_STATE, PLANNER]
+    assert [c.instance_iri for c in transport.changes] == [transport.iri, box.iri, PLANNER_STATE, PLANNER]
     assert ogm.written == [list(transport.changes)]
 
 
@@ -594,11 +594,11 @@ def test_a_failed_notification_keeps_every_instance_that_the_requests_commit_cre
     notified: list = []
     with _receiver(ogm, notified, status=503):
         with pytest.raises(NotificationUndelivered):
-            with _middleware(ogm, resource=str(WMS)).issue_operation(
+            with _middleware(ogm, resource=str(PLANNER)).issue_operation(
                 capability_class=f"{EX}TransportCapability", operation_class=TRANSPORT
             ) as op:
-                with _middleware(ogm, resource=str(WMS)).create(
-                    BOX, workpiece(ClassScope(), possessor=WMS)
+                with _middleware(ogm, resource=str(PLANNER)).create(
+                    BOX, workpiece(ClassScope(), possessor=PLANNER)
                 ) as box:
                     pass
                 op.data[str(HAS_BOX)] = [box.iri]
@@ -608,6 +608,6 @@ def test_a_failed_notification_keeps_every_instance_that_the_requests_commit_cre
     assert [(kind, iri) for kind, iri, _ in created] == [
         ("Create", op.iri),
         ("Create", box.iri),
-        ("Create", WMS_STATE),
-        ("Update", WMS),
+        ("Create", PLANNER_STATE),
+        ("Update", PLANNER),
     ]

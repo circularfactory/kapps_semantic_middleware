@@ -18,8 +18,8 @@ from kapps_semantic_middleware.errors import DeploymentValueError
 from kapps_semantic_middleware.registration import deregister_service
 from kapps_semantic_middleware.vocabulary import SVC
 
-SERVICE = IRI("https://example.org/test#ServiceA")
-WORKFLOW = IRI("https://example.org/test#WorkflowA")
+SERVICE = IRI("http://example.org/test#ServiceA")
+WORKFLOW = IRI("http://example.org/test#WorkflowA")
 
 
 def _ogm(workflows: list, state_properties: list) -> Mock:

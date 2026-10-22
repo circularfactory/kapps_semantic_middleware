@@ -12,6 +12,37 @@ work lands, not at release time.
 finding exactly one of it, and prose naming it is a second occurrence — which stopped a release
 the first time this file was written.)
 
+## 0.2.3 — 2026-10-22
+
+### Changed
+
+- **Breaking: the service ontology's status property is renamed.** `svc:operationStatus` is now
+  `svc:hasOperationStatus`, so that a triple reads as a sentence ("op hasOperationStatus
+  queued"). There is no alias and no equivalence: stored data that carries the old name is not
+  read. Reload the shared graphs (`load_shared_ontologies(db, reload=True)`) before you run on
+  the new version; the seeds and the demonstrations do it now. The `OperationStatus` enum keeps
+  its name.
+- **Breaking: every ontology namespace uses `http://`.** The copied Core ontology, the service
+  and MES ontologies, the transfer-unit demo's CRC namespaces and the example namespaces change
+  their scheme from `https` to `http`, in step with the Core ontology. The shared named graphs
+  are named by these IRIs, so a reload writes new graphs and leaves the old `https` Core,
+  Service and MES graphs on the dataset: drop them once after you upgrade. Stored data that
+  carries the old namespaces is not read.
+
+### Added
+
+- **The factory demo's station board has a prewritten-query dropdown.** It fills the view
+  heuristic with All, Even-indexed or Odd-indexed TransferUnits, or a Custom starter. The default
+  view, and what "reset" restores, is now all live TransferUnits rather than the even-indexed
+  ones. `build_view_query` takes a `parity` argument ("all", "even", "odd").
+
+### Changed
+
+- **The shipped text and tests use the middleware's own vocabulary only.** Examples, test data and
+  recorded store reports that named another project's resources and operations now name neutral
+  ones (a drill, a planner, a transport line); the check that bans those names scans every
+  shipped file, and the changelog's unreleased section.
+
 ## 0.2.2 — 2026-10-21
 
 - **kapps_semantic_middleware requires kapps-ogm 0.3.2 and kapps-triplestore-interface 2.2.2 or

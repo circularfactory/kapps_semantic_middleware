@@ -7,8 +7,8 @@ panel.py onto a PLC's). The board reads controller.units and calls
 controller.rebuild_view() in-process — no second server, no second event loop.
 
 The board is a read-only view. It sends nothing to a unit: in KAPPS a device changes only
-through a workflow of its service, and this demo has no unit workflows yet. Its control
-returns with workflows after the paper. ``tests/test_station_board_guard.py`` pins that no
+through a workflow of its service, and this demo has no unit workflows yet.
+``tests/test_station_board_guard.py`` pins that no
 demo file sends a write to a unit's served data model.
 
 The split between this file (routes + template) and control_station.py (runner: argparse,
@@ -75,8 +75,10 @@ TEACH: Dict[str, Dict[str, str]] = {
     "view-box": {
         "title": "The editable view heuristic",
         "what": "The frame (class and the ?resource/liveness join) is fixed; the "
-        "textarea is the Control Expert's own heuristic. \"run\" rebuilds immediately; "
-        "\"reset\" restores the even-index default. A malformed query or a zero-hit "
+        "textarea is the Control Expert's own heuristic. The \"Prewritten query\" dropdown "
+        "fills it with All, Even-indexed, Odd-indexed or a Custom starter; the \"All\" "
+        "entry is the default. \"run\" rebuilds immediately; "
+        "\"reset\" restores that default. A malformed query or a zero-hit "
         "one is reported here, in place -- neither ever 500s the page.",
         "file": "demo/transferunits/controller.py",
     },
@@ -263,7 +265,9 @@ def mount_onto(
         index.py's boxes, so it carries its own dict rather than importing that one)."""
         template_path = Path(__file__).parent / "templates" / "station_board.html"
         page = template_path.read_text(encoding="utf-8")
-        return HTMLResponse(page.replace("__TEACH__", json.dumps(TEACH)))
+        page = page.replace("__TEACH__", json.dumps(TEACH))
+        page = page.replace("__QUERIES__", json.dumps(algorithm.named_view_queries()))
+        return HTMLResponse(page)
     
     # Reset OpenAPI schema so /docs and /openapi.json describe the routes that actually exist.
     app.openapi_schema = None

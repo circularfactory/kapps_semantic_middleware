@@ -7,7 +7,9 @@ returning `False`. The shared ontologies load with the Graph Store verbs.
 
 from __future__ import annotations
 
+import sys
 import warnings
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -50,7 +52,7 @@ class _FakeStore:
         return self._answer
 
     def graph_add(self, content, **kwargs):
-        self.added.append((kwargs["graph_iri"], kwargs["content_type"]))
+        self.added.append((kwargs.get("graph_iri"), kwargs["content_type"]))
         return True
 
     def query(self, query, **kwargs):
@@ -215,3 +217,17 @@ def test_the_old_clear_warns_once_and_runs_its_successor():
 
 
 # vendor-check: on
+
+
+def test_a_scenario_seed_replaces_the_shared_ontology_graphs_before_it_adds_them():
+    """A dataset seeded by an earlier version keeps its old service graph unless the seed reloads."""
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "examples"))
+    import seed
+
+    store = _FakeStore("Tests", populated=True)
+
+    seed.load_scenario1_ontologies(store)
+
+    shared = {SERVICE_GRAPH, CORE_GRAPH, MES_GRAPH}
+    assert shared <= {args[0] for args in store.cleared}
+    assert shared <= {graph for graph, _ in store.added}

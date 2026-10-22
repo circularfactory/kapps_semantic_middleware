@@ -518,7 +518,7 @@ def _issued_and_claimed(notified: Any, resource_iri: Optional[IRI]) -> bool:
 
 def _moved_operations(changes: Sequence[Change]) -> Dict[IRI, str]:
     """Each Operation that ``changes`` move to ``running``, ``done`` or ``failed``, with that
-    status: an ``Update`` that sets ``svc:operationStatus`` to one value of the three."""
+    status: an ``Update`` that sets ``svc:hasOperationStatus`` to one value of the three."""
     moved: Dict[IRI, str] = {}
     for change in changes:
         if not isinstance(change, Update) or change.instance_iri is None:
@@ -526,7 +526,7 @@ def _moved_operations(changes: Sequence[Change]) -> Dict[IRI, str]:
         for key, values in change.data.items():
             statuses = {str(value) for value in values}
             moves = len(statuses) == 1 and statuses <= _CLAIMED
-            if _property(key) == SVC.operationStatus and moves:
+            if _property(key) == SVC.hasOperationStatus and moves:
                 moved[IRI(change.instance_iri)] = statuses.pop()
     return moved
 
@@ -902,7 +902,7 @@ class SemanticMiddleware(Middleware):
         # Opt-in, and deliberately *outside* the mode branches. A controller and a
         # monitor this library configures them differently, so they inherit the feed
         # from the same code -- no `if mode ==` here, and none in `activity.py` either. That
-        # the flavors compose out of one library is the claim the demo is built to make, and
+        # the connector wirings compose out of one library is the claim the demo is built to make, and
         # a mode-specific observability surface would quietly undercut it.
         #
         # Off means off: no ring buffer allocated, no handler attached, no route mounted.
@@ -1089,9 +1089,9 @@ class SemanticMiddleware(Middleware):
 
         Usage, inside a coroutine::
 
-            running = [Update(instance_iri=op, data={str(SVC.operationStatus): ["running"]})]
-            done = [Update(instance_iri=op, data={str(SVC.operationStatus): ["done"]})]
-            failed = [Update(instance_iri=op, data={str(SVC.operationStatus): ["failed"]})]
+            running = [Update(instance_iri=op, data={str(SVC.hasOperationStatus): ["running"]})]
+            done = [Update(instance_iri=op, data={str(SVC.hasOperationStatus): ["done"]})]
+            failed = [Update(instance_iri=op, data={str(SVC.hasOperationStatus): ["failed"]})]
 
             async with mw.commit(
                 op, class_scope=scope, entry=running, exit=done, error=failed
@@ -1432,7 +1432,7 @@ class SemanticMiddleware(Middleware):
         HTTP 500 and such a workflow is run by the intake::
 
             @mw.workflow(capability_class=TRANSPORT_CAPABILITY, workflow_class=TRANSPORT_WORKFLOW)
-            def box_transport(transport: Node) -> None:
+            def run_transport(transport: Node) -> None:
                 ...  # the work; it commits its own transitions with mw.commit()
 
         Raises:
@@ -1782,7 +1782,7 @@ class SemanticMiddleware(Middleware):
         """After a write that the store admitted: notify the issuer of each Operation that the
         write moved to ``running``, ``done`` or ``failed``.
 
-        The write's own changes show such a move: an ``Update`` that sets ``svc:operationStatus``
+        The write's own changes show such a move: an ``Update`` that sets ``svc:hasOperationStatus``
         to one of the three. Its old value is not known without a read, so a write that sets the
         status that the Operation already has notifies too. ``issuers`` holds what the caller has
         already read: an Operation's issuer, or None for one without an issuer. The others are
@@ -2046,7 +2046,7 @@ class SemanticMiddleware(Middleware):
                     f"the data of {created.iri} sets {SVC.issuedBy}, which issue_operation() sets "
                     f"itself, to {own.resource}"
                 )
-            created.update({str(SVC.operationStatus): [OperationStatus.QUEUED]})
+            created.update({str(SVC.hasOperationStatus): [OperationStatus.QUEUED]})
             created.update(issued.data)
             created.update({str(SVC.issuedBy): [{"id": str(own.resource)}]})
             # Staged last, after the creations nested in the block: an update of an instance
@@ -2436,7 +2436,7 @@ class SemanticMiddleware(Middleware):
             resource_iri=resource_iri,
             class_scope=self.class_scope,
             registry=self.connector_registry,
-            flavour=self.connector_sync_direction,
+            sync_direction=self.connector_sync_direction,
             autoregister=self.autoregister_connectors,
             ensure_transport=self.ensure_transport,
         )
@@ -2588,7 +2588,7 @@ class SemanticMiddleware(Middleware):
         """Serialize this resource's transitional_sync_middleware datamodel to a JSON string, or None.
 
         This is the failed Operation state snapshot. On a body exception,
-        `claim_next` records this alongside `operationStatus=failed` (`svc:failureState`),
+        `claim_next` records this alongside `hasOperationStatus=failed` (`svc:failureState`),
         so the user can diagnose the resource state from the
         graph. This is best-effort. A resource with no materializable datamodel, or a
         serialization error, yields None. The `failed` status and error string are still

@@ -249,7 +249,7 @@ class TestRegistrationCount:
     def test_a_controller_builds_six_connectors(self, scenario3, unit_scope):
         _, ogm = scenario3
 
-        plan = _plan(ogm, unit_scope, flavour=SyncDirection.BIDIRECTIONAL)
+        plan = _plan(ogm, unit_scope, sync_direction=SyncDirection.BIDIRECTIONAL)
 
         assert len(plan.registrations) == 6
         topics = {r.connector.topic for _, r in plan.registrations}
@@ -266,7 +266,7 @@ class TestRegistrationCount:
         """TO_PERSISTENCE: live values. Structurally unable to write."""
         _, ogm = scenario3
 
-        plan = _plan(ogm, unit_scope, flavour=SyncDirection.TO_PERSISTENCE)
+        plan = _plan(ogm, unit_scope, sync_direction=SyncDirection.TO_PERSISTENCE)
 
         assert len(plan.registrations) == 4
         assert all(
@@ -293,7 +293,7 @@ class TestRegistrationCount:
 
 @requires_store
 class TestNorthboundProjection:
-    """The regression matters. No flavour ever serves connection metadata."""
+    """The regression matters. No connector wiring ever serves connection metadata."""
 
     def _served(self, ogm, plan):
         node = ogm.fetch(
@@ -372,31 +372,31 @@ class TestNorthboundProjection:
         )
 
     @pytest.mark.parametrize(
-        "flavour, autoregister",
+        "sync_direction, autoregister",
         [
             (SyncDirection.BIDIRECTIONAL, True),  # controller
             (SyncDirection.TO_PERSISTENCE, True),  # monitor
             (SyncDirection.BIDIRECTIONAL, False),  # inspector
         ],
     )
-    def test_no_flavour_serves_connection_metadata(
-        self, scenario3, unit_scope, flavour, autoregister
+    def test_no_connector_wiring_serves_connection_metadata(
+        self, scenario3, unit_scope, sync_direction, autoregister
     ):
         _, ogm = scenario3
-        plan = _plan(ogm, unit_scope, flavour=flavour, autoregister=autoregister)
+        plan = _plan(ogm, unit_scope, sync_direction=sync_direction, autoregister=autoregister)
 
         served = self._served(ogm, plan)
 
         assert carries_southbound(served, plan.southbound_properties) == set()
         assert "127.0.0.1" not in str(served)
 
-    def test_all_three_flavours_serve_identical_payloads(self, scenario3, unit_scope):
+    def test_all_three_connector_wirings_serve_identical_payloads(self, scenario3, unit_scope):
         """The three wirings serve byte-identical northbound payloads."""
         _, ogm = scenario3
 
         controller = self._served(ogm, _plan(ogm, unit_scope))
         monitor = self._served(
-            ogm, _plan(ogm, unit_scope, flavour=SyncDirection.TO_PERSISTENCE)
+            ogm, _plan(ogm, unit_scope, sync_direction=SyncDirection.TO_PERSISTENCE)
         )
         inspector = self._served(ogm, _plan(ogm, unit_scope, autoregister=False))
 
@@ -572,7 +572,7 @@ class TestRESTRecognition:
             ogm,
             unit_scope,
             registry=SemanticConnectorRegistry([RESTBinding]),
-            flavour=SyncDirection.TO_PERSISTENCE,
+            sync_direction=SyncDirection.TO_PERSISTENCE,
         )
 
         assert len(plan.bindings) == 4
@@ -609,7 +609,7 @@ class TestRESTRecognition:
                 ogm,
                 unit_scope,
                 registry=SemanticConnectorRegistry([RESTBinding]),
-                flavour=SyncDirection.TO_PERSISTENCE,
+                sync_direction=SyncDirection.TO_PERSISTENCE,
             )
 
         assert len(plan.bindings) == 4
@@ -627,7 +627,7 @@ class TestRESTRecognition:
                 ogm,
                 unit_scope,
                 registry=SemanticConnectorRegistry([RESTBinding]),
-                flavour=SyncDirection.BIDIRECTIONAL,
+                sync_direction=SyncDirection.BIDIRECTIONAL,
             )
 
     def test_a_monitor_builds_read_only_rest_connectors(self, scenario3, unit_scope):
@@ -639,7 +639,7 @@ class TestRESTRecognition:
             ogm,
             unit_scope,
             registry=SemanticConnectorRegistry([RESTBinding]),
-            flavour=SyncDirection.TO_PERSISTENCE,
+            sync_direction=SyncDirection.TO_PERSISTENCE,
         )
 
         assert len(plan.registrations) == 4

@@ -73,7 +73,7 @@ NQUADS_REPORT_MEDIA_TYPE = f"{REPORT_MEDIA_TYPE}+n-quads"
 
 REP = Namespace("http://www.openrdf.org/config/repository#")
 SHACL_CONFIG = Namespace("http://rdf4j.org/config/sail/shacl#")
-EX = Namespace("https://example.org/shipped-stack#")
+EX = Namespace("http://example.org/shipped-stack#")
 
 # A Thing has a label. The conforming write gives one, the violating write gives none.
 SHAPES = f"""

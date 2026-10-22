@@ -1,9 +1,9 @@
 @prefix owl: <http://www.w3.org/2002/07/owl#> .
 @prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
 @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
-@prefix cfc: <https://w3id.org/circularfactory/Core#> .
-@prefix svc: <https://w3id.org/circularfactory/Service#> .
-@prefix ex:  <https://example.org/kapps-demo#> .
+@prefix cfc: <http://w3id.org/circularfactory/Core#> .
+@prefix svc: <http://w3id.org/circularfactory/Service#> .
+@prefix ex:  <http://example.org/kapps-demo#> .
 
 #################################################################
 # Self-contained ground-truth ontology for Scenario 2 (decentralized door) ONLY.

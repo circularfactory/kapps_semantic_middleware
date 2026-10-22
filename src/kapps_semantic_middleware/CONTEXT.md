@@ -83,7 +83,7 @@ written.
 A Workflow corresponds to a **skill** of the capability–skill–service (CSS) model: an
 executable implementation of an encapsulated function that a capability specifies, reached
 through the skill interface (Köcher et al. 2023, arXiv 2209.09632, Sec. 3.4). KAPPS keeps the
-name "Workflow" in code, ontology and use cases. A KAPPS **Service** is the deployable
+name "Workflow" in code and ontology. A KAPPS **Service** is the deployable
 middleware-wrapped entity that exposes Workflows. It is a service in the IT sense, an encapsulated
 function closer to a CSS skill (Köcher et al. 2023, Sec. 5.1). It is not a CSS service, which is a set of technical capabilities with an
 organizational and economic description (Sec. 3.2).
@@ -496,8 +496,8 @@ by watchdog-mode instances to decide staleness.
 `svc:address` is a Service's base URL, set on startup and removed on
 deregistration/staleness. `svc:endpoint` is the full, directly callable URL for one specific
 Workflow or state parameter, also set on startup and removed on deregistration/staleness. Both
-being present is a deliberate divergence from the paper's literal "address on Service only"
-wording — see the "Address and endpoint" section of
+being present is a deliberate divergence from the literal "address on Service only"
+wording of the architecture description — see the "Address and endpoint" section of
 `docs/mechanics/02-workflow-registration.md`.
 _Avoid_: URL, endpoint URL used interchangeably for both — they are distinct properties on
 distinct entity types.

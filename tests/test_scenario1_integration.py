@@ -123,7 +123,7 @@ def test_scenario1_hello_world_end_to_end(store):
 
         # The terminal transition recorded status `done` + execution provenance in one
         # atomic write (the status is itself the provenance record).
-        status = list(db.triples_get(sub=op_iri, pred=SVC.operationStatus))
+        status = list(db.triples_get(sub=op_iri, pred=SVC.hasOperationStatus))
         assert status and str(status[0][2]) == OperationStatus.DONE
         assert db.triple_exists((op_iri, SVC.executedByWorkflow, wf_instance))
         assert db.triples_get(sub=op_iri, pred=SVC.executionTimestamp)
@@ -157,7 +157,7 @@ def test_missing_ground_truth_class_fails_fast(store):
             resource_iri=seed.HELLO_RESOURCE,
             service_iri=ghost_service,
             workflow_iri=mint_workflow_iri(ghost_service, "ghost"),
-            workflow_class="https://example.org/kapps-demo#NonexistentWorkflow",
+            workflow_class="http://example.org/kapps-demo#NonexistentWorkflow",
             capability_iri=mint_capability_iri(seed.HELLO_RESOURCE, "ghost"),
             capability_class=seed.HELLO_CAPABILITY_CLASS,
             endpoint="http://127.0.0.1:9/workflows/ghost/execute",

@@ -439,7 +439,7 @@ def handover(
             IRI (an `IRI` or an rdflib `URIRef`), or `{"id": iri}`, is a reference to that
             object. Any other value goes to the OGM as it is: a plain `str` is a literal,
             which the OGM refuses for an object property with `ValueError`, before any write.
-        operation: The Operation that this handover completes. Its `svc:operationStatus`
+        operation: The Operation that this handover completes. Its `svc:hasOperationStatus`
             becomes `done` in the same commit.
         entry: More kapps_ogm `Create` and `Update` changes, built by the caller, that the
             store admits or refuses in the same commit as the possession change, before the
@@ -482,7 +482,7 @@ def handover(
     # completes, and the caller's own changes.
     alongside: List[Change] = []
     if operation is not None:
-        done = {str(SVC.operationStatus): [OperationStatus.DONE]}
+        done = {str(SVC.hasOperationStatus): [OperationStatus.DONE]}
         alongside.append(Update(instance_iri=IRI(operation), data=done))
     alongside.extend(entry or ())
 

@@ -1,6 +1,6 @@
 [project]
 name = "kapps-semantic-middleware"
-version = "0.2.2"
+version = "0.2.3"
 description = "Semantic middleware for industrial data integration, built on transitional-sync-middleware"
 readme = "README.md"
 license = "MIT"

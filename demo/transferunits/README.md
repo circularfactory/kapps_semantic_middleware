@@ -4,8 +4,7 @@ This demo builds a very small factory on your computer and lets you watch it fro
 
 **The demo observes.** In KAPPS a machine changes only through a workflow of its service. This
 demo has no machine workflows yet, so the control station reads the machines and changes none.
-Its control returns with workflows after the paper. You can still move a belt at the machine
-itself, on its own panel page.
+You can still move a belt at the machine itself, on its own panel page.
 
 Nothing here is real hardware. Every machine is a Python program that pretends to be one. But the
 parts talk to each other the same way real ones would, so what you see is the real behaviour.
@@ -184,7 +183,7 @@ The sweep also settles that machine's operations. Each machine has exactly one s
 middleware, so when it is swept every operation of that machine that is still **queued** or
 **running** is marked failed: nothing is left to run it. The control station is not affected: it
 registers a service but no workflow, so it never has operations queued to it. The failed operations
-are visible in the graph, as `svc:operationStatus "failed"`, and the issuer of each is notified. The launcher page's
+are visible in the graph, as `svc:hasOperationStatus "failed"`, and the issuer of each is notified. The launcher page's
 **watchdog** box shows only that the process is live; its output (click it if it turns red) and the
 terminal show what it ran.
 

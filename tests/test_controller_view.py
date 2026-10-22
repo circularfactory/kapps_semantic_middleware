@@ -182,7 +182,7 @@ class TestWireView:
         """2 belts + 2 barriers = 4 read legs. A belt speed is read-write in the ontology,
         and a device-facing instance gives it a write leg too
         (``test_scenario3_wiring_integration.py::TestRegistrationCount`` counts 6), but the
-        controller's flavour is ``TO_PERSISTENCE``: it observes, and a device changes only
+        controller's sync direction is ``TO_PERSISTENCE``: it observes, and a device changes only
         through a workflow of its service. No registration here can send a PUT."""
         _publish_service(store, seed._mint_transfer_unit_iri(2), "http://127.0.0.1:19103")
         controller = Controller(resource_iri="http://example.org/CS-wire2", ogm=factory4, port=0)

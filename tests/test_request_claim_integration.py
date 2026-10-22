@@ -49,7 +49,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "examples"))
 import seed  # noqa: E402
 
 # A property an Operation's draft can carry: scenario 1 declares none of its own.
-TORQUE_LIMIT = IRI("https://example.org/test#torqueLimit")
+TORQUE_LIMIT = IRI("http://example.org/test#torqueLimit")
 _TORQUE_LIMIT_DECLARATION = f"""
 @prefix owl: <http://www.w3.org/2002/07/owl#> .
 @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
@@ -69,7 +69,7 @@ def _status_shape(*allowed: str) -> str:
     sh:targetClass <{CFC.Operation}> ;
     sh:property <urn:test:StatusValues> .
 <urn:test:StatusValues> a sh:PropertyShape ;
-    sh:path <{SVC.operationStatus}> ;
+    sh:path <{SVC.hasOperationStatus}> ;
     sh:in ( {values} ) .
 """
 
@@ -217,7 +217,7 @@ def test_a_dispatch_creates_its_operation_in_one_commit_and_its_receiver_queues_
     assert store.triple_exists(
         (op.iri, CFC.implementsCapability, mint_capability_iri(seed.HELLO_RESOURCE, "hello_world"))
     )
-    assert _values(store, op.iri, SVC.operationStatus) == [OperationStatus.QUEUED]
+    assert _values(store, op.iri, SVC.hasOperationStatus) == [OperationStatus.QUEUED]
     assert _values(store, op.iri, TORQUE_LIMIT) == ["4.2 Nm"]
     # The issuer, the planner's Resource, written in the same commit.
     assert op.issuer == IRI(seed.PLANNER_RESOURCE)
@@ -242,7 +242,7 @@ def test_a_failed_notification_leaves_the_operation_queued_and_raises_notificati
     assert isinstance(raised.value.__cause__, httpx.ConnectError)
     # The request's one commit, and nothing undone: the Operation stays, queued, the issuer's.
     assert [kind for kind, _ in planner.ogm.writes] == ["commit"]
-    assert _values(store, op.iri, SVC.operationStatus) == [OperationStatus.QUEUED]
+    assert _values(store, op.iri, SVC.hasOperationStatus) == [OperationStatus.QUEUED]
     assert _values(store, op.iri, SVC.issuedBy) == [str(seed.PLANNER_RESOURCE)]
     assert _values(store, op.iri, TORQUE_LIMIT) == ["4.2 Nm"]
     added = _explicit_statements(store) - before
@@ -281,7 +281,7 @@ def _claim_with_commit(mw: SemanticMiddleware, operation: IRI) -> None:
     makes them."""
 
     def status(value: str) -> list:
-        return [Update(instance_iri=operation, data={str(SVC.operationStatus): [value]})]
+        return [Update(instance_iri=operation, data={str(SVC.hasOperationStatus): [value]})]
 
     with mw.commit(entry=status(OperationStatus.RUNNING), exit=status(OperationStatus.DONE)):
         pass
@@ -315,7 +315,7 @@ def test_the_issuer_hears_of_the_claim_and_of_the_end_and_its_handle_wakes(store
         assert time.monotonic() - started < 25  # woken, not timed out
 
         assert planner._operation_queue == []
-    assert _values(store, op.iri, SVC.operationStatus) == [OperationStatus.DONE]
+    assert _values(store, op.iri, SVC.hasOperationStatus) == [OperationStatus.DONE]
 
 
 # --------------------------------------------------------------------------- #
@@ -343,11 +343,11 @@ def _queued_operation(store) -> tuple[SemanticMiddleware, IRI]:
 def test_a_claim_is_one_commit_and_done_with_its_provenance_is_one_more(store):
     mw, operation = _queued_operation(store)
     with mw.claim_next() as claimed:
-        assert _values(store, operation, SVC.operationStatus) == [OperationStatus.RUNNING]
+        assert _values(store, operation, SVC.hasOperationStatus) == [OperationStatus.RUNNING]
         claimed.result = hello_world()
 
     assert [kind for kind, _ in mw.ogm.writes] == ["commit", "commit"]
-    assert _values(store, operation, SVC.operationStatus) == [OperationStatus.DONE]
+    assert _values(store, operation, SVC.hasOperationStatus) == [OperationStatus.DONE]
     workflow = mint_workflow_iri(mw.service_iri, "hello_world")
     assert store.triple_exists((operation, SVC.executedByWorkflow, workflow))
     assert store.triples_get(sub=operation, pred=SVC.executionTimestamp)
@@ -362,7 +362,7 @@ def test_a_failed_body_is_one_commit_of_failed_with_its_provenance_and_the_datam
             raise RuntimeError("boom")
 
     assert [kind for kind, _ in mw.ogm.writes] == ["commit", "commit"]
-    assert _values(store, operation, SVC.operationStatus) == [OperationStatus.FAILED]
+    assert _values(store, operation, SVC.hasOperationStatus) == [OperationStatus.FAILED]
     workflow = mint_workflow_iri(mw.service_iri, "hello_world")
     assert store.triple_exists((operation, SVC.executedByWorkflow, workflow))
     assert _values(store, operation, SVC.executionResult) == ["boom"]
@@ -384,7 +384,7 @@ def test_a_claim_that_the_store_refuses_runs_no_body(store):
 
     assert ran == []
     assert mw.ogm.writes == []
-    assert _values(store, operation, SVC.operationStatus) == [OperationStatus.QUEUED]
+    assert _values(store, operation, SVC.hasOperationStatus) == [OperationStatus.QUEUED]
 
 
 def test_a_done_that_the_store_refuses_records_failed_with_its_provenance_and_raises(store):
@@ -400,7 +400,7 @@ def test_a_done_that_the_store_refuses_records_failed_with_its_provenance_and_ra
 
     # Two writes reached the store: the claim, and failed in place of the refused done.
     assert [kind for kind, _ in mw.ogm.writes] == ["commit", "commit"]
-    assert _values(store, operation, SVC.operationStatus) == [OperationStatus.FAILED]
+    assert _values(store, operation, SVC.hasOperationStatus) == [OperationStatus.FAILED]
     workflow = mint_workflow_iri(mw.service_iri, "hello_world")
     assert store.triple_exists((operation, SVC.executedByWorkflow, workflow))
     assert store.triples_get(sub=operation, pred=SVC.executionTimestamp)

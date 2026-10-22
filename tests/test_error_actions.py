@@ -45,10 +45,10 @@ from kapps_semantic_middleware.vocabulary import CFC, SVC
 RESOURCE = "http://example.org/test#Module1"
 RECEIVER = "http://example.org/test#Module2"
 SERVICE_CLASS = "http://example.org/test#ModuleService"
-CAPABILITY_CLASS = IRI("http://example.org/test#BoxTransportCapability")
-OPERATION_CLASS = "http://example.org/test#BoxTransport"
+CAPABILITY_CLASS = IRI("http://example.org/test#TransportCapability")
+OPERATION_CLASS = "http://example.org/test#Transport"
 OPERATION = IRI("http://example.org/test#Transport1")
-CAPABILITY = IRI("http://example.org/test#Module2_capability_box_transport")
+CAPABILITY = IRI("http://example.org/test#Module2_capability_run_transport")
 MIDDLEWARE_LOGGER = "kapps_semantic_middleware.middleware"
 
 # Each new type, its parents in order, and the action that its docstring names.
@@ -440,7 +440,7 @@ class _ForeignOperationOGM:
     """An OGM that reads the Operation as implementing a Capability of no workflow here."""
 
     def fetch(self, **kwargs):
-        foreign = IRI("http://example.org/test#WMS_capability_store")
+        foreign = IRI("http://example.org/test#Planner_capability_store")
         return Node(id=OPERATION, data={IRI(CFC.implementsCapability): [Node(id=foreign)]})
 
 

@@ -232,10 +232,10 @@ class TestParameterPathDerivation:
     lists instead of pydantic models — the shape open_resource() returns.
     """
 
-    UNIT_IRI = "https://example.org/tui#TransferUnit1"
-    LEFT_BELT_IRI = "https://example.org/tui#ConveyorBelt1_left"
-    RIGHT_BELT_IRI = "https://example.org/tui#ConveyorBelt1_right"
-    BARRIER_IRI = "https://example.org/tui#LightBarrier1_front"
+    UNIT_IRI = "http://example.org/tui#TransferUnit1"
+    LEFT_BELT_IRI = "http://example.org/tui#ConveyorBelt1_left"
+    RIGHT_BELT_IRI = "http://example.org/tui#ConveyorBelt1_right"
+    BARRIER_IRI = "http://example.org/tui#LightBarrier1_front"
 
     @staticmethod
     def _make_tree():
@@ -334,6 +334,6 @@ class TestParameterPathDerivation:
                 tree,
                 "TransferUnit",
                 IRI(self.UNIT_IRI),
-                [("tu:hasConveyorBelt", "https://example.org/tui#ConveyorBelt1_ghost")],
+                [("tu:hasConveyorBelt", "http://example.org/tui#ConveyorBelt1_ghost")],
                 "tu:hasConveyorSpeed",
             )

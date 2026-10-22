@@ -192,10 +192,10 @@ def _box_at_the_source_in_its_transport_state(db) -> None:
 
 def _running_operation(db) -> IRI:
     """An Operation that the handover completes, and the vocabulary its status needs."""
-    load_shared_ontologies(db)
+    load_shared_ontologies(db, reload=True)
     operation = IRI(f"{seed.DEMO_NS}transport_001")
     db.triple_add((operation, RDF.type, CFC.Operation))
-    db.triple_add((operation, SVC.operationStatus, Literal(OperationStatus.RUNNING)))
+    db.triple_add((operation, SVC.hasOperationStatus, Literal(OperationStatus.RUNNING)))
     return operation
 
 
@@ -313,12 +313,12 @@ def test_a_handover_changes_only_the_workpieces_link_its_update_and_its_operatio
     assert before - after == {
         (box, str(CFC.hasPossessedWorkpiece), giver_state),
         (box, str(_TRANSPORT_STATE), str(_AT_SOURCE)),
-        (str(operation), str(SVC.operationStatus), "running"),
+        (str(operation), str(SVC.hasOperationStatus), "running"),
     }
     assert after - before == {
         (box, str(CFC.hasPossessedWorkpiece), counterpart_state),
         (box, str(_TRANSPORT_STATE), str(_IN_TRANSIT)),
-        (str(operation), str(SVC.operationStatus), "done"),
+        (str(operation), str(SVC.hasOperationStatus), "done"),
     }
     assert _explicit_objects(db, seed.HANDOVER_SOURCE, CFC.hasPossessor) == [giver_state]
     assert _explicit_objects(db, seed.HANDOVER_DEST, CFC.hasPossessor) == [counterpart_state]
@@ -687,10 +687,10 @@ def test_an_error_in_the_body_undoes_nothing_and_writes_nothing_more(store):
 
 
 # --------------------------------------------------------------------------- #
-# More changes in the entry: UC2 reassigns its transport at each hop.
+# More changes in the entry: each hop reassigns the transport to the next module.
 # --------------------------------------------------------------------------- #
 
-_NEXT_CAPABILITY = IRI(f"{seed.DEMO_NS}transfer_module_B_capability_box_transport")
+_NEXT_CAPABILITY = IRI(f"{seed.DEMO_NS}transfer_module_B_capability_run_transport")
 
 
 class _RecordingOGM(OGM):
@@ -707,7 +707,7 @@ class _RecordingOGM(OGM):
 
 
 def _reassigned(transport: IRI) -> Update:
-    """UC2's reassignment of its transport to the next module, as the caller builds it."""
+    """The reassignment of a transport to the next module, as the caller builds it."""
     return Update(
         instance_iri=transport,
         data={

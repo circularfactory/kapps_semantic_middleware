@@ -112,7 +112,7 @@ def test_event_trigger_dispatch_enqueues_over_rest(store):
         # The dispatch created the Operation queued in the graph. Addressed via its Capability.
         assert db.triple_exists((op_iri, RDF.type, CFC.Operation))
         assert db.triple_exists((op_iri, CFC.implementsCapability, cap_instance))
-        status = list(db.triples_get(sub=op_iri, pred=SVC.operationStatus))
+        status = list(db.triples_get(sub=op_iri, pred=SVC.hasOperationStatus))
         assert status and str(status[0][2]) == OperationStatus.QUEUED
 
         # The event trigger reached B over REST. B enqueued it (receiver queue state).
@@ -174,7 +174,7 @@ def test_an_undeliverable_event_trigger_leaves_the_operation_queued(store):
     # Nothing is undone: the type, the capability link and the status ``queued`` stay.
     assert db.triple_exists((op_iri, RDF.type, CFC.Operation))
     assert db.triple_exists((op_iri, CFC.implementsCapability, cap_instance))
-    assert [str(t[2]) for t in db.triples_get(sub=op_iri, pred=SVC.operationStatus)] == [
+    assert [str(t[2]) for t in db.triples_get(sub=op_iri, pred=SVC.hasOperationStatus)] == [
         OperationStatus.QUEUED
     ]
 
@@ -233,14 +233,14 @@ def test_pull_and_run_completes_operation(store):
         op_iri = _dispatch_hello_op(store)  # queued on B via the REST event trigger
 
         # B pulls the queued Operation. Run the work under a domain-supplied ClassScope.
-        scope = ClassScope.from_property_chains([[SVC.operationStatus]])
+        scope = ClassScope.from_property_chains([[SVC.hasOperationStatus]])
         with mw_b.claim_next(scope) as claimed:
             assert claimed.iri == op_iri
             assert claimed.operation is not None  # re-fetched under the scope
             claimed.result = hello_world()
 
         # Terminal transition: done + provenance folded in.
-        status = list(db.triples_get(sub=op_iri, pred=SVC.operationStatus))
+        status = list(db.triples_get(sub=op_iri, pred=SVC.hasOperationStatus))
         assert status and str(status[0][2]) == OperationStatus.DONE
         assert db.triple_exists((op_iri, SVC.executedByWorkflow, wf_instance))
         assert db.triples_get(sub=op_iri, pred=SVC.executionTimestamp)
@@ -270,7 +270,7 @@ def test_pull_and_run_failure_marks_failed(store):
             with mw_b.claim_next():
                 raise RuntimeError("boom")
 
-        status = list(db.triples_get(sub=op_iri, pred=SVC.operationStatus))
+        status = list(db.triples_get(sub=op_iri, pred=SVC.hasOperationStatus))
         assert status and str(status[0][2]) == OperationStatus.FAILED
         assert db.triple_exists((op_iri, SVC.executedByWorkflow, wf_instance))
         result = list(db.triples_get(sub=op_iri, pred=SVC.executionResult))
@@ -311,7 +311,7 @@ def _wait_for_status(db, op_iri, status: str, timeout: float = 15.0) -> None:
     """Poll the graph until `op_iri` reaches `status` (the callback runs in the background)."""
     deadline = time.time() + timeout
     while time.time() < deadline:
-        triples = list(db.triples_get(sub=op_iri, pred=SVC.operationStatus))
+        triples = list(db.triples_get(sub=op_iri, pred=SVC.hasOperationStatus))
         if triples and str(triples[0][2]) == status:
             return
         time.sleep(0.1)
@@ -400,7 +400,7 @@ def test_two_instance_rest_event_trigger_full_lifecycle(store):
 
         # The REST event trigger reached B. B enqueued it. The Operation is `queued`.
         # The door has not moved yet.
-        status = list(db.triples_get(sub=op_iri, pred=SVC.operationStatus))
+        status = list(db.triples_get(sub=op_iri, pred=SVC.hasOperationStatus))
         assert status and str(status[0][2]) == OperationStatus.QUEUED
         assert op_iri in mw_b._operation_queue
         assert door_status() == "closed"
@@ -411,7 +411,7 @@ def test_two_instance_rest_event_trigger_full_lifecycle(store):
             claimed.result = door_open()
 
         assert door_status() == "opened"  # B observable state change
-        status = list(db.triples_get(sub=op_iri, pred=SVC.operationStatus))
+        status = list(db.triples_get(sub=op_iri, pred=SVC.hasOperationStatus))
         assert status and str(status[0][2]) == OperationStatus.DONE
         assert db.triple_exists((op_iri, SVC.executedByWorkflow, open_wf))
         result = list(db.triples_get(sub=op_iri, pred=SVC.executionResult))

@@ -16,7 +16,7 @@ from kapps_semantic_middleware.shacl_interop import build_workflow_shape
 from kapps_semantic_middleware.shacl_interop.shape_from_typehints import SH
 from kapps_semantic_middleware.vocabulary import SVC
 
-WF = "https://example.org/kapps-demo#HelloWorldWorkflow"
+WF = "http://example.org/kapps-demo#HelloWorldWorkflow"
 
 
 def _hello_world() -> None:
@@ -47,7 +47,7 @@ def test_targets_class_not_instance():
 
 
 def test_args_and_return_populate_precondition_and_outcome():
-    move_cls = "https://example.org/kapps-demo#MoveWorkflow"
+    move_cls = "http://example.org/kapps-demo#MoveWorkflow"
     g = build_workflow_shape(_move, move_cls)
     ttl = g.serialize(format="turtle")
     assert "svc:precondition" in ttl
@@ -59,7 +59,7 @@ def test_args_and_return_populate_precondition_and_outcome():
 
 def test_only_required_params_get_mincount():
     """Only params without a default and not Optional are required (sh:minCount 1)."""
-    move_cls = "https://example.org/kapps-demo#MoveWorkflow"
+    move_cls = "http://example.org/kapps-demo#MoveWorkflow"
     g = build_workflow_shape(_move, move_cls)
     ttl = g.serialize(format="turtle")
     # distance is the only required parameter; fast has a default, note is Optional.
@@ -67,6 +67,6 @@ def test_only_required_params_get_mincount():
 
 
 def test_explicit_shape_iri_is_used():
-    shape_iri = "https://example.org/kapps-demo#CustomShape"
+    shape_iri = "http://example.org/kapps-demo#CustomShape"
     g = build_workflow_shape(_hello_world, WF, shape_iri=shape_iri)
     assert (URIRef(shape_iri), SH.targetClass, URIRef(WF)) in g

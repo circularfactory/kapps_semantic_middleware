@@ -29,13 +29,13 @@ from kapps_semantic_middleware.vocabulary import CFC, SVC, OperationStatus
 MIDDLEWARE_LOGGER = "kapps_semantic_middleware.middleware"
 RESOURCE = "http://example.org/test#Module1"
 SERVICE_CLASS = "http://example.org/test#ModuleService"
-CAPABILITY_CLASS = "http://example.org/test#BoxTransportCapability"
-WORKFLOW_CLASS = "http://example.org/test#BoxTransportWorkflow"
+CAPABILITY_CLASS = "http://example.org/test#TransportCapability"
+WORKFLOW_CLASS = "http://example.org/test#TransportWorkflow"
 TRANSPORT = IRI("http://example.org/test#Transport1")
 SECOND = IRI("http://example.org/test#Transport2")
 THIRD = IRI("http://example.org/test#Transport3")
-OWN_CAPABILITY = mint_capability_iri(IRI(RESOURCE), "box_transport")
-FOREIGN_CAPABILITY = IRI("http://example.org/test#WMS_capability_store")
+OWN_CAPABILITY = mint_capability_iri(IRI(RESOURCE), "run_transport")
+FOREIGN_CAPABILITY = IRI("http://example.org/test#Planner_capability_store")
 HAS_BOX = IRI("http://example.org/test#hasBox")
 HAS_DESTINATION = IRI("http://example.org/test#hasDestination")
 
@@ -48,7 +48,7 @@ class _StatusStore:
 
     def query(self, sparql, convert_bindings=False, update=False):
         assert not update, f"the intake wrote: {sparql}"
-        assert str(SVC.issuedBy) in sparql and str(SVC.operationStatus) in sparql, sparql
+        assert str(SVC.issuedBy) in sparql and str(SVC.hasOperationStatus) in sparql, sparql
         self.queries.append(sparql)
         row = {"type": IRI("http://example.org/test#Transport"), "status": OperationStatus.QUEUED}
         return {"results": {"bindings": [row]}}
@@ -127,7 +127,7 @@ def test_an_operation_of_an_own_capability_runs_its_workflow_with_the_operation_
     handled: list = []
 
     @mw.workflow(capability_class=CAPABILITY_CLASS, workflow_class=WORKFLOW_CLASS)
-    def box_transport(transport: Node) -> None:
+    def run_transport(transport: Node) -> None:
         ran.append(transport)
 
     mw.on_notification(handled.append)
@@ -153,7 +153,7 @@ def test_an_operation_of_no_own_capability_reaches_the_handler_with_the_operatio
     handled: list = []
 
     @mw.workflow(capability_class=CAPABILITY_CLASS, workflow_class=WORKFLOW_CLASS)
-    def box_transport(transport: Node) -> None:
+    def run_transport(transport: Node) -> None:
         ran.append(transport)
 
     mw.on_notification(handled.append)
@@ -226,7 +226,7 @@ def test_two_operations_that_arrive_while_the_first_runs_run_one_after_the_other
     order: list = []
 
     @mw.workflow(capability_class=CAPABILITY_CLASS, workflow_class=WORKFLOW_CLASS)
-    def box_transport(transport: Node) -> None:
+    def run_transport(transport: Node) -> None:
         with lock:
             overlaps.append(len(running))
             running.append(transport.id)
@@ -267,7 +267,7 @@ def test_an_exception_of_the_workflow_is_logged_writes_nothing_and_the_next_one_
     ran: list = []
 
     @mw.workflow(capability_class=CAPABILITY_CLASS, workflow_class=WORKFLOW_CLASS)
-    def box_transport(transport: Node) -> None:
+    def run_transport(transport: Node) -> None:
         ran.append(transport.id)
         if transport.id == TRANSPORT:
             raise RuntimeError("belt jammed")
@@ -284,7 +284,7 @@ def test_an_exception_of_the_workflow_is_logged_writes_nothing_and_the_next_one_
 
     assert ran == [TRANSPORT, SECOND]
     assert "belt jammed" in caplog.text
-    assert "box_transport" in caplog.text
+    assert "run_transport" in caplog.text
     assert str(TRANSPORT) in caplog.text
     assert ogm.refused == []
 
@@ -295,7 +295,7 @@ def test_a_coroutine_workflow_runs_on_the_event_loop():
     threads: list = []
 
     @mw.workflow(capability_class=CAPABILITY_CLASS, workflow_class=WORKFLOW_CLASS)
-    async def box_transport(transport: Node) -> None:
+    async def run_transport(transport: Node) -> None:
         threads.append(threading.get_ident())
 
     mw.on_notification(lambda operation: None)
@@ -317,7 +317,7 @@ def test_an_operation_that_cannot_be_read_again_is_logged_and_the_next_one_runs(
     ran: list = []
 
     @mw.workflow(capability_class=CAPABILITY_CLASS, workflow_class=WORKFLOW_CLASS)
-    def box_transport(transport: Node) -> None:
+    def run_transport(transport: Node) -> None:
         if transport.id == TRANSPORT:
             assert release.wait(timeout=10), "the test never released the first Operation"
         ran.append(transport.id)
@@ -368,7 +368,7 @@ def test_at_startup_the_instances_own_queued_operations_run_through_the_intake()
     handled: list = []
 
     @mw.workflow(capability_class=CAPABILITY_CLASS, workflow_class=WORKFLOW_CLASS)
-    def box_transport(transport: Node) -> None:
+    def run_transport(transport: Node) -> None:
         ran.append(transport.id)
 
     mw.on_notification(lambda operation: handled.append(operation.id))
@@ -429,17 +429,17 @@ def test_a_workflow_that_takes_the_operation_as_a_node_registers_as_an_exposed_w
     ran: list = []
 
     @mw.workflow(capability_class=CAPABILITY_CLASS, workflow_class=WORKFLOW_CLASS)
-    def box_transport(transport: Node) -> None:
+    def run_transport(transport: Node) -> None:
         ran.append(transport)
 
-    route = mw.app.openapi()["paths"]["/workflows/box_transport/execute"]["post"]
+    route = mw.app.openapi()["paths"]["/workflows/run_transport/execute"]["post"]
     assert route.get("requestBody") is None
     assert [parameter["in"] for parameter in route["parameters"]] == ["query"]
-    assert box_transport.__name__ == "box_transport"  # the decorator returns the function
+    assert run_transport.__name__ == "run_transport"  # the decorator returns the function
 
     client = TestClient(mw.app, raise_server_exceptions=False)
-    answer = client.post("/workflows/box_transport/execute", json={"id": str(TRANSPORT)})
+    answer = client.post("/workflows/run_transport/execute", json={"id": str(TRANSPORT)})
     assert answer.status_code == 500
     with pytest.raises(Exception, match=r'"transport" \(None\)'):
-        TestClient(mw.app).post("/workflows/box_transport/execute", json={"id": str(TRANSPORT)})
+        TestClient(mw.app).post("/workflows/run_transport/execute", json={"id": str(TRANSPORT)})
     assert ran == []

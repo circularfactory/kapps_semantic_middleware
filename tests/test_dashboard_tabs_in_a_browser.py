@@ -27,13 +27,13 @@ def test_the_selected_tab_label_shows_the_accent_and_the_others_do_not(
 ) -> None:
     instance = _Instance()
     registry = enable_dashboard(instance, register_default_boxes=False)
-    for index, tab in enumerate(("First", "UC2 monitor")):
+    for index, tab in enumerate(("First", "Line monitor")):
         registry.box(id=f"box-{index}", title=tab, tab=tab)(lambda _mw: "<p>x</p>")
 
     with _serving(instance.app) as address:
         page.goto(f"{address}/dashboard")
         first = page.locator("label.tab-label", has_text="First")
-        second = page.locator("label.tab-label", has_text="UC2 monitor")
+        second = page.locator("label.tab-label", has_text="Line monitor")
 
         underline = "el => getComputedStyle(el).borderBottomColor"
         colour = "el => getComputedStyle(el).color"

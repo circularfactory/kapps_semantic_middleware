@@ -8,15 +8,15 @@ the domain `mes:` module) can never drift apart.
 Four namespaces appear below: `cfc:`, `svc:`, `mes:`, and `inf:`.
 
 `cfc:` is the published Circular Factory Core ontology
-(https://w3id.org/circularfactory/Core#). Term names below are verified against the 0.9.0
+(http://w3id.org/circularfactory/Core#). Term names below are verified against the 0.9.0
 release.
 
 `svc:` is this project's own Service ontology module
-(https://w3id.org/circularfactory/Service#), defined in
+(http://w3id.org/circularfactory/Service#), defined in
 `kapps_semantic_middleware/ontology/service.ttl`.
 
 `mes:` is the Manufacturing Execution System domain ontology
-(https://w3id.org/circularfactory/MES#), defined in `kapps_semantic_middleware/ontology/mes.ttl`.
+(http://w3id.org/circularfactory/MES#), defined in `kapps_semantic_middleware/ontology/mes.ttl`.
 It is domain-facing. It covers possession and handover-ability vocabulary.
 
 `inf:` is the interface vocabulary. It defines what makes a domain parameter reachable
@@ -32,15 +32,15 @@ from __future__ import annotations
 
 from kapps_triplestore_interface import IRI
 
-CORE_NS = "https://w3id.org/circularfactory/Core#"
-SVC_NS = "https://w3id.org/circularfactory/Service#"
-MES_NS = "https://w3id.org/circularfactory/MES#"
-INF_NS = "https://www.sfb1574.kit.edu/ontologies/CrcInterfaces#"
+CORE_NS = "http://w3id.org/circularfactory/Core#"
+SVC_NS = "http://w3id.org/circularfactory/Service#"
+MES_NS = "http://w3id.org/circularfactory/MES#"
+INF_NS = "http://www.sfb1574.kit.edu/ontologies/CrcInterfaces#"
 
 # Ontology document IRIs (no fragment) — used for owl:imports and named-graph loading.
-CORE_ONTOLOGY = IRI("https://w3id.org/circularfactory/Core")
-SVC_ONTOLOGY = IRI("https://w3id.org/circularfactory/Service")
-MES_ONTOLOGY = IRI("https://w3id.org/circularfactory/MES")
+CORE_ONTOLOGY = IRI("http://w3id.org/circularfactory/Core")
+SVC_ONTOLOGY = IRI("http://w3id.org/circularfactory/Service")
+MES_ONTOLOGY = IRI("http://w3id.org/circularfactory/MES")
 
 # The three W3C namespaces. Here for the same reason as everything else in this file: the library
 # wants one home for every ontology IRI, and these were previously spelled out at five separate
@@ -123,8 +123,8 @@ class SVC:
     lastHeartbeat = IRI("lastHeartbeat", base=SVC_NS)  # Service -> xsd:dateTime
 
     # Execution provenance (R12) — written onto a cfc:Operation by the pull-and-run
-    # terminal transition. Success is carried by the terminal operationStatus (done/failed).
-    operationStatus = IRI("operationStatus", base=SVC_NS)  # Operation -> xsd:string (queued/running/done/failed)
+    # terminal transition. Success is carried by the terminal hasOperationStatus (done/failed).
+    hasOperationStatus = IRI("hasOperationStatus", base=SVC_NS)  # Operation -> xsd:string (queued/running/done/failed)
     executedByWorkflow = IRI("executedByWorkflow", base=SVC_NS)  # Operation -> Workflow
     executionTimestamp = IRI("executionTimestamp", base=SVC_NS)  # Operation -> xsd:dateTime
     executionResult = IRI("executionResult", base=SVC_NS)  # Operation -> xsd:string
@@ -211,7 +211,7 @@ class AccessMode:
 
 
 class OperationStatus:
-    """String values for svc:operationStatus, in lifecycle order. Not IRIs / individuals."""
+    """String values for svc:hasOperationStatus, in lifecycle order. Not IRIs / individuals."""
 
     QUEUED = "queued"
     RUNNING = "running"

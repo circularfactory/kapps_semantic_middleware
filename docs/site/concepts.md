@@ -25,10 +25,10 @@ A store without that ruleset returns fewer statements to the reads that are infe
 ```{glossary}
 
 Service
-    A distributed runtime entity wrapped by a single middleware instance, such as a door controller or a screwing-resource controller. Typed via a domain-specific subclass that must pre-exist in the ontology. One Service per middleware instance, not per Resource; several instances may be bound to one Resource.
+    A distributed runtime entity wrapped by a single middleware instance, such as a door controller or a drilling-resource controller. Typed via a domain-specific subclass that must pre-exist in the ontology. One Service per middleware instance, not per Resource; several instances may be bound to one Resource.
 
 Resource
-    The physical or logical thing a Service wraps, such as a door, a transformer cell, or a screwing tool. Required at construction time in resource mode.
+    The physical or logical thing a Service wraps, such as a door, a transformer cell, or a drill. Required at construction time in resource mode.
 
 Mode
     A construction-time choice governing what the middleware instance is for: `"resource"` wraps one Resource and exposes its Workflows and StateProperties; `"server"` is reserved and not built: constructing one raises; `"watchdog"` wraps no Resource and sweeps stale addresses from the graph.

@@ -15,7 +15,7 @@ class TestMESNamespace:
 
     def test_mes_ns_value(self):
         """MES_NS matches the published ontology namespace."""
-        assert MES_NS == "https://w3id.org/circularfactory/MES#"
+        assert MES_NS == "http://w3id.org/circularfactory/MES#"
 
 
 class TestMESTerms:
@@ -47,15 +47,15 @@ class TestCFCOperationTerms:
     def test_executed_on_iri(self):
         """CFC.executedOn is Core's cfc:executedOn: the Resource that executes an Operation, which
         a transport's hop reassigns in a handover's entry."""
-        assert str(CFC.executedOn) == "https://w3id.org/circularfactory/Core#executedOn"
+        assert str(CFC.executedOn) == "http://w3id.org/circularfactory/Core#executedOn"
 
 
 class TestSVCOperationStatus:
-    """Test SVC.operationStatus addition."""
+    """Test SVC.hasOperationStatus addition."""
 
     def test_operation_status_iri(self):
-        """SVC.operationStatus resolves to Service#operationStatus."""
-        assert str(SVC.operationStatus).endswith("Service#operationStatus")
+        """SVC.hasOperationStatus resolves to Service#hasOperationStatus."""
+        assert str(SVC.hasOperationStatus).endswith("Service#hasOperationStatus")
 
 
 class TestOperationStatusValues:
@@ -81,7 +81,7 @@ class TestSVCExecutionProvenance:
     """The execution provenance terms exist under svc:."""
 
     def test_execution_success_removed(self):
-        """svc:executionSuccess boolean is removed (success now in operationStatus)."""
+        """svc:executionSuccess boolean is removed (success now in hasOperationStatus)."""
         assert not hasattr(SVC, "executionSuccess")
 
     def test_executed_by_workflow_exists(self):

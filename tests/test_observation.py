@@ -40,7 +40,7 @@ from kapps_semantic_middleware.observation import (
     is_connection_metadata,
 )
 
-EX = "https://example.org/test#"
+EX = "http://example.org/test#"
 RESOURCE = f"{EX}module"
 SERVICE_CLASS = f"{EX}ModuleService"
 

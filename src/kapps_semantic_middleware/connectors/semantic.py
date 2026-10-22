@@ -317,8 +317,8 @@ def semantic_connector(cls):
     return cls
 
 
-def resolve_direction(access_mode: str, flavour: SyncDirection) -> SyncDirection:
-    """The most restrictive of the parameter access mode and the instance flavor.
+def resolve_direction(access_mode: str, sync_direction: SyncDirection) -> SyncDirection:
+    """The most restrictive of the parameter access mode and the instance sync direction.
 
     Neither may widen the other. A monitor can therefore never drive a writable
     belt, and a controller can never write a read-only sensor. This is structural, not by
@@ -329,10 +329,10 @@ def resolve_direction(access_mode: str, flavour: SyncDirection) -> SyncDirection
     (device to middleware, read-only) otherwise.
     """
     parameter_permits_write = access_mode == AccessMode.READWRITE
-    flavour_permits_write = flavour in (
+    sync_direction_permits_write = sync_direction in (
         SyncDirection.BIDIRECTIONAL,
         SyncDirection.FROM_PERSISTENCE,
     )
-    if parameter_permits_write and flavour_permits_write:
+    if parameter_permits_write and sync_direction_permits_write:
         return SyncDirection.BIDIRECTIONAL
     return SyncDirection.TO_PERSISTENCE

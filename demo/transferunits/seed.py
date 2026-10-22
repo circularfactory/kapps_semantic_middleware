@@ -23,10 +23,10 @@ from kapps_semantic_middleware.vocabulary import INF, SVC
 
 # --- Namespaces ------------------------------------------------------------- #
 
-TU_NS = "https://www.sfb1574.kit.edu/ontologies/TransferUnit#"
-TUI_NS = "https://www.sfb1574.kit.edu/ontologies/TransferUnitInstances#"
-FAC_NS = "https://www.sfb1574.kit.edu/ontologies/Factory#"
-FACI_NS = "https://www.sfb1574.kit.edu/ontologies/FactoryInstances#"
+TU_NS = "http://www.sfb1574.kit.edu/ontologies/TransferUnit#"
+TUI_NS = "http://www.sfb1574.kit.edu/ontologies/TransferUnitInstances#"
+FAC_NS = "http://www.sfb1574.kit.edu/ontologies/Factory#"
+FACI_NS = "http://www.sfb1574.kit.edu/ontologies/FactoryInstances#"
 
 # --- Domain class and property IRIs (tu:) ------------------------------------ #
 
@@ -215,7 +215,7 @@ def seed_factory(db, ogm, units: int) -> None:
         units: Number of TransferUnits to create (indices 1..units).
     """
     clear_dataset(db)
-    load_shared_ontologies(db)
+    load_shared_ontologies(db, reload=True)
     _load_demo_ontologies(db)
 
     for n in range(1, units + 1):

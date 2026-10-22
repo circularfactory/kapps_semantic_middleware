@@ -20,9 +20,9 @@ from kapps_triplestore_interface.exceptions import TripleStoreResponseError
 
 from kapps_semantic_middleware import SemanticMiddleware
 
-OP = IRI("https://example.org/test#op_1")
-STATUS = IRI("https://example.org/test#status")
-RESULT = IRI("https://example.org/test#result")
+OP = IRI("http://example.org/test#op_1")
+STATUS = IRI("http://example.org/test#status")
+RESULT = IRI("http://example.org/test#result")
 
 
 class _FakeOGM:
@@ -55,8 +55,8 @@ class _Node:
 def _middleware(ogm) -> SemanticMiddleware:
     return SemanticMiddleware(
         mode="resource",
-        resource_iri="https://example.org/test#resource",
-        service_class="https://example.org/test#Service",
+        resource_iri="http://example.org/test#resource",
+        service_class="http://example.org/test#Service",
         ogm=ogm,
         heartbeat_interval=None,
     )
@@ -92,7 +92,7 @@ def test_an_error_in_the_body_drops_its_changes_and_commits_only_the_error_trans
         with _middleware(ogm).commit(
             OP, entry=_status("running"), exit=_status("done"), error=_status("failed")
         ) as transition:
-            transition.update(OP, {RESULT: ["half a screw"]})
+            transition.update(OP, {RESULT: ["half a hole"]})
             raise RuntimeError("gripper jammed")
     assert _written_data(ogm) == [
         [("Update", OP, {STATUS: ["running"]})],
@@ -100,8 +100,8 @@ def test_an_error_in_the_body_drops_its_changes_and_commits_only_the_error_trans
     ]
 
 
-OTHER = IRI("https://example.org/test#box_1")
-LOCATION = IRI("https://example.org/test#location")
+OTHER = IRI("http://example.org/test#box_1")
+LOCATION = IRI("http://example.org/test#location")
 
 
 def test_a_clean_exit_commits_the_body_changes_and_the_exit_transition_in_one_commit():
@@ -110,12 +110,12 @@ def test_a_clean_exit_commits_the_body_changes_and_the_exit_transition_in_one_co
     with _middleware(ogm).commit(
         OP, entry=_status("running"), exit=_status("done"), error=_status("failed")
     ) as transition:
-        transition.update(OP, {RESULT: ["screwed"]})
+        transition.update(OP, {RESULT: ["drilled"]})
         transition.update(OTHER, {LOCATION: ["station 2"]})
     assert _written_data(ogm) == [
         [("Update", OP, {STATUS: ["running"]})],
         [
-            ("Update", OP, {STATUS: ["done"], RESULT: ["screwed"]}),
+            ("Update", OP, {STATUS: ["done"], RESULT: ["drilled"]}),
             ("Update", OTHER, {LOCATION: ["station 2"]}),
         ],
     ]
@@ -140,10 +140,10 @@ def test_a_body_that_sets_the_status_commits_its_own_value_and_the_exit_transiti
     with _middleware(ogm).commit(
         OP, entry=_status("running"), exit=exit_transition, error=_status("failed")
     ) as transition:
-        transition.update(OP, {STATUS: ["waiting for parts"], RESULT: ["3 of 4 screws"]})
+        transition.update(OP, {STATUS: ["waiting for parts"], RESULT: ["3 of 4 holes"]})
     assert _written_data(ogm) == [
         [("Update", OP, {STATUS: ["running"]})],
-        [("Update", OP, {STATUS: ["waiting for parts"], RESULT: ["3 of 4 screws"]})],
+        [("Update", OP, {STATUS: ["waiting for parts"], RESULT: ["3 of 4 holes"]})],
     ]
 
 
@@ -175,7 +175,7 @@ def test_a_refused_exit_commits_the_error_transition_and_raises_the_stores_error
         with _middleware(ogm).commit(
             OP, entry=_status("running"), exit=_status("done"), error=failed
         ) as transition:
-            transition.update(OP, {RESULT: ["screwed"]})
+            transition.update(OP, {RESULT: ["drilled"]})
     assert seen == [raised.value]
     assert _written_data(ogm) == [
         [("Update", OP, {STATUS: ["running"]})],
@@ -307,8 +307,8 @@ BODY_SECONDS = 0.6
 def _heartbeating_middleware(ogm) -> SemanticMiddleware:
     return SemanticMiddleware(
         mode="resource",
-        resource_iri="https://example.org/test#resource",
-        service_class="https://example.org/test#Service",
+        resource_iri="http://example.org/test#resource",
+        service_class="http://example.org/test#Service",
         ogm=ogm,
         heartbeat_interval=HEARTBEAT_INTERVAL,
     )
@@ -334,7 +334,7 @@ async def test_an_awaiting_body_delays_no_heartbeat_and_its_graph_io_runs_off_th
         ) as transition:
             started = time.monotonic()
             await asyncio.sleep(BODY_SECONDS)  # a robot's move, awaited
-            transition.update(OP, {RESULT: ["screwed"]})
+            transition.update(OP, {RESULT: ["drilled"]})
             ended = time.monotonic()
     finally:
         await mw._stop_heartbeat()
@@ -343,7 +343,7 @@ async def test_an_awaiting_body_delays_no_heartbeat_and_its_graph_io_runs_off_th
     assert threading.get_ident() not in ogm.commit_threads
     assert _written_data(ogm) == [
         [("Update", OP, {STATUS: ["running"]})],
-        [("Update", OP, {STATUS: ["done"], RESULT: ["screwed"]})],
+        [("Update", OP, {STATUS: ["done"], RESULT: ["drilled"]})],
     ]
 
 
@@ -410,7 +410,7 @@ async def test_the_async_form_commits_the_error_transition_and_reraises():
         async with _middleware(ogm).commit(
             OP, entry=_status("running"), exit=_status("done"), error=_status("failed")
         ) as transition:
-            transition.update(OP, {RESULT: ["half a screw"]})
+            transition.update(OP, {RESULT: ["half a hole"]})
             raise RuntimeError("gripper jammed")
     assert _written_data(ogm) == [
         [("Update", OP, {STATUS: ["running"]})],
@@ -449,15 +449,15 @@ def test_an_assignment_to_the_transition_is_refused_and_names_update():
         with _middleware(ogm).commit(
             OP, entry=_status("running"), exit=_status("done"), error=_status("failed")
         ) as transition:
-            transition.hasTimeSeriesReference = "https://example.org/test#series_1"
+            transition.hasTimeSeriesReference = "http://example.org/test#series_1"
     assert _written_data(ogm) == [
         [("Update", OP, {STATUS: ["running"]})],
         [("Update", OP, {STATUS: ["failed"]})],
     ]
 
 
-SNAPSHOT_CLASS = IRI("https://example.org/test#DecisionSnapshot")
-SNAPSHOT = IRI("https://example.org/test#snapshot_1")
+SNAPSHOT_CLASS = IRI("http://example.org/test#DecisionSnapshot")
+SNAPSHOT = IRI("http://example.org/test#snapshot_1")
 
 
 def _snapshot(class_scope=None) -> Create:

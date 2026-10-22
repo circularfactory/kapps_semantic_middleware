@@ -2,8 +2,8 @@
 @prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
 @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
 @prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
-@prefix cfc: <https://w3id.org/circularfactory/Core#> .
-@prefix svc: <https://w3id.org/circularfactory/Service#> .
+@prefix cfc: <http://w3id.org/circularfactory/Core#> .
+@prefix svc: <http://w3id.org/circularfactory/Service#> .
 
 #################################################################
 # Ontology
@@ -12,7 +12,7 @@
 svc: rdf:type owl:Ontology ;
     rdfs:label "KAPPS Service Ontology" ;
     rdfs:comment "Vocabulary for the Semantic Middleware Runtime — defines how a middleware instance wraps a shop-floor resource and exposes its functionality (Workflows, StateProperties) through the knowledge graph so other middleware instances can discover and invoke that functionality via graph queries rather than hardcoded network references." ;
-    owl:imports <https://w3id.org/circularfactory/Core> .
+    owl:imports <http://w3id.org/circularfactory/Core> .
 
 #################################################################
 # Classes
@@ -85,7 +85,7 @@ svc:realizedByWorkflow rdf:type owl:ObjectProperty ;
 
 svc:realizesCapability rdf:type owl:ObjectProperty ;
     rdfs:label "realizesCapability" ;
-    rdfs:comment "Relates a Workflow to the Capability it realizes. A Workflow realizes exactly one Capability. Inverse of svc:realizedByWorkflow. This makes Capability, not Workflow, the unit planning services discover against ('find a service providing X capability'), matching the paper's framing of planning as capability-driven." ;
+    rdfs:comment "Relates a Workflow to the Capability it realizes. A Workflow realizes exactly one Capability. Inverse of svc:realizedByWorkflow. This makes Capability, not Workflow, the unit planning services discover against ('find a service providing X capability'), so planning is capability-driven." ;
     rdfs:domain svc:Workflow ;
     rdfs:range cfc:Capability ;
     owl:inverseOf svc:realizedByWorkflow .
@@ -143,12 +143,12 @@ svc:lastHeartbeat rdf:type owl:DatatypeProperty ;
 # folded into the done/failed status change. Together these record
 # which Workflow handled the Operation (actor/context), when, and an optional
 # serialized result — so any past Operation is reconstructible from the graph
-# alone. Whether the operation succeeded is carried by svc:operationStatus
+# alone. Whether the operation succeeded is carried by svc:hasOperationStatus
 # (done/failed), not a separate boolean.
 #################################################################
 
-svc:operationStatus rdf:type owl:DatatypeProperty ;
-    rdfs:label "operationStatus" ;
+svc:hasOperationStatus rdf:type owl:DatatypeProperty ;
+    rdfs:label "hasOperationStatus" ;
     rdfs:comment "The lifecycle state of an Operation: queued (created and addressed, awaiting pull) -> running (pulled, in progress) -> done | failed (terminal). Written onto a cfc:Operation to drive coordination and recovery. The terminal value (done vs failed) also carries whether execution succeeded, replacing the former svc:executionSuccess boolean. Values are plain xsd:string literals; there is no status class or enumerated individuals in v1." ;
     rdfs:domain cfc:Operation ;
     rdfs:range xsd:string .
@@ -179,6 +179,6 @@ svc:executionResult rdf:type owl:DatatypeProperty ;
 
 svc:failureState rdf:type owl:DatatypeProperty ;
     rdfs:label "failureState" ;
-    rdfs:comment "An optional JSON snapshot of the executing resource's transitional_sync_middleware datamodel captured at the moment an Operation failed, written atomically with svc:operationStatus=failed. It records the observed resource state under which the failure occurred, so a failed Operation is diagnosable and replayable from the graph alone. Absent on successful (done) Operations." ;
+    rdfs:comment "An optional JSON snapshot of the executing resource's transitional_sync_middleware datamodel captured at the moment an Operation failed, written atomically with svc:hasOperationStatus=failed. It records the observed resource state under which the failure occurred, so a failed Operation is diagnosable and replayable from the graph alone. Absent on successful (done) Operations." ;
     rdfs:domain cfc:Operation ;
     rdfs:range xsd:string .

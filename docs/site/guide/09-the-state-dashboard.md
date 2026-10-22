@@ -28,7 +28,7 @@ registry = enable_dashboard(middleware, register_default_boxes=False)
 
 The page's title and its heading name the instance's resource, as in "Module 1 — dashboard". With several dashboards open, each browser tab shows which instance it belongs to.
 
-The name is the resource's `rdfs:label`. A resource without one is named by the local name of its IRI, the part after the last `#` or `/`: `…#WarehouseManagementSystem1` gives "WarehouseManagementSystem1 — dashboard". An instance that represents no resource keeps the title "Middleware Dashboard".
+The name is the resource's `rdfs:label`. A resource without one is named by the local name of its IRI, the part after the last `#` or `/`: `…#Station1` gives "Station1 — dashboard". An instance that represents no resource keeps the title "Middleware Dashboard".
 
 A resource may carry several labels. The page uses the same one every time. A label without a language tag comes first, then an English one (`@en`, `@en-GB`, …), then the others. Within each group the first language tag in code-point order wins, and within one tag the first label in code-point order. A value that is an IRI, or that holds only white space, is not a name.
 

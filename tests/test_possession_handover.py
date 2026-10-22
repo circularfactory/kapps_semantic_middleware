@@ -126,7 +126,7 @@ def test_the_entry_carries_the_operation_and_the_callers_changes_in_the_same_com
     (moved,) = [c for c in entry if getattr(c, "instance_iri", None) == WORKPIECE]
     assert moved.data[f"{EX}state"] == ["arrived"]
     (done,) = [c for c in entry if getattr(c, "instance_iri", None) == OPERATION]
-    assert done.data == {str(SVC.operationStatus): [OperationStatus.DONE]}
+    assert done.data == {str(SVC.hasOperationStatus): [OperationStatus.DONE]}
     assert other in entry
 
 

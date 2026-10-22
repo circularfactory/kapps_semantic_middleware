@@ -1,7 +1,7 @@
 """Graph-write core of the KAPPS Semantic Middleware.
 
 Every knowledge-graph **write** goes through the OGM (`OGM.create` / `OGM.commit`). This is the
-architecture single validated write path (paper §4.4.2). No write issues raw SPARQL UPDATE.
+architecture's single validated write path. No write issues raw SPARQL UPDATE.
 **Reads** may use the triple-store access module (`ogm.db`) directly. The architecture permits
 this.
 
@@ -679,7 +679,7 @@ def create_operation(
     """Create an Operation individual for dispatch. Address it to a target Capability.
 
     The whole Operation is written in ONE ``OGM.commit``: its ``rdf:type``, its single-valued
-    ``cfc:implementsCapability`` link, ``svc:operationStatus``, and ``data``, whose properties
+    ``cfc:implementsCapability`` link, ``svc:hasOperationStatus``, and ``data``, whose properties
     the Operation's class must declare: kapps_ogm refuses a property that the class does not
     declare, with ``OGMDataError``. Its class scope names every property it sets, so none lies
     outside the scope.
@@ -693,7 +693,7 @@ def create_operation(
     """
     create_data: dict = {
         **_implements(IRI(capability_iri)),
-        str(SVC.operationStatus): [status],
+        str(SVC.hasOperationStatus): [status],
         **(data or {}),
     }
     creation = Create(
@@ -837,11 +837,11 @@ def _issuers(ogm: "OGM", operation_iris: Sequence[IRI]) -> dict[IRI, IRI]:
 
 
 def _operation_statuses(ogm: "OGM", operation_iri: IRI) -> frozenset[str]:
-    """Every ``svc:operationStatus`` of an Operation that the store holds, in one read. One, as
+    """Every ``svc:hasOperationStatus`` of an Operation that the store holds, in one read. One, as
     a rule; none when the store holds no status for it."""
     sparql = f"""
     SELECT ?status WHERE {{
-        <{operation_iri}> <{SVC.operationStatus}> ?status .
+        <{operation_iri}> <{SVC.hasOperationStatus}> ?status .
     }}
     """
     bindings = _bindings(ogm.db.query(sparql, convert_bindings=True))
@@ -870,7 +870,7 @@ def _read_notified(ogm: "OGM", operation_iri: IRI) -> _NotifiedRead:
     sparql = f"""
     SELECT ?type ?status ?issuer WHERE {{
         <{operation_iri}> a ?type .
-        OPTIONAL {{ <{operation_iri}> <{SVC.operationStatus}> ?status . }}
+        OPTIONAL {{ <{operation_iri}> <{SVC.hasOperationStatus}> ?status . }}
         OPTIONAL {{ <{operation_iri}> <{SVC.issuedBy}> ?issuer . }}
     }}
     """
@@ -888,23 +888,23 @@ def _bindings(result: Any) -> list:
 
 
 def _operation_status_update(operation_iri: IRI, status: str) -> Update:
-    """The kapps_ogm ``Update`` that sets `svc:operationStatus` on an Operation.
+    """The kapps_ogm ``Update`` that sets `svc:hasOperationStatus` on an Operation.
 
     It covers any single-status transition. Nothing is written here: :func:`set_operation_status`
     commits it. ``claim_next()`` commits :func:`_claim_update` as its claim instead.
     """
-    return Update(instance_iri=IRI(operation_iri), data={str(SVC.operationStatus): [status]})
+    return Update(instance_iri=IRI(operation_iri), data={str(SVC.hasOperationStatus): [status]})
 
 
 def _claim_update(operation_iri: IRI, executor: Optional[IRI]) -> Update:
-    """The kapps_ogm ``Update`` of a claim: `svc:operationStatus` ``running`` and, when the
+    """The kapps_ogm ``Update`` of a claim: `svc:hasOperationStatus` ``running`` and, when the
     claimer names its Workflow, that Workflow as the executor (`svc:executedByWorkflow`).
 
     One change, so the status and the executor are written in one commit.
     :func:`find_stranded_operations` reads the executor to decide whether a running Operation is
     stranded. Nothing is written here: ``claim_next()`` commits it as its entry.
     """
-    data: dict = {str(SVC.operationStatus): [OperationStatus.RUNNING]}
+    data: dict = {str(SVC.hasOperationStatus): [OperationStatus.RUNNING]}
     if executor is not None:
         data[str(SVC.executedByWorkflow)] = [_ref(executor)]
     return Update(instance_iri=IRI(operation_iri), data=data)
@@ -917,7 +917,7 @@ def set_operation_status(
     status: str,
     named_graph: Optional[IRI] = None,
 ) -> None:
-    """Set `svc:operationStatus` on an Operation via the OGM atomic commit path.
+    """Set `svc:hasOperationStatus` on an Operation via the OGM atomic commit path.
 
     It writes :func:`_operation_status_update` in one ``OGM.commit``. ``claim_next()`` does not
     call this: it commits its claim (:func:`_claim_update`) through ``mw.commit()``. This writer
@@ -946,7 +946,7 @@ def _terminal_status_update(
     if timestamp is None:
         timestamp = datetime.now(timezone.utc)
     data: dict = {
-        str(SVC.operationStatus): [status],
+        str(SVC.hasOperationStatus): [status],
         str(SVC.executedByWorkflow): [_ref(workflow_iri)],
         str(SVC.executionTimestamp): [timestamp.isoformat()],
     }
@@ -995,7 +995,7 @@ def find_resource_operations(
     statuses: list[str],
     named_graph: Optional[IRI] = None,
 ) -> list[IRI]:
-    """Find a resource own Operations whose ``svc:operationStatus`` is one of ``statuses``.
+    """Find a resource own Operations whose ``svc:hasOperationStatus`` is one of ``statuses``.
 
     Ontology-backed traversal: an Operation implements a Capability
     (``cfc:implementsCapability``). The resource provides that Capability (``cfc:hasCapability``).
@@ -1016,7 +1016,7 @@ def find_resource_operations(
     SELECT DISTINCT ?op WHERE {{
         ?op <{CFC.implementsCapability}> ?cap .
         <{resource_iri}> <{CFC.hasCapability}> ?cap .
-        ?op <{SVC.operationStatus}> ?st .
+        ?op <{SVC.hasOperationStatus}> ?st .
         FILTER(?st IN ({status_filter}))
     }}
     """
@@ -1097,7 +1097,7 @@ def find_stranded_operations(
     SELECT DISTINCT ?op WHERE {{
         ?op <{CFC.implementsCapability}> ?cap .
         <{resource_iri}> <{CFC.hasCapability}> ?cap .
-        ?op <{SVC.operationStatus}> ?st .
+        ?op <{SVC.hasOperationStatus}> ?st .
         FILTER(?st IN ({status_filter}))
         FILTER(
             (?st = "{OperationStatus.RUNNING}" && NOT EXISTS {{
@@ -1183,7 +1183,7 @@ def mark_operation_failed(
         ogm,
         operation_iri,
         {
-            str(SVC.operationStatus): [OperationStatus.FAILED],
+            str(SVC.hasOperationStatus): [OperationStatus.FAILED],
             str(SVC.executionResult): [reason],
         },
         named_graph,

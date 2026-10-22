@@ -24,37 +24,37 @@ class TestIRIMinting:
     def test_unit_1_matches_existing_constants(self):
         """The Unit 1 IRIs must match the frozen constants in examples/seed.py."""
         assert seed._mint_transfer_unit_iri(1) == IRI(
-            "https://www.sfb1574.kit.edu/ontologies/TransferUnitInstances#TransferUnit1"
+            "http://www.sfb1574.kit.edu/ontologies/TransferUnitInstances#TransferUnit1"
         )
         assert seed._mint_conveyor_belt_iri(1, "left") == IRI(
-            "https://www.sfb1574.kit.edu/ontologies/TransferUnitInstances#ConveyorBelt1_left"
+            "http://www.sfb1574.kit.edu/ontologies/TransferUnitInstances#ConveyorBelt1_left"
         )
         assert seed._mint_conveyor_belt_iri(1, "right") == IRI(
-            "https://www.sfb1574.kit.edu/ontologies/TransferUnitInstances#ConveyorBelt1_right"
+            "http://www.sfb1574.kit.edu/ontologies/TransferUnitInstances#ConveyorBelt1_right"
         )
         assert seed._mint_light_barrier_iri(1, "front") == IRI(
-            "https://www.sfb1574.kit.edu/ontologies/TransferUnitInstances#LightBarrier1_front"
+            "http://www.sfb1574.kit.edu/ontologies/TransferUnitInstances#LightBarrier1_front"
         )
         assert seed._mint_light_barrier_iri(1, "back") == IRI(
-            "https://www.sfb1574.kit.edu/ontologies/TransferUnitInstances#LightBarrier1_back"
+            "http://www.sfb1574.kit.edu/ontologies/TransferUnitInstances#LightBarrier1_back"
         )
 
     def test_unit_2_follows_pattern(self):
         """The Unit 2 IRIs follow the same pattern with index 2."""
         assert seed._mint_transfer_unit_iri(2) == IRI(
-            "https://www.sfb1574.kit.edu/ontologies/TransferUnitInstances#TransferUnit2"
+            "http://www.sfb1574.kit.edu/ontologies/TransferUnitInstances#TransferUnit2"
         )
         assert seed._mint_conveyor_belt_iri(2, "left") == IRI(
-            "https://www.sfb1574.kit.edu/ontologies/TransferUnitInstances#ConveyorBelt2_left"
+            "http://www.sfb1574.kit.edu/ontologies/TransferUnitInstances#ConveyorBelt2_left"
         )
         assert seed._mint_light_barrier_iri(2, "front") == IRI(
-            "https://www.sfb1574.kit.edu/ontologies/TransferUnitInstances#LightBarrier2_front"
+            "http://www.sfb1574.kit.edu/ontologies/TransferUnitInstances#LightBarrier2_front"
         )
 
     def test_control_station_is_fixed(self):
         """The control station IRI stays the same, regardless of N."""
         assert seed.CONTROL_STATION == IRI(
-            "https://www.sfb1574.kit.edu/ontologies/FactoryInstances#ControlStation1"
+            "http://www.sfb1574.kit.edu/ontologies/FactoryInstances#ControlStation1"
         )
 
 

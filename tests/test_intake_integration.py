@@ -48,9 +48,9 @@ PORT = 8988
 MIDDLEWARE_LOGGER = "kapps_semantic_middleware.middleware"
 OWN_CAPABILITY = mint_capability_iri(seed.HELLO_RESOURCE, "hello_operation")
 TRANSPORT = IRI("http://example.org/test#Transport1")
-WMS_CAPABILITY = IRI("http://example.org/test#WMS_capability_store")
+PLANNER_CAPABILITY = IRI("http://example.org/test#Planner_capability_store")
 # The receiver's own scope of an Operation: its status, beside the default part.
-STATUS_SCOPE = ClassScope.from_property_chains([[SVC.operationStatus]])
+STATUS_SCOPE = ClassScope.from_property_chains([[SVC.hasOperationStatus]])
 
 
 def _receiver(
@@ -143,7 +143,7 @@ def _explicit_statements(db) -> set:
 
 
 def _statuses(db, operation) -> list[str]:
-    return [str(t[2]) for t in db.triples_get(sub=operation, pred=SVC.operationStatus)]
+    return [str(t[2]) for t in db.triples_get(sub=operation, pred=SVC.hasOperationStatus)]
 
 
 def _values(operation: Node, prop: IRI) -> list:
@@ -176,7 +176,7 @@ def test_a_requested_operation_of_an_own_capability_runs_its_workflow_once_and_w
         [operation] = ran
         assert operation.id == op_iri
         assert _values(operation, CFC.implementsCapability) == [OWN_CAPABILITY]
-        assert _values(operation, SVC.operationStatus) == [OperationStatus.QUEUED]
+        assert _values(operation, SVC.hasOperationStatus) == [OperationStatus.QUEUED]
         assert operation.instance is not None  # materialized under the scope
         assert handled == []
         assert _explicit_statements(db) == seen[0]
@@ -238,10 +238,10 @@ def test_a_notification_of_an_operation_of_no_own_capability_reaches_the_handler
     and the graph does not change."""
     db = store
     seed.seed_scenario1(db)
-    db.triple_add((WMS_CAPABILITY, RDF.type, CFC.Capability))
+    db.triple_add((PLANNER_CAPABILITY, RDF.type, CFC.Capability))
     db.triple_add((TRANSPORT, RDF.type, CFC.Operation))
-    db.triple_add((TRANSPORT, CFC.implementsCapability, WMS_CAPABILITY))
-    db.triple_add((TRANSPORT, SVC.operationStatus, Literal(OperationStatus.DONE)))
+    db.triple_add((TRANSPORT, CFC.implementsCapability, PLANNER_CAPABILITY))
+    db.triple_add((TRANSPORT, SVC.hasOperationStatus, Literal(OperationStatus.DONE)))
     ran: list = []
     handled: list = []
     receiver = _receiver(store, ran.append, handled.append)
@@ -254,8 +254,8 @@ def test_a_notification_of_an_operation_of_no_own_capability_reaches_the_handler
         _wait_until(receiver, lambda: bool(handled))
         [operation] = handled
         assert operation.id == TRANSPORT
-        assert _values(operation, CFC.implementsCapability) == [WMS_CAPABILITY]
-        assert _values(operation, SVC.operationStatus) == [OperationStatus.DONE]
+        assert _values(operation, CFC.implementsCapability) == [PLANNER_CAPABILITY]
+        assert _values(operation, SVC.hasOperationStatus) == [OperationStatus.DONE]
         assert ran == []
         assert _explicit_statements(db) == before
     finally:
@@ -282,7 +282,7 @@ def test_at_startup_the_resources_own_queued_operation_runs_through_the_intake(s
     try:
         _wait_until(restarted, lambda: bool(ran))
         assert [operation.id for operation in ran] == [op_iri]
-        assert _values(ran[0], SVC.operationStatus) == [OperationStatus.QUEUED]
+        assert _values(ran[0], SVC.hasOperationStatus) == [OperationStatus.QUEUED]
         assert restarted._operation_queue == []
     finally:
         _stop_server(server, thread)
@@ -315,21 +315,21 @@ def test_startup_warns_about_a_resource_with_neither_a_handler_nor_a_callback(st
 
 
 # --------------------------------------------------------------------------- #
-# UC2's shape: a transport passed from module to module, and its end told to the WMS.
+# A relay: a transport passed from module to module, and its end told to the planner.
 # --------------------------------------------------------------------------- #
 
-WMS = seed.PLANNER_RESOURCE
+PLANNER = seed.PLANNER_RESOURCE
 HOP_TRANSPORT = IRI(f"{seed.DEMO_NS}transport_hop")
 
 
 def _transport_capability(resource: IRI) -> IRI:
-    return mint_capability_iri(resource, "box_transport")
+    return mint_capability_iri(resource, "run_transport")
 
 
-def _conveyor_module(
+def _transport_module(
     store, resource: IRI, port: int, step: Callable[[SemanticMiddleware, IRI], None], log: list
 ) -> SemanticMiddleware:
-    """A FlexConveyor module: its exposed transport workflow takes the transport object and runs
+    """A transport module: its exposed transport workflow takes the transport object and runs
     ``step``; its handler records what it gets."""
     mw = SemanticMiddleware(
         mode="resource",
@@ -341,29 +341,29 @@ def _conveyor_module(
         heartbeat_interval=None,
     )
 
-    def box_transport(transport: Node) -> None:
+    def run_transport(transport: Node) -> None:
         log.append((resource, "workflow", transport.id))
         step(mw, transport.id)
 
     mw.workflow(
         capability_class=seed.HELLO_CAPABILITY_CLASS,
         workflow_class=seed.HELLO_WORKFLOW_CLASS,
-    )(box_transport)
+    )(run_transport)
     mw.on_notification(lambda operation: log.append((resource, "handler", operation.id)))
     return mw
 
 
 @requires_store
-def test_a_transport_passes_from_module_to_module_and_its_end_reaches_the_wms(store):
-    """The WMS notifies the origin; each module's intake runs its transport workflow; the origin
+def test_a_transport_passes_from_module_to_module_and_its_end_reaches_the_planner(store):
+    """The planner notifies the origin; each module's intake runs its transport workflow; the origin
     hands the box over with the transport's reassignment in the entry and notifies the next one;
-    the destination completes the transport in its handover and notifies the WMS, whose handler
+    the destination completes the transport in its handover and notifies the planner, whose handler
     gets it."""
     db = store
     seed.seed_handover(db, OGM(db=db))
     seed.load_scenario1_ontologies(db)
-    seed.create_resource(db, WMS, seed.PLANNER_RESOURCE_CLASS)
-    db.triple_add((WMS, MES.hasHandoverAbility, MES.Retrieve))
+    seed.create_resource(db, PLANNER, seed.PLANNER_RESOURCE_CLASS)
+    db.triple_add((PLANNER, MES.hasHandoverAbility, MES.Retrieve))
     origin, destination = seed.HANDOVER_SOURCE, seed.HANDOVER_DEST
     log: list = []
     ended: list = []
@@ -386,25 +386,25 @@ def test_a_transport_passes_from_module_to_module_and_its_end_reaches_the_wms(st
     def deliver(mw: SemanticMiddleware, transport: IRI) -> None:
         with handover(
             mw,
-            mode=MES.Pass, workpiece=seed.HANDOVER_BOX, counterpart=WMS, operation=transport
+            mode=MES.Pass, workpiece=seed.HANDOVER_BOX, counterpart=PLANNER, operation=transport
         ):
             pass
-        mw.notify(operation=transport, resource=WMS)
+        mw.notify(operation=transport, resource=PLANNER)
 
-    wms = SemanticMiddleware(
+    planner = SemanticMiddleware(
         mode="resource",
-        resource_iri=WMS,
+        resource_iri=PLANNER,
         service_class=seed.PLANNER_SERVICE_CLASS,
         ogm=OGM(db=triplestore_for(store.dataset)),
         host="127.0.0.1",
         port=8986,
         heartbeat_interval=None,
     )
-    wms.on_notification(ended.append, class_scope=STATUS_SCOPE)
+    planner.on_notification(ended.append, class_scope=STATUS_SCOPE)
     servers = [
-        _start_server(_conveyor_module(store, origin, 8984, pass_on, log)),
-        _start_server(_conveyor_module(store, destination, 8985, deliver, log)),
-        _start_server(wms),
+        _start_server(_transport_module(store, origin, 8984, pass_on, log)),
+        _start_server(_transport_module(store, destination, 8985, deliver, log)),
+        _start_server(planner),
     ]
     try:
         create_operation(
@@ -415,21 +415,21 @@ def test_a_transport_passes_from_module_to_module_and_its_end_reaches_the_wms(st
             status=OperationStatus.RUNNING,
         )
 
-        wms.notify(operation=HOP_TRANSPORT, resource=origin)
+        planner.notify(operation=HOP_TRANSPORT, resource=origin)
 
-        _wait_until(wms, lambda: bool(ended), timeout=60)
+        _wait_until(planner, lambda: bool(ended), timeout=60)
         assert log == [
             (origin, "workflow", HOP_TRANSPORT),
             (destination, "workflow", HOP_TRANSPORT),
         ]
         [transport] = ended
         assert transport.id == HOP_TRANSPORT
-        assert _values(transport, SVC.operationStatus) == [OperationStatus.DONE]
+        assert _values(transport, SVC.hasOperationStatus) == [OperationStatus.DONE]
         assert _values(transport, CFC.implementsCapability) == [_transport_capability(destination)]
         assert [str(t[2]) for t in db.triples_get(sub=HOP_TRANSPORT, pred=CFC.executedOn)] == [
             str(destination)
         ]
-        assert find_possession_state(OGM(db=db), seed.HANDOVER_BOX, WMS) is not None
+        assert find_possession_state(OGM(db=db), seed.HANDOVER_BOX, PLANNER) is not None
     finally:
         for server, thread in servers:
             _stop_server(server, thread)

@@ -27,10 +27,10 @@ from kapps_semantic_middleware.connectors.semantic import (
 )
 from kapps_semantic_middleware.vocabulary import INF, SVC, AccessMode
 
-UNIT_IRI = "https://example.org/tui#TransferUnit1"
-LEFT_BELT_IRI = "https://example.org/tui#ConveyorBelt1_left"
-RIGHT_BELT_IRI = "https://example.org/tui#ConveyorBelt1_right"
-SPEED = IRI("https://example.org/tu#hasConveyorSpeed")
+UNIT_IRI = "http://example.org/tui#TransferUnit1"
+LEFT_BELT_IRI = "http://example.org/tui#ConveyorBelt1_left"
+RIGHT_BELT_IRI = "http://example.org/tui#ConveyorBelt1_right"
+SPEED = IRI("http://example.org/tu#hasConveyorSpeed")
 HAS_BELT = "tu:hasConveyorBelt"
 ADDRESS = "http://10.0.0.5:8010"
 
@@ -40,7 +40,7 @@ def _node_model():
     fields = {
         INF.hasValue.lined: (list, []),
         INF.accessMode.lined: (list, []),
-        IRI("https://example.org/tu#hasUnit").lined: (list, []),
+        IRI("http://example.org/tu#hasUnit").lined: (list, []),
     }
     return create_model("AnonymousClass", **{k: (v[0], v[1]) for k, v in fields.items()})
 
@@ -206,7 +206,7 @@ class TestRESTParameterFormatter:
             {
                 INF.hasValue.lined: [12.1],
                 INF.accessMode.lined: ["readwrite"],
-                IRI("https://example.org/tu#hasUnit").lined: [],
+                IRI("http://example.org/tu#hasUnit").lined: [],
             }
         ]
 
@@ -216,7 +216,7 @@ class TestRESTParameterFormatter:
         wire = [{INF.hasValue.lined: [3.5], INF.accessMode.lined: ["readwrite"]}]
 
         assert formatter.serialize(formatter.deserialize(wire)) == [
-            {**wire[0], IRI("https://example.org/tu#hasUnit").lined: []}
+            {**wire[0], IRI("http://example.org/tu#hasUnit").lined: []}
         ]
 
     def test_an_absent_body_deserializes_as_empty(self):

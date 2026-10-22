@@ -18,7 +18,7 @@ from kapps_semantic_middleware.vocabulary import SVC
 
 
 def status(value):
-    return [Update(instance_iri=op, data={str(SVC.operationStatus): [value]})]
+    return [Update(instance_iri=op, data={str(SVC.hasOperationStatus): [value]})]
 
 
 async with mw.commit(
@@ -88,13 +88,13 @@ The generic core knows only `svc:` and standard RDF. A rule of the circular fact
 
 Without its required input, a predefined scope raises `ValueError` when `mw.create()` is entered, before the body runs and before any write. The body must not set a property that its scope sets: that raises `ValueError` at the exit, and nothing is written. A domain module gives a scope of its own as a `PredefinedScope` (from `kapps_semantic_middleware.commit`), whose `changes()` returns a `ScopeChanges`: the data that the scope adds to the `Create`, and the further changes. `AGENTS.md` lists which modules are specific to the circular factory.
 
-### The detector's decision snapshot
+### A participant's decision snapshot
 
-The detector claims an Operation, decides, and records its decision in a snapshot, an instance with an identity of its own. The snapshot joins the commit that makes the Operation `done`:
+A participant claims an Operation, decides, and records its decision in a snapshot, an instance with an identity of its own. The snapshot joins the commit that makes the Operation `done`:
 
 ```python
 with mw.claim_next(operation_scope) as claimed:
-    decision = detector.decide(claimed.operation)
+    decision = decide(claimed.operation)
     with mw.create(EX.DecisionSnapshot, snapshot_scope) as snapshot:
         snapshot.update({str(EX.decision): [decision], str(EX.aboutOperation): [claimed.iri]})
     claimed.result = decision
@@ -112,7 +112,7 @@ from kapps_semantic_middleware.possession import workpiece
 
 transport_rule = operation(transport_scope, capability=transport_capability)
 with mw.create(EX.Transport, transport_rule) as transport:
-    transport.update({str(SVC.operationStatus): ["queued"]})
+    transport.update({str(SVC.hasOperationStatus): ["queued"]})
     with mw.create(EX.Workpiece, workpiece(workpiece_scope, possessor=mw.resource)) as piece:
         pass
     transport.update({str(EX.hasWorkpiece): [piece.iri]})

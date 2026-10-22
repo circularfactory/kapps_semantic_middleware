@@ -72,9 +72,8 @@ STOPPED_UNIT = 1
 SURVIVING_UNIT = 2
 """Which unit gets killed, and which has to be unharmed by it.
 
-Not interchangeable. The control station's view selects even-indexed units, so at this scale
-unit 2 is the only one the board shows -- which makes it both the unit whose reading the board
-must show and the unit whose traffic has to survive unit 1's death."""
+Not interchangeable: unit 2 is the unit whose reading the board must show and whose traffic
+has to survive unit 1's death."""
 
 SETPOINT = 1.75
 """A speed the seed never writes and no belt ever settles on by itself, so this value appearing

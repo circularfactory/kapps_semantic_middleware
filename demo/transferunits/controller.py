@@ -23,7 +23,7 @@ Control Expert's steps (``CONTEXT.md``):
    after construction and before the app's lifespan starts (before ``run_server``).
    Connectors must exist before the lifespan connects them, so wiring cannot
    wait for an async hook. Every connector it registers is a read leg: the controller's
-   connector flavour is ``TO_PERSISTENCE``, so recognition never builds a write leg, and
+   connector sync direction is ``TO_PERSISTENCE``, so recognition never builds a write leg, and
    nothing here can send a PUT to a unit's served data model.
 
 The controller still discovers resources by class IRI via ``discover_resources``,
@@ -135,7 +135,7 @@ class Controller(SemanticMiddleware):
     ``view()`` runs the caller's SPARQL query and returns the resource IRIs it binds.
     ``wire_view()`` recognizes each hit's interface-accessible parameters and registers
     a reading REST connector for every one it finds -- reached over REST, never MQTT
-    (``_VIEW_REGISTRY`` excludes it), and never a write leg (the connector flavour is
+    (``_VIEW_REGISTRY`` excludes it), and never a write leg (the connector sync direction is
     ``TO_PERSISTENCE``). Loading happens on startup: each hit's pruned datamodel
     materializes into ``self.units``, keyed by resource IRI string, and each read leg's
     poll keeps it current. An algorithm reads those loaded objects directly.
@@ -226,7 +226,7 @@ class Controller(SemanticMiddleware):
             # Its connectors come from the view, which does not exist yet at this point.
             autoregister_connectors=False,
             # Read legs only. `resolve_direction` takes the most restrictive of a
-            # parameter's access mode and this flavour, so even a read-write belt speed
+            # parameter's access mode and this sync direction, so even a read-write belt speed
             # gets no write leg: the controller observes, and a device changes only
             # through a workflow of its service.
             connector_sync_direction=SyncDirection.TO_PERSISTENCE,
@@ -353,7 +353,7 @@ class Controller(SemanticMiddleware):
                 class_scope=class_scope,
                 resource_class=IRI(str(resource_class)) if resource_class is not None else None,
                 registry=registry,
-                flavour=self.connector_sync_direction,
+                sync_direction=self.connector_sync_direction,
                 autoregister=True,
                 ensure_transport=self.ensure_transport,
             )

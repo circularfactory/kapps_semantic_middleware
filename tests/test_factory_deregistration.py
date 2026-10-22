@@ -8,8 +8,8 @@ that this is "so every middleware deregisters", then never asks the graph.
 **The acceptance criterion was worded wrongly, and this file asserts the design instead.** It
 said "the graph holds no ``svc:Service`` for any unit". It does hold one, on purpose:
 ``registration.deregister_service`` clears the address and the workflow/state endpoints and
-says in its own docstring that "structural triples and rdf:type are preserved (paper:
-availability vs. existence)". A Service that stopped answering has not stopped existing. So
+says in its own docstring that structural triples and rdf:type are preserved, which tells
+availability from existence. A Service that stopped answering has not stopped existing. So
 what a clean stop must remove is **reachability**, and that is what is checked below.
 
 Its own module rather than a case inside ``test_factory_smoke.py``, for two reasons that are

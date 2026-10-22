@@ -62,7 +62,7 @@ try:
     )
 except ImportError:  # pragma: no cover - depends on the optional extra being installed
     # Importing this module must not require a working MQTT stack. The registry must exist
-    # for every flavour, including one that wires nothing, so an inspector on a
+    # for every connector wiring, including one that wires nothing, so an inspector on a
     # host without aiomqtt must still receive recognition and the projection. The failure is
     # deferred to the moment something actually tries to build a connector. The ignore is for a
     # typed transitional_sync_middleware, where None is no class; untyped, as today, it is unused.
@@ -262,7 +262,7 @@ class MQTTBinding:
         """One read registration always. One write registration when both sides permit it.
 
         ``direction`` has already been reduced to the most restrictive of the parameter's
-        ``inf:accessMode`` and the instance's flavour, so this only honours
+        ``inf:accessMode`` and the instance's sync direction, so this only honours
         it. It must never re-widen.
 
         ``ensure_transport``, when given, is called once with the declared ``(host, port)``,

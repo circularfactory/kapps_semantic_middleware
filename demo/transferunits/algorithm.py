@@ -17,7 +17,7 @@ The algorithm itself is deliberately meaningless -- it demonstrates reach, not r
 control. When a light barrier's reading changes, it reads a barrier on one unit and the
 conveyor speed of another, and logs both. **It observes and writes nothing.** In KAPPS a
 device changes only through a workflow of its service; this demo has no unit workflows
-yet, so it has no control to exercise. Its control returns with workflows after the paper.
+yet, so it has no control to exercise.
 A real material flow controller would route
 parcels across units by reading barriers and deciding which unit to trigger; building one
 is domain work, not middleware work. The graph carries no plant layout, so nothing here
@@ -113,23 +113,27 @@ def _barrier_snapshot(controller: Controller) -> Dict[str, Tuple[bool, ...]]:
     return snapshot
 
 
-def build_view_query() -> str:
-    """Build the SPARQL SELECT query that finds live, even-indexed TransferUnits.
+def build_view_query(parity: str = "all") -> str:
+    """Build the SPARQL SELECT query that finds live TransferUnits, optionally by parity.
+
+    ``parity`` is "all" (the default: every live unit, no parity filter), "even" or "odd".
+    The station board's prewritten-query dropdown reaches this through
+    :func:`named_view_queries`, and "All TransferUnits" is the board's default view.
 
     This realizes the Control Expert's step 1: the view is the query, and the query text supplies
     the domain class and any heuristic. ``Controller.view()`` runs this verbatim and
     returns every IRI it binds to ``?resource``. Nothing in ``controller.py`` assumes
     a domain class or a column beyond ``?resource`` itself.
 
-    The heuristic here -- unit index is even -- is deliberately arbitrary. It is chosen
-    because it visibly returns roughly half the factory when N units are seeded, making
-    the demo's behavior easy to verify by inspection. A real algorithm would narrow by
-    area of the plant, topology, or workload instead.
+    The parity heuristics are deliberately arbitrary. "even" and "odd" each visibly return
+    roughly half the factory when N units are seeded, making the demo's behavior easy to
+    verify by inspection. A real algorithm would narrow by area of the plant, topology, or
+    workload instead.
 
     Live means the resource's Service carries ``svc:address``. The query joins from
     ``?resource`` to its Service via ``svc:isServiceOf``, then requires ``?addr`` to be
-    bound. The unit index is extracted from the IRI's local name (e.g.
-    ``...#TransferUnit4`` -> ``4``) and tested for evenness arithmetically: SPARQL 1.1
+    bound. For "even" and "odd" the unit index is extracted from the IRI's local name (e.g.
+    ``...#TransferUnit4`` -> ``4``) and tested for parity arithmetically: SPARQL 1.1
     has no ``%`` modulo operator, so this computes
     ``xsd:integer(?suffix) - 2 * FLOOR(xsd:integer(?suffix) / 2)``, which is 0 for an
     even suffix and 1 for an odd one.
@@ -137,17 +141,48 @@ def build_view_query() -> str:
     Returns:
         A SPARQL ``SELECT ?resource`` query string.
     """
+    if parity == "all":
+        heuristic = ""
+    elif parity in ("even", "odd"):
+        target = "0" if parity == "even" else "1"
+        heuristic = (
+            'BIND(STRAFTER(STR(?resource), "#TransferUnit") AS ?suffix)\n'
+            '        FILTER(?suffix != "" &&\n'
+            f"               (xsd:integer(?suffix) - 2 * FLOOR(xsd:integer(?suffix) / 2)) = {target})"
+        )
+    else:
+        raise ValueError(f"parity must be 'all', 'even' or 'odd', got {parity!r}")
+    return _live_units_query(heuristic)
+
+
+def _live_units_query(heuristic: str) -> str:
+    """The fixed frame -- class plus liveness join -- around a heuristic clause."""
     return f"""
     PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
     SELECT ?resource WHERE {{
         ?resource a <{seed.TRANSFER_UNIT_CLASS}> .
         ?svc <{SVC.isServiceOf}> ?resource .
         ?svc <{SVC.address}> ?addr .
-        BIND(STRAFTER(STR(?resource), "#TransferUnit") AS ?suffix)
-        FILTER(?suffix != "" &&
-               (xsd:integer(?suffix) - 2 * FLOOR(xsd:integer(?suffix) / 2)) = 0)
+        {heuristic}
     }}
     """
+
+
+def named_view_queries() -> list[dict[str, str]]:
+    """Prewritten view heuristics for the station board's dropdown.
+
+    "All TransferUnits" first (the board's default and the target of "reset"), then the
+    even/odd parity pair, then a "Custom" starter the Control Expert edits into their own
+    heuristic. Each entry is a display name and a full ``SELECT ?resource`` query the board
+    drops verbatim into its query field.
+    """
+    custom_starter = _live_units_query("# Add your own FILTER here.")
+    return [
+        {"name": "All TransferUnits", "query": build_view_query("all")},
+        {"name": "Even-indexed TransferUnits", "query": build_view_query("even")},
+        {"name": "Odd-indexed TransferUnits", "query": build_view_query("odd")},
+        {"name": "Custom — edit your own", "query": custom_starter},
+    ]
 
 
 def unit_class_scope() -> ClassScope:

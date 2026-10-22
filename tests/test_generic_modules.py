@@ -39,7 +39,7 @@ GENERIC = "generic"
 SPECIFIC = "cfc-specific"
 MIXED = "generic, with cfc-specific parts"
 
-CORE_NAMESPACE = "https://w3id.org/circularfactory/Core"
+CORE_NAMESPACE = "http://w3id.org/circularfactory/Core"
 CORE_NAMES = {"CFC", "CORE_NS", "CORE_ONTOLOGY"}
 """The names under which ``vocabulary`` gives Core's IRIs."""
 
@@ -269,7 +269,7 @@ POSSESSION = "kapps_semantic_middleware.possession"
     "source",
     [
         "from kapps_semantic_middleware.vocabulary import CFC\nX = CFC.Workpiece\n",
-        "X = 'https://w3id.org/circularfactory/Core#Workpiece'\n",
+        "X = 'http://w3id.org/circularfactory/Core#Workpiece'\n",
         "QUERY = f'SELECT ?s WHERE {{ ?s cfc:hasPossessor ?o }}'\n",
         "from kapps_semantic_middleware.possession import workpiece\n",
         "from .possession import workpiece\n",

@@ -35,9 +35,9 @@ from kapps_semantic_middleware.projection import (
 )
 from kapps_semantic_middleware.vocabulary import INF, AccessMode
 
-BELT = IRI("https://example.org/tu#Belt1")
-SPEED = IRI("https://example.org/tu#hasConveyorSpeed")
-OTHER_NS = "https://example.org/other#"
+BELT = IRI("http://example.org/tu#Belt1")
+SPEED = IRI("http://example.org/tu#hasConveyorSpeed")
+OTHER_NS = "http://example.org/other#"
 
 
 class _NodeModel(BaseModel):
@@ -51,7 +51,7 @@ def _node_model():
     fields = {
         INF.hasValue.lined: (list, []),
         INF.accessMode.lined: (list, []),
-        IRI("https://example.org/tu#hasUnit").lined: (list, []),
+        IRI("http://example.org/tu#hasUnit").lined: (list, []),
     }
     from pydantic import create_model
 
@@ -63,7 +63,7 @@ def _binding(
 ):
     metadata = {
         str(INF.accessMode): [access_mode],
-        str(IRI("https://example.org/tu#hasUnit")): ["m/s"],
+        str(IRI("http://example.org/tu#hasUnit")): ["m/s"],
         str(INF.hasMQTTTopic): ["belt/speed"],
         str(INF.hasMQTTBrokerIP): ["127.0.0.1"],
     }
@@ -175,10 +175,10 @@ class TestDefaultRegistry:
 
 
 class TestDirection:
-    """Direction is the most restrictive of accessMode x flavour. Neither may widen."""
+    """Direction is the most restrictive of accessMode x sync direction. Neither may widen."""
 
     @pytest.mark.parametrize(
-        "access_mode, flavour, expected",
+        "access_mode, sync_direction, expected",
         [
             # A controller may drive a settable parameter. This is the only writable combination.
             (AccessMode.READWRITE, SyncDirection.BIDIRECTIONAL, SyncDirection.BIDIRECTIONAL),
@@ -189,8 +189,8 @@ class TestDirection:
             (AccessMode.READ, SyncDirection.TO_PERSISTENCE, SyncDirection.TO_PERSISTENCE),
         ],
     )
-    def test_most_restrictive_wins(self, access_mode, flavour, expected):
-        assert resolve_direction(access_mode, flavour) is expected
+    def test_most_restrictive_wins(self, access_mode, sync_direction, expected):
+        assert resolve_direction(access_mode, sync_direction) is expected
 
     def test_absent_access_mode_is_read_only(self):
         """A parameter is never writable by accident of omission."""
@@ -362,7 +362,7 @@ class TestMQTTFormatter:
             model_type=model,
             northbound_facets={
                 INF.accessMode.lined: ["readwrite"],
-                IRI("https://example.org/tu#hasUnit").lined: ["m/s"],
+                IRI("http://example.org/tu#hasUnit").lined: ["m/s"],
             },
             value_field=INF.hasValue.lined,
             value_path=value_path,
@@ -378,7 +378,7 @@ class TestMQTTFormatter:
         model served over REST (the graph half is skolemization)."""
         [node] = self._formatter().deserialize(12.1)
 
-        assert getattr(node, IRI("https://example.org/tu#hasUnit").lined) == ["m/s"]
+        assert getattr(node, IRI("http://example.org/tu#hasUnit").lined) == ["m/s"]
         assert getattr(node, INF.accessMode.lined) == ["readwrite"]
 
     def test_serialize_produces_a_raw_scalar_payload(self):
@@ -630,7 +630,7 @@ class TestActivityLogging:
             model_type=model,
             northbound_facets={
                 INF.accessMode.lined: ["readwrite"],
-                IRI("https://example.org/tu#hasUnit").lined: ["m/s"],
+                IRI("http://example.org/tu#hasUnit").lined: ["m/s"],
             },
             value_field=INF.hasValue.lined,
             value_path=None,

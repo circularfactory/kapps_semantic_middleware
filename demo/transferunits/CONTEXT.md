@@ -7,8 +7,7 @@ controller, and a person watches it from a browser. Each participant is a separa
 
 **The demo observes.** In KAPPS a device changes only through a workflow of its service. This demo
 has no unit workflows yet, so nothing in it writes to a device through a unit's served data model:
-the controller reads, and the station board shows what it reads. Its control returns with
-workflows after the paper.
+the controller reads, and the station board shows what it reads.
 
 Its decisions are development-repository material and do not ship; what they decided is
 described, without the deliberation, in `docs/mechanics/`.

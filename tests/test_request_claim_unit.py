@@ -26,13 +26,13 @@ from kapps_triplestore_interface.exceptions import TripleStoreResponseError
 from kapps_semantic_middleware import SemanticMiddleware
 from kapps_semantic_middleware.vocabulary import CFC, SVC
 
-EX = "https://example.org/test#"
-RESOURCE = IRI(f"{EX}screwer")
-OPERATION_CLASS = IRI(f"{EX}Unscrewing")
-CAPABILITY_CLASS = IRI(f"{EX}UnscrewingCapability")
-CAPABILITY = IRI(f"{EX}screwer_capability_unscrew")
-SERVICE = IRI(f"{EX}screwer_service")
-WORKFLOW = IRI(f"{EX}screwer_service_workflow_unscrew")
+EX = "http://example.org/test#"
+RESOURCE = IRI(f"{EX}driller")
+OPERATION_CLASS = IRI(f"{EX}Drilling")
+CAPABILITY_CLASS = IRI(f"{EX}DrillingCapability")
+CAPABILITY = IRI(f"{EX}driller_capability_drill")
+SERVICE = IRI(f"{EX}driller_service")
+WORKFLOW = IRI(f"{EX}driller_service_workflow_drill")
 TORQUE = IRI(f"{EX}torque")
 
 
@@ -89,7 +89,7 @@ def _middleware(ogm) -> SemanticMiddleware:
     return SemanticMiddleware(
         mode="resource",
         resource_iri=str(RESOURCE),
-        service_class=f"{EX}ScrewerService",
+        service_class=f"{EX}DrillerService",
         ogm=ogm,
         heartbeat_interval=None,
     )
@@ -150,14 +150,14 @@ def test_a_dispatch_creates_its_operation_in_one_commit_before_the_receiver_is_n
     assert (creation.class_iri, creation.instance_iri) == (OPERATION_CLASS, op.iri)
     assert _data(creation) == {
         str(CFC.implementsCapability): [{"id": str(CAPABILITY)}],
-        str(SVC.operationStatus): ["queued"],
+        str(SVC.hasOperationStatus): ["queued"],
         str(SVC.issuedBy): [{"id": str(RESOURCE)}],
         str(TORQUE): ["4.2 Nm"],
     }
     # Without a scope that names them, kapps_ogm drops the properties its class does not know.
     assert set(creation.class_scope) == {
         CFC.implementsCapability,
-        SVC.operationStatus,
+        SVC.hasOperationStatus,
         SVC.issuedBy,
         TORQUE,
     }
@@ -201,7 +201,7 @@ def test_the_deprecated_request_warns_names_issue_operation_and_still_issues_the
 # claim_next(): the entry commits the claim, the exit records done or failed.
 # --------------------------------------------------------------------------- #
 
-OPERATION = IRI(f"{EX}Unscrewing_op_1")
+OPERATION = IRI(f"{EX}Drilling_op_1")
 
 
 def _queued(ogm) -> SemanticMiddleware:
@@ -214,14 +214,14 @@ def _queued(ogm) -> SemanticMiddleware:
 def _sets_status(status: str):
     """A refusal rule: the store refuses every commit that sets the status to ``status``."""
     return lambda changes: any(
-        _data(change).get(str(SVC.operationStatus)) == [status] for change in changes
+        _data(change).get(str(SVC.hasOperationStatus)) == [status] for change in changes
     )
 
 
 def _statuses(ogm) -> list:
     """The status each admitted commit set, in order."""
     return [
-        _data(change)[str(SVC.operationStatus)][0]
+        _data(change)[str(SVC.hasOperationStatus)][0]
         for kind, changes in ogm.log
         if kind == "commit"
         for change in changes
@@ -237,7 +237,7 @@ def test_a_refused_done_records_failed_with_its_provenance_and_raises_the_stores
     ogm = _FakeOGM(refuse=_sets_status("done"))
     with pytest.raises(TripleStoreResponseError, match="SHACL validation failed"):
         with _queued(ogm).claim_next() as claimed:
-            claimed.result = "4 screws out"
+            claimed.result = "4 holes done"
 
     assert _statuses(ogm) == ["running", "failed"]
     (failed,) = ogm.log[-1][1]
@@ -260,16 +260,16 @@ def test_the_claim_is_committed_before_the_body_runs_and_done_with_its_provenanc
             "as_reference": False,
             "materialize": True,
         }
-        claimed.result = "4 screws out"
+        claimed.result = "4 holes done"
 
     claim, exit_commit = _commits(ogm)
     (done,) = exit_commit
     record = _data(done)
     assert record.pop(str(SVC.executionTimestamp))
     assert record == {
-        str(SVC.operationStatus): ["done"],
+        str(SVC.hasOperationStatus): ["done"],
         str(SVC.executedByWorkflow): [{"id": str(WORKFLOW)}],
-        str(SVC.executionResult): ["4 screws out"],
+        str(SVC.executionResult): ["4 holes done"],
     }
 
 
@@ -285,7 +285,7 @@ def test_an_error_in_the_body_records_failed_with_its_provenance_and_the_datamod
     assert record.pop(str(SVC.executionTimestamp))
     assert json.loads(record.pop(str(SVC.failureState))[0]) == {"id": str(RESOURCE)}
     assert record == {
-        str(SVC.operationStatus): ["failed"],
+        str(SVC.hasOperationStatus): ["failed"],
         str(SVC.executedByWorkflow): [{"id": str(WORKFLOW)}],
         str(SVC.executionResult): ["gripper jammed"],
     }

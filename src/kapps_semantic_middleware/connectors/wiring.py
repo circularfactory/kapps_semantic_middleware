@@ -72,11 +72,11 @@ class WiringPlan:
     parameters. Use :func:`northbound_fetch_kwargs` rather than restate this."""
 
     bindings: List[ParameterBinding]
-    """This lists every recognized interface-accessible parameter. Populate for every flavour,
+    """This lists every recognized interface-accessible parameter. Populate for every connector wiring,
     including one that wires nothing. The system never gates recognition."""
 
     registrations: List[Tuple[ParameterBinding, Registration]]
-    """The connector registrations to perform. Empty when the flavour wires nothing."""
+    """The connector registrations to perform. Empty when the connector wiring wires nothing."""
 
     southbound_properties: frozenset
     """The prune set that was applied, kept for assertions and diagnostics."""
@@ -106,7 +106,7 @@ def plan_wiring(
     class_scope: Any,
     resource_class: Optional[IRI] = None,
     registry: SemanticConnectorRegistry,
-    flavour: SyncDirection = SyncDirection.BIDIRECTIONAL,
+    sync_direction: SyncDirection = SyncDirection.BIDIRECTIONAL,
     autoregister: bool = True,
     ensure_transport: Optional[Callable[[str, int], None]] = None,
 ) -> WiringPlan:
@@ -167,7 +167,7 @@ def plan_wiring(
     registrations: List[Tuple[ParameterBinding, Registration]] = []
     if autoregister:
         for binding in bindings:
-            direction = resolve_direction(binding.access_mode, flavour)
+            direction = resolve_direction(binding.access_mode, sync_direction)
             for registration in binding.descriptor.build(
                 binding, direction, ensure_transport=deduped_ensure_transport
             ):

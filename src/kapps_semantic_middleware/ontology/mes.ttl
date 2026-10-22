@@ -2,8 +2,8 @@
 @prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
 @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
 @prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
-@prefix cfc: <https://w3id.org/circularfactory/Core#> .
-@prefix mes: <https://w3id.org/circularfactory/MES#> .
+@prefix cfc: <http://w3id.org/circularfactory/Core#> .
+@prefix mes: <http://w3id.org/circularfactory/MES#> .
 
 #################################################################
 # Ontology
@@ -25,7 +25,7 @@
 mes: rdf:type owl:Ontology ;
     rdfs:label "KAPPS MES Ontology" ;
     rdfs:comment "Manufacturing-execution functionality layered on the Circular Factory Core ontology: which handover roles a Resource is able to take part in (handover ability). Possession itself is Core material-flow state (cfc:PossessionState), not re-minted here. A domain-facing module that imports and specializes Core; distinct from the middleware-facing reachability/coordination module svc:." ;
-    owl:imports <https://w3id.org/circularfactory/Core> .
+    owl:imports <http://w3id.org/circularfactory/Core> .
 
 #################################################################
 # Handover ability

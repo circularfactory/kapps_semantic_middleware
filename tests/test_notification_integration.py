@@ -2,7 +2,7 @@
 
 A peer notifies, over REST, a resource that registered a notification handler. For an Operation
 that matches none of the resource's workflows, such as one that the production system level
-assigned to a Station and addressed to no Capability (UC2's transport), the handler gets the
+assigned to a Station and addressed to no Capability (a transport), the handler gets the
 Operation object in the background, the trigger answers before the handler ends, the graph is
 left as it was, and the Operation does not enter the in-memory queue. Startup still fails such a
 resource's orphaned ``running`` Operations. ``notify`` crosses the same route from one middleware
@@ -91,13 +91,13 @@ def _stop_server(server: uvicorn.Server, thread: threading.Thread) -> None:
 
 
 def _seed_transport(db, status: str) -> None:
-    """UC2's transport: an Operation with a status, addressed to no Capability."""
+    """A transport: an Operation with a status, addressed to no Capability."""
     db.triple_add((TRANSPORT, RDF.type, CFC.Operation))
-    db.triple_add((TRANSPORT, SVC.operationStatus, Literal(status)))
+    db.triple_add((TRANSPORT, SVC.hasOperationStatus, Literal(status)))
 
 
 def _statuses(db, operation) -> list[str]:
-    return [str(t[2]) for t in db.triples_get(sub=operation, pred=SVC.operationStatus)]
+    return [str(t[2]) for t in db.triples_get(sub=operation, pred=SVC.hasOperationStatus)]
 
 
 def _wait_until_handled(

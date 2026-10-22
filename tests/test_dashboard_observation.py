@@ -28,7 +28,7 @@ from kapps_semantic_middleware.connectors.semantic import Registration
 from kapps_semantic_middleware.dashboard import enable_dashboard
 from kapps_semantic_middleware.vocabulary import INF
 
-EX = "https://example.org/test#"
+EX = "http://example.org/test#"
 BELT = IRI(f"{EX}belt")
 SPEED = f"{EX}hasSpeed"
 TOPIC = "unit1/belt/speed"

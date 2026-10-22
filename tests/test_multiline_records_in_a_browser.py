@@ -217,7 +217,7 @@ def test_a_refused_write_shows_as_its_first_line_on_both_pages(
     def create() -> None:
         with mw.create(SNAPSHOT, ClassScope()) as snapshot:
             created.append(snapshot.iri)
-            snapshot.update({DECISION: ["unscrew"]})
+            snapshot.update({DECISION: ["drill"]})
 
     refusal = _refused(store, _SNAPSHOT_SHAPES, create)
     local = str(created[0]).rsplit("#", 1)[-1]

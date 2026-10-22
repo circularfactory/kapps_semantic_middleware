@@ -133,15 +133,16 @@ def test_a_text_that_is_no_rdf_names_no_rule():
 
 # -- What a person reads of each result --------------------------------------------------------- #
 
-# Reports as the store sent them, recorded in a live run of two faults of a conveyor use case: the
-# store refusing a module's handover of Box2 onto Module3 while Module3 holds another box, and a
-# module's completing Box1's transport without releasing the box. The first result has a path
+# Reports as the store sent them, recorded in a live run of two faults of a transport line, then
+# edited to neutral IRIs and messages: the store refusing a module's handover of Box2 onto
+# Module3 while Module3 holds another box, and a module's completing Box1's transport without
+# releasing the box. The first result has a path
 # that is a sequence with an inverse step; the second report has two results of `sh:or` shapes,
 # which name no path.
 RECORDED = Path(__file__).parent / "reports"
-CORE = "https://w3id.org/circularfactory/Core#"
-FC = "http://w3id.org/circularfactory/FlexConveyor#"
-FCI = "http://w3id.org/circularfactory/FlexConveyorInstances#"
+CORE = "http://w3id.org/circularfactory/Core#"
+LINE = "http://example.org/line#"
+LINE_INSTANCES = "http://example.org/line-instances#"
 
 
 def recorded(fault: str) -> str:
@@ -156,16 +157,16 @@ def message(text: str) -> Term:
 def test_a_refused_handover_reads_as_its_possession_rule_with_its_message():
     assert readable_results(recorded("skip-reserve")) == [
         ReadableResult(
-            message=message("A FlexConveyorModule may possess at most one Box at a time."),
+            message=message("A LineModule may possess at most one Box at a time."),
             severity=Term("Violation", str(SH.Violation)),
-            focus=Term("Module3", f"{FCI}Module3"),
+            focus=Term("Module3", f"{LINE_INSTANCES}Module3"),
             path=Term(
                 "(hasPossessor/^hasPossessedWorkpiece)",
                 f"(<{CORE}hasPossessor>/^<{CORE}hasPossessedWorkpiece>)",
             ),
             value=None,
             shape=Term(
-                "FlexConveyorModulePossessionShape", f"{FC}FlexConveyorModulePossessionShape"
+                "LineModulePossessionShape", f"{LINE}LineModulePossessionShape"
             ),
             constraint=Term("MaxCountConstraintComponent", str(SH.MaxCountConstraintComponent)),
         )
@@ -174,33 +175,33 @@ def test_a_refused_handover_reads_as_its_possession_rule_with_its_message():
 
 def test_a_report_of_two_or_shapes_reads_as_both_results_without_a_path():
     """Each rule is an `sh:or`, so it names no path, and the box is the value."""
-    box = Term("Box1", f"{FCI}Box1")
+    box = Term("Box1", f"{LINE_INSTANCES}Box1")
     violation = Term("Violation", str(SH.Violation))
     either = Term("OrConstraintComponent", str(SH.OrConstraintComponent))
 
     assert readable_results(recorded("complete-without-releasing")) == [
         ReadableResult(
             message=message(
-                "A Box possessed by a FlexConveyorModule must have a "
-                "BoxTransportOperation that is queued, running or failed."
+                "A Box possessed by a LineModule must have a "
+                "TransportOperation that is queued, running or failed."
             ),
             severity=violation,
             focus=box,
             path=None,
             value=box,
-            shape=Term("BoxOnModuleHasTransportShape", f"{FC}BoxOnModuleHasTransportShape"),
+            shape=Term("BoxOnModuleHasTransportShape", f"{LINE}BoxOnModuleHasTransportShape"),
             constraint=either,
         ),
         ReadableResult(
             message=message(
-                "The Box of a done BoxTransportOperation must not be possessed by a "
-                "FlexConveyorModule."
+                "The Box of a done TransportOperation must not be possessed by a "
+                "LineModule."
             ),
             severity=violation,
             focus=box,
             path=None,
             value=box,
-            shape=Term("DoneTransportBoxReleasedShape", f"{FC}DoneTransportBoxReleasedShape"),
+            shape=Term("DoneTransportBoxReleasedShape", f"{LINE}DoneTransportBoxReleasedShape"),
             constraint=either,
         ),
     ]
@@ -269,19 +270,19 @@ def test_its_expander_holds_a_table_of_the_results_with_each_term_in_full_as_its
 
     assert {name: (cell.text, cell.title) for name, cell in result.items()} == {
         "Message": (
-            "A FlexConveyorModule may possess at most one Box at a time.",
-            '"A FlexConveyorModule may possess at most one Box at a time."',
+            "A LineModule may possess at most one Box at a time.",
+            '"A LineModule may possess at most one Box at a time."',
         ),
         "Severity": ("Violation", str(SH.Violation)),
-        "Focus node": ("Module3", f"{FCI}Module3"),
+        "Focus node": ("Module3", f"{LINE_INSTANCES}Module3"),
         "Path": (
             "(hasPossessor/^hasPossessedWorkpiece)",
             f"(<{CORE}hasPossessor>/^<{CORE}hasPossessedWorkpiece>)",
         ),
         "Value": ("—", None),
         "Source shape": (
-            "FlexConveyorModulePossessionShape",
-            f"{FC}FlexConveyorModulePossessionShape",
+            "LineModulePossessionShape",
+            f"{LINE}LineModulePossessionShape",
         ),
         "Constraint": ("MaxCountConstraintComponent", str(SH.MaxCountConstraintComponent)),
     }

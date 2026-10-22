@@ -29,7 +29,7 @@ def my_starter(host: str, port: int) -> None:
 
 mw = SemanticMiddleware(
     mode="resource",
-    resource_iri=IRI("https://example.org/kapps-demo#my_resource"),
+    resource_iri=IRI("http://example.org/kapps-demo#my_resource"),
     ensure_transport=my_starter,
 )
 ```

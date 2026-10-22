@@ -64,7 +64,7 @@ def _wire_scenario3_to_test_broker(store, mqtt_broker, *, declare_port):
         resource_iri=seed.TRANSFER_UNIT_1,
         class_scope=scope,
         registry=SemanticConnectorRegistry([MQTTBinding]),
-        flavour=SyncDirection.BIDIRECTIONAL,
+        sync_direction=SyncDirection.BIDIRECTIONAL,
     )
     return plan, host, int(port)
 

@@ -30,8 +30,8 @@ load_shared_ontologies(db)
 
 mw = SemanticMiddleware(
     mode=Mode.RESOURCE,
-    resource_iri=IRI("https://example.org/kapps-demo#my_resource"),
-    service_class=IRI("https://example.org/kapps-demo#MyService"),
+    resource_iri=IRI("http://example.org/kapps-demo#my_resource"),
+    service_class=IRI("http://example.org/kapps-demo#MyService"),
     ogm=ogm,
 )
 ```

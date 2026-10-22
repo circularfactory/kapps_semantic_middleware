@@ -37,8 +37,8 @@ The page's title and its heading name the instance's resource, as in "Module 1 �
 With several dashboards open, each browser tab shows which instance it belongs to.
 
 The name is the resource's `rdfs:label`. A resource without one is named by the local name of its
-IRI, the part after the last `#` or `/`: `…#WarehouseManagementSystem1` gives
-"WarehouseManagementSystem1 — dashboard". An instance that represents no resource keeps the title
+IRI, the part after the last `#` or `/`: `…#Station1` gives
+"Station1 — dashboard". An instance that represents no resource keeps the title
 "Middleware Dashboard".
 
 A resource may carry several labels. The page uses the same one every time. A label without a

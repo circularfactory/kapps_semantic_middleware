@@ -46,17 +46,17 @@ from kapps_semantic_middleware.registration import mint_capability_iri, mint_wor
 from kapps_semantic_middleware.vocabulary import CFC, MES, SVC, OperationStatus
 
 MIDDLEWARE_LOGGER = "kapps_semantic_middleware.middleware"
-EX = "https://example.org/test#"
+EX = "http://example.org/test#"
 PLANNER = IRI(f"{EX}planner")
-SCREWER = IRI(f"{EX}screwer")
+DRILLER = IRI(f"{EX}driller")
 SERVICE_CLASS = f"{EX}ParticipantService"
-OPERATION_CLASS = IRI(f"{EX}Unscrewing")
-CAPABILITY_CLASS = IRI(f"{EX}UnscrewingCapability")
-WORKFLOW_CLASS = IRI(f"{EX}UnscrewingWorkflow")
-CAPABILITY = mint_capability_iri(SCREWER, "unscrew")
-WORKFLOW = IRI(f"{EX}screwer_service_workflow_unscrew")
+OPERATION_CLASS = IRI(f"{EX}Drilling")
+CAPABILITY_CLASS = IRI(f"{EX}DrillingCapability")
+WORKFLOW_CLASS = IRI(f"{EX}DrillingWorkflow")
+CAPABILITY = mint_capability_iri(DRILLER, "drill")
+WORKFLOW = IRI(f"{EX}driller_service_workflow_drill")
 TORQUE = IRI(f"{EX}torque")
-OPERATION = IRI(f"{EX}Unscrewing_1")
+OPERATION = IRI(f"{EX}Drilling_1")
 
 _IRI = re.compile(r"<([^>]+)>")
 
@@ -91,7 +91,7 @@ class _Graph:
                 row["issuer"] = self.issuer[op]
             return [row]
         if str(SVC.isServiceOf) in sparql:  # the live Services of a Resource
-            (resource,) = {iri for iri in named if iri in self.live or iri in (PLANNER, SCREWER)}
+            (resource,) = {iri for iri in named if iri in self.live or iri in (PLANNER, DRILLER)}
             return [{"svc": svc, "addr": addr} for svc, addr in self.live.get(resource, [])]
         if "?type" in sparql:  # a notified Operation, read by an instance without a handler
             (op,) = {iri for iri in named if iri in self.status}
@@ -103,7 +103,7 @@ class _Graph:
             return [
                 {"op": iri, "issuer": self.issuer[iri]} for iri in named if iri in self.issuer
             ]
-        if str(SVC.operationStatus) in sparql:  # the status of one Operation
+        if str(SVC.hasOperationStatus) in sparql:  # the status of one Operation
             (op,) = {iri for iri in named if iri in self.status}
             return [{"status": self.status[op]}]
         raise AssertionError(f"an unexpected read: {sparql}")
@@ -116,7 +116,7 @@ class _Graph:
 
 class _OGM:
     """Applies each admitted commit to the graph; a fetch reads an Operation as implementing the
-    screwer's Capability."""
+    driller's Capability."""
 
     def __init__(self, graph: _Graph) -> None:
         self.db = graph
@@ -128,8 +128,8 @@ class _OGM:
         for change in changes:
             iri = IRI(change.instance_iri)
             data = {str(key): values for key, values in change.data.items()}
-            if str(SVC.operationStatus) in data:
-                self.db.status[iri] = data[str(SVC.operationStatus)][0]
+            if str(SVC.hasOperationStatus) in data:
+                self.db.status[iri] = data[str(SVC.hasOperationStatus)][0]
             if str(SVC.issuedBy) in data:
                 self.db.issuer[iri] = IRI(data[str(SVC.issuedBy)][0]["id"])
         self.db.log.append(("commit", changes))
@@ -235,7 +235,7 @@ def _kinds(graph: _Graph) -> list[str]:
 
 
 def _status(operation: IRI, status: str) -> list:
-    return [Update(instance_iri=operation, data={str(SVC.operationStatus): [status]})]
+    return [Update(instance_iri=operation, data={str(SVC.hasOperationStatus): [status]})]
 
 
 def _issued(graph: _Graph, issuer_address: str | None) -> None:
@@ -247,10 +247,10 @@ def _issued(graph: _Graph, issuer_address: str | None) -> None:
 
 
 def _queued(graph: _Graph) -> SemanticMiddleware:
-    """The screwer, with OPERATION in its in-memory queue, as after its event trigger."""
-    screwer = _middleware(SCREWER, graph)
-    screwer._operation_queue.append(OPERATION)
-    return screwer
+    """The driller, with OPERATION in its in-memory queue, as after its event trigger."""
+    driller = _middleware(DRILLER, graph)
+    driller._operation_queue.append(OPERATION)
+    return driller
 
 
 # --------------------------------------------------------------------------- #
@@ -262,7 +262,7 @@ def test_a_request_records_its_issuer_in_the_commit_that_creates_the_operation()
     graph = _Graph()
     notified: list = []
     with _trigger(graph, notified) as address:
-        graph.target = (CAPABILITY, IRI(f"{EX}screwer_service"), address)
+        graph.target = (CAPABILITY, IRI(f"{EX}driller_service"), address)
         with _middleware(PLANNER, graph).issue_operation(
             capability_class=CAPABILITY_CLASS, operation_class=OPERATION_CLASS
         ) as op:
@@ -277,7 +277,7 @@ def test_a_request_records_its_issuer_in_the_commit_that_creates_the_operation()
     assert isinstance(creation, Create) and creation.instance_iri == op.iri
     assert _data(creation) == {
         str(CFC.implementsCapability): [{"id": str(CAPABILITY)}],
-        str(SVC.operationStatus): ["queued"],
+        str(SVC.hasOperationStatus): ["queued"],
         str(SVC.issuedBy): [{"id": str(PLANNER)}],
         str(TORQUE): ["4.2 Nm"],
     }
@@ -289,7 +289,7 @@ def test_a_failed_notification_leaves_the_operation_queued_and_raises_notificati
     graph = _Graph()
     notified: list = []
     with _trigger(graph, notified, status=503) as address:
-        graph.target = (CAPABILITY, IRI(f"{EX}screwer_service"), address)
+        graph.target = (CAPABILITY, IRI(f"{EX}driller_service"), address)
         with pytest.raises(NotificationUndelivered, match="did not take") as raised:
             with _middleware(PLANNER, graph).issue_operation(
                 capability_class=CAPABILITY_CLASS, operation_class=OPERATION_CLASS
@@ -315,7 +315,7 @@ def test_a_malformed_address_leaves_the_operation_queued_and_raises_notification
     address, cause
 ):
     graph = _Graph()
-    graph.target = (CAPABILITY, IRI(f"{EX}screwer_service"), address)
+    graph.target = (CAPABILITY, IRI(f"{EX}driller_service"), address)
     with pytest.raises(NotificationUndelivered, match="did not take") as raised:
         with _middleware(PLANNER, graph).issue_operation(
             capability_class=CAPABILITY_CLASS, operation_class=OPERATION_CLASS
@@ -331,12 +331,12 @@ def test_a_malformed_address_leaves_the_operation_queued_and_raises_notification
 
 def test_a_draft_that_sets_the_issuer_is_refused_before_anything_is_written():
     graph = _Graph()
-    graph.target = (CAPABILITY, IRI(f"{EX}screwer_service"), "http://127.0.0.1:9")
+    graph.target = (CAPABILITY, IRI(f"{EX}driller_service"), "http://127.0.0.1:9")
     with pytest.raises(ValueError, match="issuedBy"):
         with _middleware(PLANNER, graph).issue_operation(
             capability_class=CAPABILITY_CLASS, operation_class=OPERATION_CLASS
         ) as op:
-            op.data[str(SVC.issuedBy)] = [{"id": str(SCREWER)}]
+            op.data[str(SVC.issuedBy)] = [{"id": str(DRILLER)}]
 
     assert _kinds(graph) == ["read"]
 
@@ -345,13 +345,13 @@ def test_a_draft_that_sets_the_issuer_is_refused_before_anything_is_written():
 # op.update(): a change of an existing instance in the Operation's commit.
 # --------------------------------------------------------------------------- #
 
-SCREW = IRI(f"{EX}screw_1")
+PART = IRI(f"{EX}part_1")
 HAS_OPERATION = IRI(f"{EX}hasOperation")
-SCREW_CLASS = IRI(f"{EX}Screw")
+PART_CLASS = IRI(f"{EX}Part")
 
 
 def _target(graph: _Graph, address: str = "http://127.0.0.1:9") -> None:
-    graph.target = (CAPABILITY, IRI(f"{EX}screwer_service"), address)
+    graph.target = (CAPABILITY, IRI(f"{EX}driller_service"), address)
 
 
 def _commits(graph: _Graph) -> list[list]:
@@ -366,13 +366,13 @@ def test_an_update_lands_in_the_commit_that_creates_the_operation_before_the_not
         with _middleware(PLANNER, graph).issue_operation(
             capability_class=CAPABILITY_CLASS, operation_class=OPERATION_CLASS
         ) as op:
-            op.update(SCREW, {str(HAS_OPERATION): [op.iri]})
+            op.update(PART, {str(HAS_OPERATION): [op.iri]})
 
     assert _kinds(graph) == ["read", "commit"]
     creation, update = graph.log[1][1]
     assert isinstance(creation, Create) and creation.instance_iri == op.iri
     assert _data(creation)[str(SVC.issuedBy)] == [{"id": str(PLANNER)}]
-    assert isinstance(update, Update) and update.instance_iri == SCREW
+    assert isinstance(update, Update) and update.instance_iri == PART
     assert _data(update) == {str(HAS_OPERATION): [{"id": str(op.iri)}]}  # a reference
     assert notified == [(op.iri, "queued")]
 
@@ -384,8 +384,8 @@ def test_two_updates_of_one_instance_merge_and_the_later_value_wins():
         with _middleware(PLANNER, graph).issue_operation(
             capability_class=CAPABILITY_CLASS, operation_class=OPERATION_CLASS
         ) as op:
-            op.update(SCREW, {str(HAS_OPERATION): [op.iri], str(TORQUE): ["1 Nm"]})
-            op.update(str(SCREW), {str(TORQUE): ["2 Nm"]})
+            op.update(PART, {str(HAS_OPERATION): [op.iri], str(TORQUE): ["1 Nm"]})
+            op.update(str(PART), {str(TORQUE): ["2 Nm"]})
 
     (commit,) = _commits(graph)
     _, update = commit
@@ -404,14 +404,14 @@ def test_an_update_of_an_instance_created_in_the_block_folds_into_its_create():
             capability_class=CAPABILITY_CLASS, operation_class=OPERATION_CLASS
         ) as op:
             # The update comes first in the block, but stages after the nested creation.
-            with planner.create(SCREW_CLASS, {}, instance_iri=str(SCREW)) as screw:
-                screw.update({str(TORQUE): ["1 Nm"]})
-            op.update(SCREW, {str(TORQUE): ["2 Nm"], str(HAS_OPERATION): [op.iri]})
+            with planner.create(PART_CLASS, {}, instance_iri=str(PART)) as part:
+                part.update({str(TORQUE): ["1 Nm"]})
+            op.update(PART, {str(TORQUE): ["2 Nm"], str(HAS_OPERATION): [op.iri]})
 
     (commit,) = _commits(graph)
     assert [type(change) for change in commit] == [Create, Create]
     folded = commit[1]
-    assert folded.instance_iri == SCREW
+    assert folded.instance_iri == PART
     assert _data(folded) == {
         str(TORQUE): ["2 Nm"],
         str(HAS_OPERATION): [{"id": str(op.iri)}],
@@ -430,10 +430,10 @@ def test_an_update_inside_another_commit_lands_in_the_operations_own_commit():
             with planner.issue_operation(
                 capability_class=CAPABILITY_CLASS, operation_class=OPERATION_CLASS
             ) as op:
-                op.update(SCREW, {str(HAS_OPERATION): [op.iri]})
+                op.update(PART, {str(HAS_OPERATION): [op.iri]})
 
     (own,) = _commits(graph)  # the notification failed, so the outer commit never exits clean
-    assert [change.instance_iri for change in own] == [op.iri, SCREW]
+    assert [change.instance_iri for change in own] == [op.iri, PART]
 
 
 def test_an_outer_commit_exits_on_its_own_after_the_operations_commit_and_its_notification():
@@ -448,11 +448,11 @@ def test_an_outer_commit_exits_on_its_own_after_the_operations_commit_and_its_no
             with planner.issue_operation(
                 capability_class=CAPABILITY_CLASS, operation_class=OPERATION_CLASS
             ) as op:
-                op.update(SCREW, {str(HAS_OPERATION): [op.iri]})
+                op.update(PART, {str(HAS_OPERATION): [op.iri]})
             assert notified == [(op.iri, "queued")]  # before the outer commit exits
 
     own, theirs = _commits(graph)
-    assert [change.instance_iri for change in own] == [op.iri, SCREW]
+    assert [change.instance_iri for change in own] == [op.iri, PART]
     assert [change.instance_iri for change in theirs] == [other]
 
 
@@ -466,7 +466,7 @@ def test_an_update_that_names_the_operation_raises_before_any_write():
             operation_iri=str(OPERATION),
         ) as op:
             # The Operation's IRI as a plain str, not the IRI that op.iri is: one spelling.
-            op.update(f"{EX}Unscrewing_1", {str(TORQUE): ["1 Nm"]})
+            op.update(f"{EX}Drilling_1", {str(TORQUE): ["1 Nm"]})
 
     assert _kinds(graph) == ["read"]
 
@@ -478,7 +478,7 @@ def test_values_that_are_not_a_list_raise_before_any_write():
         with _middleware(PLANNER, graph).issue_operation(
             capability_class=CAPABILITY_CLASS, operation_class=OPERATION_CLASS
         ) as op:
-            op.update(SCREW, {str(HAS_OPERATION): op.iri})
+            op.update(PART, {str(HAS_OPERATION): op.iri})
 
     assert _kinds(graph) == ["read"]
 
@@ -490,12 +490,12 @@ def test_an_error_in_the_block_drops_the_updates_and_a_later_update_raises():
         with _middleware(PLANNER, graph).issue_operation(
             capability_class=CAPABILITY_CLASS, operation_class=OPERATION_CLASS
         ) as op:
-            op.update(SCREW, {str(HAS_OPERATION): [op.iri]})
+            op.update(PART, {str(HAS_OPERATION): [op.iri]})
             raise KeyError("domain work failed")
 
     assert _kinds(graph) == ["read"]
     with pytest.raises(RuntimeError, match="block"):
-        op.update(SCREW, {str(HAS_OPERATION): []})
+        op.update(PART, {str(HAS_OPERATION): []})
 
 
 def test_an_update_after_the_block_raises():
@@ -509,7 +509,7 @@ def test_an_update_after_the_block_raises():
             pass
 
     with pytest.raises(RuntimeError, match="block"):
-        op.update(SCREW, {str(HAS_OPERATION): [op.iri]})
+        op.update(PART, {str(HAS_OPERATION): [op.iri]})
     assert len(_commits(graph)) == 1
 
 
@@ -529,7 +529,7 @@ def test_a_refused_commit_writes_nothing_and_notifies_nobody():
             with planner.issue_operation(
                 capability_class=CAPABILITY_CLASS, operation_class=OPERATION_CLASS
             ) as op:
-                op.update(SCREW, {str(HAS_OPERATION): [op.iri]})
+                op.update(PART, {str(HAS_OPERATION): [op.iri]})
 
     assert _kinds(graph) == ["read"]
     assert graph.status == {}
@@ -545,10 +545,10 @@ def test_a_failed_notification_leaves_the_update_in_the_store():
             with _middleware(PLANNER, graph).issue_operation(
                 capability_class=CAPABILITY_CLASS, operation_class=OPERATION_CLASS
             ) as op:
-                op.update(SCREW, {str(HAS_OPERATION): [op.iri]})
+                op.update(PART, {str(HAS_OPERATION): [op.iri]})
 
     (commit,) = _commits(graph)
-    assert [change.instance_iri for change in commit] == [op.iri, SCREW]
+    assert [change.instance_iri for change in commit] == [op.iri, PART]
     assert graph.status[op.iri] == OperationStatus.QUEUED
 
 
@@ -559,11 +559,11 @@ def test_an_update_that_moves_another_operation_notifies_its_issuer():
     with _trigger(graph, receiver) as address, _trigger(graph, feedback) as issuer_address:
         _target(graph, address)
         _issued(graph, issuer_address)  # OPERATION, queued, issued by the planner
-        screwer = _middleware(SCREWER, graph)
-        with screwer.issue_operation(
+        driller = _middleware(DRILLER, graph)
+        with driller.issue_operation(
             capability_class=CAPABILITY_CLASS, operation_class=OPERATION_CLASS
         ) as op:
-            op.update(OPERATION, {str(SVC.operationStatus): [OperationStatus.DONE]})
+            op.update(OPERATION, {str(SVC.hasOperationStatus): [OperationStatus.DONE]})
         _wait_for(lambda: feedback)
 
     assert receiver == [(op.iri, "queued")]
@@ -580,12 +580,12 @@ def test_the_claimer_notifies_the_issuer_after_the_claim_and_after_done():
     notified: list = []
     with _trigger(graph, notified) as address:
         _issued(graph, address)
-        screwer = _queued(graph)
-        with screwer.claim_next() as claimed:
-            assert screwer._flush_notifications(timeout=5)
+        driller = _queued(graph)
+        with driller.claim_next() as claimed:
+            assert driller._flush_notifications(timeout=5)
             assert notified == [(OPERATION, "running")]
-            claimed.result = "4 screws out"
-        assert screwer._flush_notifications(timeout=5)
+            claimed.result = "4 holes done"
+        assert driller._flush_notifications(timeout=5)
 
     assert notified == [(OPERATION, "running"), (OPERATION, "done")]
 
@@ -598,11 +598,11 @@ def test_the_claim_reads_the_issuer_in_the_read_that_it_makes_anyway():
     notified: list = []
     with _trigger(graph, notified) as address:
         _issued(graph, address)
-        screwer = _queued(graph)
-        with screwer.claim_next() as claimed:
-            assert screwer._flush_notifications(timeout=5)
-            claimed.result = "4 screws out"
-        assert screwer._flush_notifications(timeout=5)
+        driller = _queued(graph)
+        with driller.claim_next() as claimed:
+            assert driller._flush_notifications(timeout=5)
+            claimed.result = "4 holes done"
+        assert driller._flush_notifications(timeout=5)
 
     kinds = _kinds(graph)
     assert kinds[:2] == ["read", "commit"]  # the issuer comes with the claim's own read
@@ -614,34 +614,33 @@ def test_a_failed_body_notifies_the_issuer_after_the_claim_and_after_failed():
     notified: list = []
     with _trigger(graph, notified) as address:
         _issued(graph, address)
-        screwer = _queued(graph)
+        driller = _queued(graph)
         with pytest.raises(RuntimeError, match="gripper jammed"):
-            with screwer.claim_next():
-                assert screwer._flush_notifications(timeout=5)
+            with driller.claim_next():
+                assert driller._flush_notifications(timeout=5)
                 raise RuntimeError("gripper jammed")
-        assert screwer._flush_notifications(timeout=5)
+        assert driller._flush_notifications(timeout=5)
 
     assert notified == [(OPERATION, "running"), (OPERATION, "failed")]
 
 
 def test_any_commit_that_moves_an_operation_notifies_its_issuer():
-    """A participant that claims and ends an Operation with ``mw.commit()``, as UC1's screwing
-    resource does, notifies the issuer as ``claim_next()`` does. Such a commit reads the issuer
-    once, after the store admitted it."""
+    """A participant that claims and ends an Operation with ``mw.commit()`` notifies the issuer
+    as ``claim_next()`` does. Such a commit reads the issuer once, after the store admitted it."""
     graph = _Graph()
     notified: list = []
     with _trigger(graph, notified) as address:
         _issued(graph, address)
-        screwer = _middleware(SCREWER, graph)
+        driller = _middleware(DRILLER, graph)
         with pytest.raises(RuntimeError, match="no detector"):
-            with screwer.commit(
+            with driller.commit(
                 entry=_status(OPERATION, "running"),
                 error=lambda error: _status(OPERATION, "failed"),
             ):
-                assert screwer._flush_notifications(timeout=5)
+                assert driller._flush_notifications(timeout=5)
                 assert notified == [(OPERATION, "running")]
                 raise RuntimeError("no detector")
-        assert screwer._flush_notifications(timeout=5)
+        assert driller._flush_notifications(timeout=5)
 
     assert notified == [(OPERATION, "running"), (OPERATION, "failed")]
     # Each commit, then in the background the read of the issuer and of its live Service.
@@ -655,11 +654,11 @@ def test_a_commit_that_sets_the_status_the_operation_already_has_notifies_its_is
     notified: list = []
     with _trigger(graph, notified) as address:
         _issued(graph, address)
-        screwer = _middleware(SCREWER, graph)
+        driller = _middleware(DRILLER, graph)
         for _ in range(2):
-            with screwer.commit(entry=_status(OPERATION, "running")):
+            with driller.commit(entry=_status(OPERATION, "running")):
                 pass
-        assert screwer._flush_notifications(timeout=5)
+        assert driller._flush_notifications(timeout=5)
 
     assert notified == [(OPERATION, "running"), (OPERATION, "running")]
 
@@ -669,7 +668,7 @@ def test_a_handover_that_completes_an_operation_notifies_its_issuer():
     graph = _Graph()
     notified: list = []
     box, state = IRI(f"{EX}box"), IRI(f"{EX}next_possession")
-    next_module, own_state = IRI(f"{EX}next_module"), IRI(f"{EX}screwer_possession")
+    next_module, own_state = IRI(f"{EX}next_module"), IRI(f"{EX}driller_possession")
 
     def rows(sparql: str, answer=graph._rows) -> list[dict]:
         if str(CFC.hasPossessedWorkpiece) in sparql:  # this resource possesses the box
@@ -684,12 +683,12 @@ def test_a_handover_that_completes_an_operation_notifies_its_issuer():
     with _trigger(graph, notified) as address:
         _issued(graph, address)
         graph.status[OPERATION] = OperationStatus.RUNNING
-        screwer = _middleware(SCREWER, graph)
+        driller = _middleware(DRILLER, graph)
         with handover(
-            screwer,
+            driller,
             mode=MES.Pass, workpiece=box, counterpart=next_module, operation=OPERATION
         ):
-            assert screwer._flush_notifications(timeout=5)
+            assert driller._flush_notifications(timeout=5)
             assert notified == [(OPERATION, "done")]
 
 
@@ -706,22 +705,22 @@ def test_the_crash_recovery_at_startup_notifies_the_issuer_of_each_orphan():
     with _trigger(graph, notified) as address:
         _issued(graph, address)
         graph.status[OPERATION] = OperationStatus.RUNNING
-        screwer = _middleware(SCREWER, graph)
-        asyncio.run(screwer._reconstruct_queue())
-        assert screwer._flush_notifications(timeout=5)
+        driller = _middleware(DRILLER, graph)
+        asyncio.run(driller._reconstruct_queue())
+        assert driller._flush_notifications(timeout=5)
 
     assert graph.status[OPERATION] == OperationStatus.FAILED
     assert notified == [(OPERATION, "failed")]
 
 
-def _claim_with_commit(screwer: SemanticMiddleware) -> None:
-    with screwer.commit(entry=_status(OPERATION, "running")):
+def _claim_with_commit(driller: SemanticMiddleware) -> None:
+    with driller.commit(entry=_status(OPERATION, "running")):
         pass
 
 
-def _claim_with_claim_next(screwer: SemanticMiddleware) -> None:
-    screwer._operation_queue.append(OPERATION)
-    with screwer.claim_next():
+def _claim_with_claim_next(driller: SemanticMiddleware) -> None:
+    driller._operation_queue.append(OPERATION)
+    with driller.claim_next():
         pass
 
 
@@ -734,12 +733,12 @@ def test_an_issuer_that_hangs_does_not_delay_the_claimer(claim):
     gate = threading.Event()
     with _trigger(graph, notified, gate=gate) as address:
         _issued(graph, address)
-        screwer = _middleware(SCREWER, graph)
-        claim(screwer)  # returns: the issuer has not answered
+        driller = _middleware(DRILLER, graph)
+        claim(driller)  # returns: the issuer has not answered
         assert not gate.is_set()
-        assert not screwer._flush_notifications(timeout=0.2)  # still in flight
+        assert not driller._flush_notifications(timeout=0.2)  # still in flight
         gate.set()
-        assert screwer._flush_notifications(timeout=10)
+        assert driller._flush_notifications(timeout=10)
 
     # The claim's notification, and with claim_next() the end's too, all of the one Operation.
     assert notified and {operation for operation, _ in notified} == {OPERATION}
@@ -752,17 +751,17 @@ def test_the_notifications_leave_one_after_the_other_in_the_order_of_their_commi
     graph = _Graph()
     notified: list = []
     arrivals: list = []
-    second = IRI(f"{EX}Unscrewing_2")
+    second = IRI(f"{EX}Drilling_2")
     with _trigger(graph, notified, hang=0.3, arrivals=arrivals) as address:
         _issued(graph, address)
         graph.status[second] = OperationStatus.QUEUED
         graph.issuer[second] = PLANNER
-        screwer = _middleware(SCREWER, graph)
+        driller = _middleware(DRILLER, graph)
         for operation in (OPERATION, second, OPERATION):
             status = "running" if graph.status[operation] == "queued" else "done"
-            with screwer.commit(entry=_status(operation, status)):
+            with driller.commit(entry=_status(operation, status)):
                 pass
-        assert screwer._flush_notifications(timeout=10)
+        assert driller._flush_notifications(timeout=10)
 
     assert [operation for operation, _ in notified] == [OPERATION, second, OPERATION]
     # Each one left after the previous one was answered, not beside it.
@@ -774,10 +773,10 @@ def test_a_stop_sends_what_is_waiting_when_the_issuer_answers():
     notified: list = []
     with _trigger(graph, notified) as address:
         _issued(graph, address)
-        screwer = _middleware(SCREWER, graph)
-        with screwer.commit(entry=_status(OPERATION, "running"), exit=_status(OPERATION, "done")):
+        driller = _middleware(DRILLER, graph)
+        with driller.commit(entry=_status(OPERATION, "running"), exit=_status(OPERATION, "done")):
             pass
-        asyncio.run(screwer._stop_notifications())
+        asyncio.run(driller._stop_notifications())
 
     assert len(notified) == 2
 
@@ -790,13 +789,13 @@ def test_a_stop_drops_what_is_still_waiting_after_its_time_and_says_so(caplog):
     gate = threading.Event()
     with _trigger(graph, notified, gate=gate) as address:
         _issued(graph, address)
-        screwer = _middleware(SCREWER, graph)
-        with screwer.commit(entry=_status(OPERATION, "running"), exit=_status(OPERATION, "done")):
+        driller = _middleware(DRILLER, graph)
+        with driller.commit(entry=_status(OPERATION, "running"), exit=_status(OPERATION, "done")):
             pass
         with caplog.at_level(logging.WARNING, logger=MIDDLEWARE_LOGGER):
-            asyncio.run(screwer._stop_notifications())
+            asyncio.run(driller._stop_notifications())
         gate.set()
-        assert screwer._flush_notifications(timeout=10)
+        assert driller._flush_notifications(timeout=10)
 
     assert len(notified) == 1  # the claim's, which was in flight; the end's was dropped
     (dropped,) = [r for r in caplog.records if "dropped" in r.getMessage()]
@@ -821,21 +820,21 @@ def test_a_claim_records_the_claimers_own_workflow_as_its_executor():
         return answer(sparql)
 
     graph._rows = rows  # type: ignore[method-assign]
-    screwer = _queued(graph)
+    driller = _queued(graph)
 
-    @screwer.workflow(capability_class=CAPABILITY_CLASS, workflow_class=WORKFLOW_CLASS)
-    def unscrew(operation: Node) -> None:
-        """Unscrew."""
+    @driller.workflow(capability_class=CAPABILITY_CLASS, workflow_class=WORKFLOW_CLASS)
+    def drill(operation: Node) -> None:
+        """Drill."""
 
-    own = mint_workflow_iri(screwer.service_iri, "unscrew")
+    own = mint_workflow_iri(driller.service_iri, "drill")
     assert own != WORKFLOW
-    with screwer.claim_next() as claimed:
-        claimed.result = "4 screws out"
-    assert screwer._flush_notifications(timeout=5)
+    with driller.claim_next() as claimed:
+        claimed.result = "4 holes done"
+    assert driller._flush_notifications(timeout=5)
 
     claim, end = [entry[1] for entry in graph.log if entry[0] == "commit"]
     assert _claim_data(claim) == {
-        str(SVC.operationStatus): [OperationStatus.RUNNING],
+        str(SVC.hasOperationStatus): [OperationStatus.RUNNING],
         str(SVC.executedByWorkflow): [{"id": str(own)}],
     }
     assert _claim_data(end)[str(SVC.executedByWorkflow)] == [{"id": str(own)}]
@@ -846,31 +845,31 @@ def test_a_claim_without_an_own_workflow_records_no_executor():
     the end records the realizing Workflow, as before."""
     graph = _Graph()
     graph.status[OPERATION] = OperationStatus.QUEUED
-    screwer = _queued(graph)
-    with screwer.claim_next() as claimed:
-        claimed.result = "4 screws out"
-    assert screwer._flush_notifications(timeout=5)
+    driller = _queued(graph)
+    with driller.claim_next() as claimed:
+        claimed.result = "4 holes done"
+    assert driller._flush_notifications(timeout=5)
 
     claim, end = [entry[1] for entry in graph.log if entry[0] == "commit"]
-    assert _claim_data(claim) == {str(SVC.operationStatus): [OperationStatus.RUNNING]}
+    assert _claim_data(claim) == {str(SVC.hasOperationStatus): [OperationStatus.RUNNING]}
     assert _claim_data(end)[str(SVC.executedByWorkflow)] == [{"id": str(WORKFLOW)}]
 
 
 def test_a_claim_through_a_generic_commit_records_no_executor():
-    """The use cases' pattern, a `commit` whose entry sets `running`, writes the status alone,
+    """The common pattern, a `commit` whose entry sets `running`, writes the status alone,
     also on an instance that exposes a workflow for the Capability, so the sweep fails such an
     Operation as before."""
     graph = _Graph()
     graph.status[OPERATION] = OperationStatus.QUEUED
-    screwer = _queued(graph)
+    driller = _queued(graph)
 
-    @screwer.workflow(capability_class=CAPABILITY_CLASS, workflow_class=WORKFLOW_CLASS)
-    def unscrew(operation: Node) -> None:
-        """Unscrew."""
+    @driller.workflow(capability_class=CAPABILITY_CLASS, workflow_class=WORKFLOW_CLASS)
+    def drill(operation: Node) -> None:
+        """Drill."""
 
-    with screwer.commit(entry=_status(OPERATION, "running"), exit=_status(OPERATION, "done")):
+    with driller.commit(entry=_status(OPERATION, "running"), exit=_status(OPERATION, "done")):
         pass
-    assert screwer._flush_notifications(timeout=5)
+    assert driller._flush_notifications(timeout=5)
 
     claim = [entry[1] for entry in graph.log if entry[0] == "commit"][0]
     assert str(SVC.executedByWorkflow) not in _claim_data(claim)
@@ -879,10 +878,10 @@ def test_a_claim_through_a_generic_commit_records_no_executor():
 def test_an_operation_without_an_issuer_notifies_nobody():
     graph = _Graph()
     graph.status[OPERATION] = OperationStatus.QUEUED
-    screwer = _queued(graph)
-    with screwer.claim_next() as claimed:
-        claimed.result = "4 screws out"
-    assert screwer._flush_notifications(timeout=5)
+    driller = _queued(graph)
+    with driller.claim_next() as claimed:
+        claimed.result = "4 holes done"
+    assert driller._flush_notifications(timeout=5)
 
     # No read of a live Service: there is no issuer to notify.
     assert _kinds(graph) == ["read", "commit", "fetch", "commit"]
@@ -891,10 +890,10 @@ def test_an_operation_without_an_issuer_notifies_nobody():
 def test_a_commit_that_moves_no_operation_reads_nothing_more():
     graph = _Graph()
     torque = [Update(instance_iri=OPERATION, data={str(TORQUE): ["4.2 Nm"]})]
-    screwer = _middleware(SCREWER, graph)
-    with screwer.commit(entry=torque):
+    driller = _middleware(DRILLER, graph)
+    with driller.commit(entry=torque):
         pass
-    assert screwer._flush_notifications(timeout=5)
+    assert driller._flush_notifications(timeout=5)
 
     assert _kinds(graph) == ["commit"]
 
@@ -903,12 +902,12 @@ def test_an_issuer_that_cannot_be_notified_is_logged_and_the_work_goes_on(caplog
     graph = _Graph()
     _issued(graph, None)  # the planner has no live Service
     ran = []
-    screwer = _queued(graph)
+    driller = _queued(graph)
     with caplog.at_level(logging.WARNING, logger=MIDDLEWARE_LOGGER):
-        with screwer.claim_next() as claimed:
+        with driller.claim_next() as claimed:
             ran.append(True)
-            claimed.result = "4 screws out"
-        assert screwer._flush_notifications(timeout=5)
+            claimed.result = "4 holes done"
+        assert driller._flush_notifications(timeout=5)
 
     assert ran == [True]
     assert graph.status[OPERATION] == OperationStatus.DONE
@@ -921,7 +920,7 @@ def test_the_watchdog_notifies_the_issuer_of_an_operation_that_it_fails():
     """A stale Service's stranded Operations become ``failed``, and their issuers hear of it."""
     graph = _Graph()
     notified: list = []
-    stale = IRI(f"{EX}screwer_service")
+    stale = IRI(f"{EX}driller_service")
 
     def rows(sparql: str, answer=graph._rows) -> list[dict]:
         if str(CFC.hasCapability) in sparql:  # the Resource's stranded Operations
@@ -929,7 +928,7 @@ def test_the_watchdog_notifies_the_issuer_of_an_operation_that_it_fails():
         if str(SVC.lastHeartbeat) in sparql:  # the stale Services
             return [{"s": stale}]
         if f"<{stale}> <{SVC.isServiceOf}>" in sparql:  # the Resource of the stale Service
-            return [{"r": SCREWER}]
+            return [{"r": DRILLER}]
         return answer(sparql)
 
     graph._rows = rows  # type: ignore[method-assign]
@@ -975,14 +974,14 @@ def test_the_issuers_notification_handler_sees_both_notifications():
     _issued(graph, planner.address)
     with _served(planner):
         with _queued(graph).claim_next() as claimed:
-            claimed.result = "4 screws out"
+            claimed.result = "4 holes done"
         _wait_for(lambda: len(seen) == 2)
 
     assert seen == [OPERATION, OPERATION]
 
 
 def _issue(graph: _Graph, planner: SemanticMiddleware, receiver_address: str) -> IssuedOperation:
-    graph.target = (CAPABILITY, IRI(f"{EX}screwer_service"), receiver_address)
+    graph.target = (CAPABILITY, IRI(f"{EX}driller_service"), receiver_address)
     with planner.issue_operation(
         capability_class=CAPABILITY_CLASS, operation_class=OPERATION_CLASS
     ) as op:
@@ -992,13 +991,13 @@ def _issue(graph: _Graph, planner: SemanticMiddleware, receiver_address: str) ->
 
 
 def _claim_and_end(graph: _Graph, operation: IRI, end: str, pause: float = 0.3) -> None:
-    """The screwer, in another thread: it claims ``operation`` after ``pause``, and ends it
+    """The driller, in another thread: it claims ``operation`` after ``pause``, and ends it
     ``end`` after another ``pause``, each through ``mw.commit()``."""
 
     def run() -> None:
-        screwer = _middleware(SCREWER, graph)
+        driller = _middleware(DRILLER, graph)
         time.sleep(pause)
-        with screwer.commit(entry=_status(operation, "running"), exit=_status(operation, end)):
+        with driller.commit(entry=_status(operation, "running"), exit=_status(operation, end)):
             time.sleep(pause)
 
     threading.Thread(target=run, daemon=True).start()
@@ -1101,22 +1100,22 @@ def test_claimed_is_false_and_ended_raises_when_the_timeout_passes_first():
         asyncio.run(op.ended(timeout=0.2))
 
 
-def _screwer_that_unscrews(graph: _Graph, runs: list, seen: list) -> SemanticMiddleware:
-    """The screwer, live in the graph, with a workflow that claims and ends each Operation it
+def _driller_that_drills(graph: _Graph, runs: list, seen: list) -> SemanticMiddleware:
+    """The driller, live in the graph, with a workflow that claims and ends each Operation it
     gets, and a notification handler."""
-    screwer = _middleware(SCREWER, graph)
+    driller = _middleware(DRILLER, graph)
 
-    @screwer.workflow(capability_class=CAPABILITY_CLASS, workflow_class=WORKFLOW_CLASS)
-    def unscrew(operation: Node) -> None:
+    @driller.workflow(capability_class=CAPABILITY_CLASS, workflow_class=WORKFLOW_CLASS)
+    def drill(operation: Node) -> None:
         runs.append(operation.id)
-        with screwer.commit(
+        with driller.commit(
             entry=_status(operation.id, "running"), exit=_status(operation.id, "done")
         ):
             pass
 
-    screwer.on_notification(lambda operation: seen.append(operation.id))
-    graph.live[SCREWER] = [(screwer.service_iri, screwer.address)]
-    return screwer
+    driller.on_notification(lambda operation: seen.append(operation.id))
+    graph.live[DRILLER] = [(driller.service_iri, driller.address)]
+    return driller
 
 
 def test_after_a_restart_an_operation_issued_to_itself_runs_its_workflow_once():
@@ -1126,12 +1125,12 @@ def test_after_a_restart_an_operation_issued_to_itself_runs_its_workflow_once():
     graph = _Graph()
     runs: list = []
     seen: list = []
-    screwer = _screwer_that_unscrews(graph, runs, seen)
+    driller = _driller_that_drills(graph, runs, seen)
     graph.status[OPERATION] = OperationStatus.QUEUED
-    graph.issuer[OPERATION] = SCREWER
-    with _served(screwer):
+    graph.issuer[OPERATION] = DRILLER
+    with _served(driller):
         httpx.post(
-            f"{screwer.address}/workflows/event_trigger/execute",
+            f"{driller.address}/workflows/event_trigger/execute",
             json={"operation_iri": str(OPERATION)},
             timeout=5,
         ).raise_for_status()
@@ -1149,10 +1148,10 @@ def test_an_operation_that_an_instance_issues_to_itself_runs_its_workflow_once()
     graph = _Graph()
     runs: list = []
     seen: list = []
-    screwer = _screwer_that_unscrews(graph, runs, seen)
-    graph.target = (CAPABILITY, screwer.service_iri, screwer.address)
-    with _served(screwer):
-        with screwer.issue_operation(
+    driller = _driller_that_drills(graph, runs, seen)
+    graph.target = (CAPABILITY, driller.service_iri, driller.address)
+    with _served(driller):
+        with driller.issue_operation(
             capability_class=CAPABILITY_CLASS, operation_class=OPERATION_CLASS
         ) as op:
             pass

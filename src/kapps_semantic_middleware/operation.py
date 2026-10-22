@@ -5,8 +5,8 @@ links to the Capability with ``cfc:implementsCapability``, and the receiver reso
 that realizes the Capability. This module gives that rule to ``mw.create()`` as the
 :func:`operation` scope. It also gives it, privately, to the intake of a middleware that receives an
 Operation: the scope under which the intake reads one, and the Capabilities that it finds in that
-read. Further rules of an Operation, such as the Resource that executes it, belong here when a use
-case needs them.
+read. Further rules of an Operation, such as the Resource that executes it, belong here when a
+domain needs them.
 
 It is specific to the circular factory: it speaks Core's ``cfc:`` vocabulary. It is built on the
 generic middleware, not inside it, so the generic core knows no ``cfc:`` term.

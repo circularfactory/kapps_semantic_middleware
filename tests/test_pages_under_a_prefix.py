@@ -276,7 +276,7 @@ def test_the_trailing_slash_redirect_keeps_the_query(page: str) -> None:
 @SETUPS
 @SLASHES
 def test_the_tab_in_the_query_opens_under_a_prefix(serve: Serve, slash: str) -> None:
-    """A link to ``dashboard?tab=WMS`` opens on WMS wherever the page is served.
+    """A link to ``dashboard?tab=Planner`` opens on Planner wherever the page is served.
 
     A launcher links one process's page under its own prefix, and a person may type the
     trailing slash. The query reaches the page through both, and the page opens the tab it
@@ -285,13 +285,13 @@ def test_the_tab_in_the_query_opens_under_a_prefix(serve: Serve, slash: str) -> 
     mw = FakeMiddleware()
     registry = enable_dashboard(mw)
 
-    @registry.box("spawn", title="Spawn", tab="WMS")
+    @registry.box("spawn", title="Spawn", tab="Planner")
     def spawn_box(middleware: Any) -> str:
         return "<p>spawn</p>"
 
     app, prefix = serve(mw.app)
-    page_url, page = _open(TestClient(app), f"{BASE}{prefix}/dashboard{slash}?tab=WMS")
+    page_url, page = _open(TestClient(app), f"{BASE}{prefix}/dashboard{slash}?tab=Planner")
 
     assert page.status_code == 200
-    assert page_url == f"{BASE}{prefix}/dashboard?tab=WMS"
-    assert re.findall(r'id="tab-([^"]+)" class="tab-radio" checked', page.text) == ["wms"]
+    assert page_url == f"{BASE}{prefix}/dashboard?tab=Planner"
+    assert re.findall(r'id="tab-([^"]+)" class="tab-radio" checked', page.text) == ["planner"]

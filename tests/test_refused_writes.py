@@ -34,7 +34,7 @@ from kapps_semantic_middleware.validation_report import (
 )
 from kapps_semantic_middleware.validation_report import _first_line as _first_line_of
 
-EX = "https://example.org/test#"
+EX = "http://example.org/test#"
 OP = IRI(f"{EX}op_1")
 STATUS = IRI(f"{EX}status")
 SNAPSHOT = IRI(f"{EX}DecisionSnapshot")
@@ -43,7 +43,7 @@ DECISION = IRI(f"{EX}decision")
 #: A report as the store sent it: a handover of Box2 onto Module3, refused while Module3 holds
 #: another box.
 REPORT = (Path(__file__).parent / "reports" / "skip-reserve.nq").read_text()
-RULE = "FlexConveyorModulePossessionShape at Module3"
+RULE = "LineModulePossessionShape at Module3"
 
 
 class _RefusingOGM:
@@ -89,7 +89,7 @@ def _commit(mw: SemanticMiddleware) -> None:
 
 def _create(mw: SemanticMiddleware) -> None:
     with mw.create(SNAPSHOT, ClassScope()) as snapshot:
-        snapshot.update({DECISION: ["unscrew"]})
+        snapshot.update({DECISION: ["drill"]})
 
 
 # -- The record --------------------------------------------------------------------------------- #
@@ -309,11 +309,11 @@ def test_a_refusal_is_one_info_record_on_its_own_logger(caplog: pytest.LogCaptur
     following = "\n".join(rest)
     for readable in (
         "Result 1 of 1",
-        "A FlexConveyorModule may possess at most one Box at a time.",
+        "A LineModule may possess at most one Box at a time.",
         "Severity: Violation",
         "Focus node: Module3",
         "Path: (hasPossessor/^hasPossessedWorkpiece)",
-        "Source shape: FlexConveyorModulePossessionShape",
+        "Source shape: LineModulePossessionShape",
         "Constraint: MaxCountConstraintComponent",
     ):
         assert readable in following, following

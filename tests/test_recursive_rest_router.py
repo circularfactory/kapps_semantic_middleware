@@ -103,24 +103,24 @@ class _BindingStub:
 def _make_unit() -> TransferUnit:
     """A TransferUnit with two belts and two barriers, using IRI-looking ids."""
     return TransferUnit(
-        id="https://example.org/tui#TransferUnit1",
+        id="http://example.org/tui#TransferUnit1",
         TU_hasConveyorBelt=[
             Belt(
-                id="https://example.org/tui#ConveyorBelt1_left",
+                id="http://example.org/tui#ConveyorBelt1_left",
                 TU_hasConveyorSpeed=[Speed(hasValue=[1.5], hasUnit=["m/s"])],
             ),
             Belt(
-                id="https://example.org/tui#ConveyorBelt1_right",
+                id="http://example.org/tui#ConveyorBelt1_right",
                 TU_hasConveyorSpeed=[Speed(hasValue=[2.0], hasUnit=["m/s"])],
             ),
         ],
         TU_hasLightBarrier=[
             Barrier(
-                id="https://example.org/tui#LightBarrier1_front",
+                id="http://example.org/tui#LightBarrier1_front",
                 TU_isOccupied=[Occupancy(hasValue=[False])],
             ),
             Barrier(
-                id="https://example.org/tui#LightBarrier1_back",
+                id="http://example.org/tui#LightBarrier1_back",
                 TU_isOccupied=[Occupancy(hasValue=[True])],
             ),
         ],
@@ -131,22 +131,22 @@ def _make_bindings() -> list[_BindingStub]:
     """Four bindings: two belts read-write, two barriers read-only."""
     return [
         _BindingStub(
-            resource_iri=IRI("https://example.org/tui#ConveyorBelt1_left"),
+            resource_iri=IRI("http://example.org/tui#ConveyorBelt1_left"),
             field_id="TU_hasConveyorSpeed",
             access_mode=AccessMode.READWRITE,
         ),
         _BindingStub(
-            resource_iri=IRI("https://example.org/tui#ConveyorBelt1_right"),
+            resource_iri=IRI("http://example.org/tui#ConveyorBelt1_right"),
             field_id="TU_hasConveyorSpeed",
             access_mode=AccessMode.READWRITE,
         ),
         _BindingStub(
-            resource_iri=IRI("https://example.org/tui#LightBarrier1_front"),
+            resource_iri=IRI("http://example.org/tui#LightBarrier1_front"),
             field_id="TU_isOccupied",
             access_mode=AccessMode.READ,
         ),
         _BindingStub(
-            resource_iri=IRI("https://example.org/tui#LightBarrier1_back"),
+            resource_iri=IRI("http://example.org/tui#LightBarrier1_back"),
             field_id="TU_isOccupied",
             access_mode=AccessMode.READ,
         ),
@@ -252,7 +252,7 @@ def test_routes_are_generated_at_the_right_structural_paths():
     expected = _path(
         unit.id,
         "TU_hasConveyorBelt",
-        "https://example.org/tui#ConveyorBelt1_left",
+        "http://example.org/tui#ConveyorBelt1_left",
         "TU_hasConveyorSpeed",
     )
 
@@ -284,7 +284,7 @@ def test_a_read_only_parameter_gets_get_and_no_put():
     path = _path(
         unit.id,
         "TU_hasLightBarrier",
-        "https://example.org/tui#LightBarrier1_front",
+        "http://example.org/tui#LightBarrier1_front",
         "TU_isOccupied",
     )
 
@@ -315,7 +315,7 @@ def test_a_read_write_parameter_gets_get_and_no_put():
     path = _path(
         unit.id,
         "TU_hasConveyorBelt",
-        "https://example.org/tui#ConveyorBelt1_left",
+        "http://example.org/tui#ConveyorBelt1_left",
         "TU_hasConveyorSpeed",
     )
 
@@ -371,13 +371,13 @@ def test_closure_capture_is_correct():
     left_path = _path(
         unit.id,
         "TU_hasConveyorBelt",
-        "https://example.org/tui#ConveyorBelt1_left",
+        "http://example.org/tui#ConveyorBelt1_left",
         "TU_hasConveyorSpeed",
     )
     right_path = _path(
         unit.id,
         "TU_hasConveyorBelt",
-        "https://example.org/tui#ConveyorBelt1_right",
+        "http://example.org/tui#ConveyorBelt1_right",
         "TU_hasConveyorSpeed",
     )
 
@@ -415,19 +415,19 @@ def test_cyclic_instance_graph_terminates():
     mw = _FakeMiddleware()
 
     # Build two nodes, then create the cycle by assignment
-    a = Node(id="https://example.org/tui#NodeA", TU_hasConveyorSpeed=[Speed(hasValue=[1.0])])
-    b = Node(id="https://example.org/tui#NodeB", TU_hasConveyorSpeed=[Speed(hasValue=[2.0])])
+    a = Node(id="http://example.org/tui#NodeA", TU_hasConveyorSpeed=[Speed(hasValue=[1.0])])
+    b = Node(id="http://example.org/tui#NodeB", TU_hasConveyorSpeed=[Speed(hasValue=[2.0])])
     a.children = [b]
     b.children = [a]
 
     bindings = [
         _BindingStub(
-            resource_iri=IRI("https://example.org/tui#NodeA"),
+            resource_iri=IRI("http://example.org/tui#NodeA"),
             field_id="TU_hasConveyorSpeed",
             access_mode=AccessMode.READWRITE,
         ),
         _BindingStub(
-            resource_iri=IRI("https://example.org/tui#NodeB"),
+            resource_iri=IRI("http://example.org/tui#NodeB"),
             field_id="TU_hasConveyorSpeed",
             access_mode=AccessMode.READWRITE,
         ),
@@ -488,7 +488,7 @@ def test_a_binding_whose_owner_is_absent_generates_no_route():
     bindings = _make_bindings()
     bindings.append(
         _BindingStub(
-            resource_iri=IRI("https://example.org/tui#ConveyorBelt99_ghost"),
+            resource_iri=IRI("http://example.org/tui#ConveyorBelt99_ghost"),
             field_id="TU_hasConveyorSpeed",
             access_mode=AccessMode.READWRITE,
         )
@@ -503,7 +503,7 @@ def test_a_binding_whose_owner_is_absent_generates_no_route():
     )
 
     assert len(paths) == 4
-    ghost_segment = IRI("https://example.org/tui#ConveyorBelt99_ghost").lined
+    ghost_segment = IRI("http://example.org/tui#ConveyorBelt99_ghost").lined
     assert not any(ghost_segment in p for p in paths)
 
 
@@ -568,7 +568,7 @@ def test_a_write_verb_answers_405_and_reaches_neither_the_device_nor_the_graph()
     belt = _path(
         unit.id,
         "TU_hasConveyorBelt",
-        "https://example.org/tui#ConveyorBelt1_left",
+        "http://example.org/tui#ConveyorBelt1_left",
         "TU_hasConveyorSpeed",
     )
     item = f"/TransferUnit/{IRI(unit.id).lined}"

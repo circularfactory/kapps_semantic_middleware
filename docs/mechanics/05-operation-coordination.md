@@ -167,7 +167,7 @@ HTTP 500 and such a workflow is run by the intake.
 from kapps_ogm import Node
 
 
-@mw.workflow(capability_class=BOX_TRANSPORT_CAPABILITY, workflow_class=BOX_TRANSPORT_WORKFLOW)
+@mw.workflow(capability_class=TRANSPORT_CAPABILITY, workflow_class=TRANSPORT_WORKFLOW)
 def workpiece_transport(transport: Node) -> None:
     ...  # move the workpiece; commit the transport's own transitions with mw.commit()
 

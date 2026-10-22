@@ -18,7 +18,7 @@ from kapps_triplestore_interface.exceptions import InvalidIRIError
 
 from kapps_semantic_middleware import Mode, SemanticMiddleware
 
-EX = "https://example.org/test#"
+EX = "http://example.org/test#"
 GRAPH = f"{EX}graph"
 BOX = IRI(f"{EX}Box")
 

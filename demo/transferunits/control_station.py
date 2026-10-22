@@ -149,7 +149,7 @@ async def main() -> None:
     # the app's lifespan connecting everything (Controller.wire_view's own docstring).
     default_query = algorithm.build_view_query()
     hits = controller.view(default_query)
-    logger.info("The view found %d live, even-indexed unit(s)", len(hits))
+    logger.info("The view found %d live unit(s)", len(hits))
     controller.wire_view(hits, class_scope=algorithm.unit_class_scope())
 
     state = algorithm.AlgorithmState()

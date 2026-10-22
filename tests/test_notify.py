@@ -23,7 +23,7 @@ from kapps_semantic_middleware import SemanticMiddleware
 from kapps_semantic_middleware.errors import NotificationUndelivered
 from kapps_semantic_middleware.vocabulary import SVC
 
-SENDER = "http://example.org/test#WMS"
+SENDER = "http://example.org/test#Planner"
 RECEIVER = "http://example.org/test#Module1"
 SERVICE_CLASS = "http://example.org/test#ModuleService"
 OPERATION = "http://example.org/test#Transport1"

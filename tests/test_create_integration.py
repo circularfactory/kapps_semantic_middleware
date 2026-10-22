@@ -46,30 +46,30 @@ from kapps_semantic_middleware.vocabulary import CFC, MES, SVC, OperationStatus
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "examples"))
 import seed  # noqa: E402
 
-EX = "https://example.org/test#"
+EX = "http://example.org/test#"
 SNAPSHOT = IRI(f"{EX}DecisionSnapshot")
 DECISION = IRI(f"{EX}decision")
 ABOUT = IRI(f"{EX}aboutOperation")
 TRANSPORT = IRI(f"{EX}Transport")
 HAS_BOX = IRI(f"{EX}hasBox")
-WMS = IRI(f"{EX}wms")
-TRANSPORT_CAPABILITY = IRI(f"{EX}wms_capability_transport")
+PLANNER = IRI(f"{EX}planner")
+TRANSPORT_CAPABILITY = IRI(f"{EX}planner_capability_transport")
 
-# The detector's decision snapshot, and UC2's transport with its box and its WMS.
+# A participant's decision snapshot, and a transport with its box and its planner.
 _TBOX = f"""
 @prefix owl: <http://www.w3.org/2002/07/owl#> .
 @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
 @prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
-@prefix cfc: <https://w3id.org/circularfactory/Core#> .
+@prefix cfc: <http://w3id.org/circularfactory/Core#> .
 <{SNAPSHOT}> a owl:Class .
 <{DECISION}> a owl:DatatypeProperty ; rdfs:domain <{SNAPSHOT}> ; rdfs:range xsd:string .
 <{ABOUT}> a owl:ObjectProperty ; rdfs:domain <{SNAPSHOT}> ; rdfs:range cfc:Operation .
 <{TRANSPORT}> a owl:Class ; rdfs:subClassOf cfc:Operation .
 <{HAS_BOX}> a owl:ObjectProperty ; rdfs:domain <{TRANSPORT}> ; rdfs:range <{seed.BOX_CLASS}> .
 <{seed.BOX_CLASS}> a owl:Class ; rdfs:subClassOf cfc:Workpiece .
-<{EX}Wms> a owl:Class ; rdfs:subClassOf cfc:Resource .
+<{EX}Planner> a owl:Class ; rdfs:subClassOf cfc:Resource .
 <{EX}TransportCapability> a owl:Class ; rdfs:subClassOf cfc:Capability .
-<{WMS}> a <{EX}Wms> .
+<{PLANNER}> a <{EX}Planner> .
 <{TRANSPORT_CAPABILITY}> a <{EX}TransportCapability> .
 """
 
@@ -86,7 +86,7 @@ def _status_shape(*allowed: str) -> str:
     sh:targetClass <{CFC.Operation}> ;
     sh:property <urn:test:StatusValues> .
 <urn:test:StatusValues> a sh:PropertyShape ;
-    sh:path <{SVC.operationStatus}> ;
+    sh:path <{SVC.hasOperationStatus}> ;
     sh:in ( {values} ) .
 """
 
@@ -109,7 +109,7 @@ def _seed(db) -> None:
     db.graph_add(_TBOX, content_type="application/x-turtle")
 
 
-def _middleware(store, resource: IRI = WMS) -> SemanticMiddleware:
+def _middleware(store, resource: IRI = PLANNER) -> SemanticMiddleware:
     return SemanticMiddleware(
         mode="resource",
         resource_iri=str(resource),
@@ -196,15 +196,15 @@ def test_a_decision_snapshot_and_its_operations_done_land_in_one_commit(store):
     mw, op = _queued_operation(store)
     with mw.claim_next() as claimed:
         with mw.create(SNAPSHOT, ClassScope()) as snapshot:
-            snapshot.update({DECISION: ["unscrew"], ABOUT: [claimed.iri]})
+            snapshot.update({DECISION: ["drill"], ABOUT: [claimed.iri]})
         assert _statements_about(store, snapshot.iri) == []  # nothing before the exit
-        claimed.result = "unscrew"
+        claimed.result = "drill"
 
     claim, done = mw.ogm.commits
     assert _kinds(done) == [("Update", str(op)), ("Create", str(snapshot.iri))]
-    assert _values(store, op, SVC.operationStatus) == [OperationStatus.DONE]
+    assert _values(store, op, SVC.hasOperationStatus) == [OperationStatus.DONE]
     assert store.triple_exists((snapshot.iri, RDF.type, SNAPSHOT))
-    assert _values(store, snapshot.iri, DECISION) == ["unscrew"]
+    assert _values(store, snapshot.iri, DECISION) == ["drill"]
     assert _values(store, snapshot.iri, ABOUT) == [str(op)]
 
 
@@ -216,12 +216,12 @@ def test_a_refused_done_leaves_neither_the_done_nor_the_decision_snapshot(store)
         with pytest.raises(TripleStoreInterfaceError, match="ValidationReport"):
             with mw.claim_next() as claimed:
                 with mw.create(SNAPSHOT, ClassScope()) as snapshot:
-                    snapshot.update({DECISION: ["unscrew"], ABOUT: [claimed.iri]})
-                claimed.result = "unscrew"
+                    snapshot.update({DECISION: ["drill"], ABOUT: [claimed.iri]})
+                claimed.result = "drill"
     finally:
         store.shapes_set("", "text/turtle")
 
-    assert _values(store, op, SVC.operationStatus) == [OperationStatus.FAILED]
+    assert _values(store, op, SVC.hasOperationStatus) == [OperationStatus.FAILED]
     assert _statements_about(store, snapshot.iri) == []
 
 
@@ -229,8 +229,8 @@ def test_a_creation_in_an_async_commit_joins_its_exit(store):
     """The asynchronous form runs the commit's entry in a worker thread; the body still finds
     the open commit."""
     mw, op = _queued_operation(store)
-    running = [Update(instance_iri=op, data={str(SVC.operationStatus): ["running"]})]
-    done = [Update(instance_iri=op, data={str(SVC.operationStatus): ["done"]})]
+    running = [Update(instance_iri=op, data={str(SVC.hasOperationStatus): ["running"]})]
+    done = [Update(instance_iri=op, data={str(SVC.hasOperationStatus): ["done"]})]
 
     async def scenario() -> IRI:
         async with mw.commit(op, entry=running, exit=done):
@@ -314,16 +314,16 @@ def test_a_workpiece_whose_possessor_has_no_state_is_created_with_that_state_in_
 ):
     _seed(store)
     mw = _middleware(store)
-    assert _values(store, WMS, CFC.hasPossessor) == []
+    assert _values(store, PLANNER, CFC.hasPossessor) == []
     with mw.create(seed.BOX_CLASS, workpiece(ClassScope(), possessor=mw.resource)) as box:
         pass
 
-    state = IRI(f"{WMS}_possession")
+    state = IRI(f"{PLANNER}_possession")
     assert [_kinds(changes) for changes in mw.ogm.commits] == [
-        [("Create", str(box.iri)), ("Create", str(state)), ("Update", str(WMS))]
+        [("Create", str(box.iri)), ("Create", str(state)), ("Update", str(PLANNER))]
     ]
     assert store.triple_exists((state, RDF.type, CFC.PossessionState))
-    assert _values(store, WMS, CFC.hasPossessor) == [str(state)]
+    assert _values(store, PLANNER, CFC.hasPossessor) == [str(state)]
     assert _values(store, box.iri, CFC.hasPossessedWorkpiece) == [str(state)]
 
 
@@ -335,27 +335,27 @@ def test_opening_a_transport_is_one_commit_of_the_operation_the_box_and_the_firs
     with mw.create(
         TRANSPORT, operation(ClassScope(), capability=TRANSPORT_CAPABILITY)
     ) as transport:
-        transport.update({SVC.operationStatus: [OperationStatus.QUEUED]})
+        transport.update({SVC.hasOperationStatus: [OperationStatus.QUEUED]})
         with mw.create(seed.BOX_CLASS, workpiece(ClassScope(), possessor=mw.resource)) as box:
             pass
         transport.update({HAS_BOX: [box.iri]})
         assert _statements_about(store, box.iri) == []
 
-    state = IRI(f"{WMS}_possession")
+    state = IRI(f"{PLANNER}_possession")
     ((changes),) = mw.ogm.commits
     assert _kinds(changes) == [
         ("Create", str(transport.iri)),
         ("Create", str(box.iri)),
         ("Create", str(state)),
-        ("Update", str(WMS)),
+        ("Update", str(PLANNER)),
     ]
     assert isinstance(changes[0], Create)
     assert store.triple_exists((transport.iri, RDF.type, TRANSPORT))
     assert _values(store, transport.iri, CFC.implementsCapability) == [str(TRANSPORT_CAPABILITY)]
-    assert _values(store, transport.iri, SVC.operationStatus) == [OperationStatus.QUEUED]
+    assert _values(store, transport.iri, SVC.hasOperationStatus) == [OperationStatus.QUEUED]
     assert _values(store, transport.iri, HAS_BOX) == [str(box.iri)]
     assert _values(store, box.iri, CFC.hasPossessedWorkpiece) == [str(state)]
-    assert _values(store, WMS, CFC.hasPossessor) == [str(state)]
+    assert _values(store, PLANNER, CFC.hasPossessor) == [str(state)]
 
 
 # --------------------------------------------------------------------------- #
@@ -371,7 +371,7 @@ def _free_port() -> int:
 
 def test_a_failed_notification_keeps_a_workpiece_created_in_the_request(store):
     """The box joins the Operation's commit. A failed notification undoes none of it: the
-    Operation stays queued with its box, the WMS's new possession state and the WMS's link to
+    Operation stays queued with its box, the planner's new possession state and the planner's link to
     it."""
     _seed(store)
     # A reachable-looking receiver: its address is a port where nothing listens.
@@ -387,20 +387,20 @@ def test_a_failed_notification_keeps_a_workpiece_created_in_the_request(store):
                 pass
             op.data[str(HAS_BOX)] = [box.iri]
 
-    state = IRI(f"{WMS}_possession")
+    state = IRI(f"{PLANNER}_possession")
     (created, *_) = mw.ogm.commits
     assert _kinds(created) == [
         ("Create", str(op.iri)),
         ("Create", str(box.iri)),
         ("Create", str(state)),
-        ("Update", str(WMS)),
+        ("Update", str(PLANNER)),
     ]
     assert isinstance(raised.value.__cause__, httpx.ConnectError)
     assert len(mw.ogm.commits) == 1  # nothing after the request's commit
-    assert _values(store, op.iri, SVC.operationStatus) == [OperationStatus.QUEUED]
+    assert _values(store, op.iri, SVC.hasOperationStatus) == [OperationStatus.QUEUED]
     assert _values(store, op.iri, HAS_BOX) == [str(box.iri)]
     assert _values(store, box.iri, CFC.hasPossessedWorkpiece) == [str(state)]
-    assert _values(store, WMS, CFC.hasPossessor) == [str(state)]
+    assert _values(store, PLANNER, CFC.hasPossessor) == [str(state)]
     assert before < _explicit_statements(store)
 
 

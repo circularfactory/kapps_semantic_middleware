@@ -140,12 +140,20 @@ def store():
     the store carries no per-test state — only a growing set of minted blank-node ids,
     which is a collision guard that is happier the longer it lives.
     Tests that need a clean *graph* re-seed it; that is separate from the store.
+
+    The shared ontologies are reloaded (replaced, not added, so the three graphs are
+    destroyed and rewritten) once per session: a dataset
+    seeded by an earlier version keeps its old service graph, and the mapper then refuses
+    the properties that the current one declares.
     """
     if not triplestore_env_present():
         pytest.skip("TRIPLESTORE_* environment variables not set")
     from kapps_semantic_middleware.credentials import triplestore_for
 
+    from kapps_semantic_middleware.seeding import load_shared_ontologies
+
     db = triplestore_for(TEST_DATASET)
+    load_shared_ontologies(db, reload=True)
     yield db
     db.close()
 

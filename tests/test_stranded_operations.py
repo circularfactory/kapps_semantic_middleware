@@ -25,14 +25,14 @@ THRESHOLD = 90.0
 FRESH = NOW - timedelta(seconds=10)
 STALE = NOW - timedelta(hours=1)
 
-RESOURCE = IRI("https://example.org/test#Station")
-MONITOR = IRI("https://example.org/test#Monitor")
-CONTROLLER = IRI("https://example.org/test#Controller")
-MONITOR_WORKFLOW = IRI("https://example.org/test#MonitorWorkflow")
-CONTROLLER_WORKFLOW = IRI("https://example.org/test#ControllerWorkflow")
-CAPABILITY = IRI("https://example.org/test#Screw")
-OPERATION = IRI("https://example.org/test#Op1")
-OTHER_OPERATION = IRI("https://example.org/test#Op2")
+RESOURCE = IRI("http://example.org/test#Station")
+MONITOR = IRI("http://example.org/test#Monitor")
+CONTROLLER = IRI("http://example.org/test#Controller")
+MONITOR_WORKFLOW = IRI("http://example.org/test#MonitorWorkflow")
+CONTROLLER_WORKFLOW = IRI("http://example.org/test#ControllerWorkflow")
+CAPABILITY = IRI("http://example.org/test#Drill")
+OPERATION = IRI("http://example.org/test#Op1")
+OTHER_OPERATION = IRI("http://example.org/test#Op2")
 
 
 class _Db:
@@ -95,12 +95,12 @@ class _Ogm:
         capability: IRI = CAPABILITY,
     ) -> None:
         self.add(iri, CFC.implementsCapability, capability)
-        self.add(iri, SVC.operationStatus, Literal(status))
+        self.add(iri, SVC.hasOperationStatus, Literal(status))
         if executor is not None:
             self.add(iri, SVC.executedByWorkflow, executor)
 
     def status(self, iri: IRI) -> str:
-        return str(self.graph.value(URIRef(iri), URIRef(str(SVC.operationStatus))))
+        return str(self.graph.value(URIRef(iri), URIRef(str(SVC.hasOperationStatus))))
 
 
 def _stranded(ogm: _Ogm, *statuses: str, excluding: tuple = ()) -> list[IRI]:

@@ -96,7 +96,7 @@ def _resource_middleware(store):
 
 
 def _status(db, op_iri) -> str | None:
-    triples = list(db.triples_get(sub=op_iri, pred=SVC.operationStatus))
+    triples = list(db.triples_get(sub=op_iri, pred=SVC.hasOperationStatus))
     return str(triples[0][2]) if triples else None
 
 

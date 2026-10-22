@@ -524,7 +524,7 @@ def _tab_slugs(tabs: Sequence[str]) -> Dict[str, str]:
     identifier. The result was `id="tab-Line monitor"` and a selector
     `#tab-Line monitor:checked`, which no browser can parse: the rule is dropped, the panel
     keeps `display: none`, and the page renders a tab strip above nothing. `Line monitor` is
-    such a tab, so this was reached on the first subproject tab.
+    such a tab, so this was reached on the first tab a project adds.
 
     The visible label keeps the original name. Only the identifier is slugged.
 

@@ -29,7 +29,8 @@ changes only the interface. This module checks the middleware's side of it, offl
 
 - The decision records: each file in a directory ``adr`` inside a directory ``docs``. They do
   not ship.
-- The paths in ``EXEMPT``: the store reports that the tests recorded (they stay byte for byte),
+- The paths in ``EXEMPT``: the store reports that the tests recorded (edited only to neutral IRIs
+  and messages, so the store's own terms stay as it sent them),
   the local Docker store's compose file and configuration, the test that starts that stack, the
   changelog (the record of each release, and the deprecation note), and this module, which names
   the terms.
@@ -73,7 +74,7 @@ VENDOR = re.compile(r"graphdb|ontotext|shaclshapegraph", re.IGNORECASE)
 REPOSITORY = re.compile(r"repositor(?:y|ies)", re.IGNORECASE)
 
 EXEMPT = {
-    "tests/reports/": "the store reports that the tests recorded, byte for byte",
+    "tests/reports/": "recorded store reports, edited to neutral IRIs and messages; the store's own terms stay as it sent them",
     "examples/docker/": "the local Docker store: its compose file and its configuration",
     "tests/test_shipped_stack_validates_shapes.py": "starts the local Docker store and checks its configuration",
     "CHANGELOG.md": "the record of each release, and the deprecation note",

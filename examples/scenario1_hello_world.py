@@ -200,7 +200,7 @@ def step_4_dispatch_and_run(
 def step_5_inspect_decision_provenance(db: TripleStore, operation_iri: IRI) -> None:
     """Display the terminal status + execution provenance written to the Operation."""
     print("\nStep 5 — The Decision is Now Traceable in the Graph (R12)")
-    status = list(db.triples_get(sub=operation_iri, pred=SVC.operationStatus))
+    status = list(db.triples_get(sub=operation_iri, pred=SVC.hasOperationStatus))
     executed_by = list(db.triples_get(sub=operation_iri, pred=SVC.executedByWorkflow))
     timestamp = list(db.triples_get(sub=operation_iri, pred=SVC.executionTimestamp))
     result = list(db.triples_get(sub=operation_iri, pred=SVC.executionResult))
@@ -210,7 +210,7 @@ def step_5_inspect_decision_provenance(db: TripleStore, operation_iri: IRI) -> N
     executed_at = f"{timestamp[0][2]}  (UTC)" if timestamp else "NONE"
 
     print(f"Terminal state + provenance recorded on {operation_iri}:")
-    print(f"  operationStatus:    {status[0][2] if status else 'NONE'}")
+    print(f"  hasOperationStatus:    {status[0][2] if status else 'NONE'}")
     print(f"  executedByWorkflow: {executed_by[0][2] if executed_by else 'NONE'}")
     print(f"  executionTimestamp: {executed_at}")
     print(f"  executionResult:    {result[0][2] if result else 'NONE'}")

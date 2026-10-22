@@ -5,11 +5,11 @@
 - station_board.py names no subprocess/signal -- it is the routes file, not the runner.
 - The demo package sends no PUT, POST, PATCH or DELETE to a unit's served data-model
   route. The demo observes: in KAPPS a device changes only through a workflow of its
-  service, and this demo has none yet. Its control returns with workflows after the paper.
+  service, and this demo has none yet.
   The monitor design states the underlying invariant ("a consumer cannot drive, because
   its own code holds no method that sends a PUT request") and notes "the guard test
   follows the wiring rather than the source text". The wiring half is the controller's
-  read-only flavour, asserted on a real wiring in tests/test_controller_view.py
+  read-only connector wiring, asserted on a real wiring in tests/test_controller_view.py
   (every registration a read leg). This file is the source half, shaped after
   tests/test_plc_guard.py and tests/test_launcher_index_guard.py's own AST-based checks:
   no demo module imports an HTTP client or calls a connector's send, the controller has

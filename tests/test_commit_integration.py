@@ -52,7 +52,7 @@ def _status_shape(*allowed: str) -> str:
     sh:targetClass <{CFC.Operation}> ;
     sh:property <urn:test:StatusValues> .
 <urn:test:StatusValues> a sh:PropertyShape ;
-    sh:path <{SVC.operationStatus}> ;
+    sh:path <{SVC.hasOperationStatus}> ;
     sh:in ( {values} ) .
 """
 
@@ -121,7 +121,7 @@ def _middleware(store, heartbeat_interval=None) -> SemanticMiddleware:
 
 
 def _status(operation_iri: IRI, value: str) -> list:
-    return [Update(instance_iri=operation_iri, data={str(SVC.operationStatus): [value]})]
+    return [Update(instance_iri=operation_iri, data={str(SVC.hasOperationStatus): [value]})]
 
 
 def _values(db, subject: IRI, predicate: IRI) -> list[str]:
@@ -167,13 +167,13 @@ def test_an_error_in_the_body_leaves_only_the_error_transition(store):
         with mw.commit(
             op, entry=_status(op, "running"), exit=_status(op, "done"), error=_status(op, "failed")
         ) as transition:
-            transition.update(op, {str(SVC.executionResult): ["half a screw"]})
+            transition.update(op, {str(SVC.executionResult): ["half a hole"]})
             transition.update(other, {str(SVC.executionResult): ["never written"]})
             raise RuntimeError("gripper jammed")
-    assert _values(store, op, SVC.operationStatus) == ["failed"]
+    assert _values(store, op, SVC.hasOperationStatus) == ["failed"]
     assert _values(store, op, SVC.executionResult) == []
     assert _values(store, other, SVC.executionResult) == []
-    assert _values(store, other, SVC.operationStatus) == ["queued"]
+    assert _values(store, other, SVC.hasOperationStatus) == ["queued"]
 
 
 def test_a_clean_exit_is_one_commit_and_merges_the_changes_to_one_instance(store):
@@ -181,12 +181,12 @@ def test_a_clean_exit_is_one_commit_and_merges_the_changes_to_one_instance(store
     op, other = _seed(store)
     mw = _middleware(store)
     with mw.commit(op, entry=_status(op, "running"), exit=_status(op, "done")) as transition:
-        assert _values(store, op, SVC.operationStatus) == ["running"]
-        transition.update(op, {str(SVC.executionResult): ["screwed"]})
+        assert _values(store, op, SVC.hasOperationStatus) == ["running"]
+        transition.update(op, {str(SVC.executionResult): ["drilled"]})
         transition.update(other, {str(SVC.executionResult): ["handed on"]})
     assert [kind for kind, _, _ in mw.ogm.calls] == ["changes", "changes"]  # entry, exit
-    assert _values(store, op, SVC.operationStatus) == ["done"]
-    assert _values(store, op, SVC.executionResult) == ["screwed"]
+    assert _values(store, op, SVC.hasOperationStatus) == ["done"]
+    assert _values(store, op, SVC.executionResult) == ["drilled"]
     assert _values(store, other, SVC.executionResult) == ["handed on"]
 
 
@@ -194,12 +194,12 @@ def test_a_body_that_sets_the_status_commits_its_value_and_skips_the_exit_transi
     op, other = _seed(store)
     mw = _middleware(store)
     exit_transition = [
-        Update(instance_iri=op, data={str(SVC.operationStatus): ["done"]}),
+        Update(instance_iri=op, data={str(SVC.hasOperationStatus): ["done"]}),
         Update(instance_iri=other, data={str(SVC.executionResult): ["exit ran"]}),
     ]
     with mw.commit(op, entry=_status(op, "running"), exit=exit_transition) as transition:
-        transition.update(op, {str(SVC.operationStatus): ["queued"]})  # put back for a later try
-    assert _values(store, op, SVC.operationStatus) == ["queued"]
+        transition.update(op, {str(SVC.hasOperationStatus): ["queued"]})  # put back for a later try
+    assert _values(store, op, SVC.hasOperationStatus) == ["queued"]
     assert _values(store, other, SVC.executionResult) == []
 
 
@@ -212,10 +212,10 @@ def test_a_refused_exit_commits_the_error_transition_and_raises(store):
             with mw.commit(
                 op, entry=_status(op, "running"), exit=_status(op, "done"), error=_status(op, "failed")
             ) as transition:
-                transition.update(op, {str(SVC.executionResult): ["screwed"]})
+                transition.update(op, {str(SVC.executionResult): ["drilled"]})
     finally:
         store.shapes_set("", "text/turtle")
-    assert _values(store, op, SVC.operationStatus) == ["failed"]
+    assert _values(store, op, SVC.hasOperationStatus) == ["failed"]
     assert _values(store, op, SVC.executionResult) == []
 
 
@@ -236,7 +236,7 @@ def test_a_body_awaiting_longer_than_the_heartbeat_interval_delays_no_heartbeat(
             ) as transition:
                 started = time.monotonic()
                 await asyncio.sleep(2.0)  # a robot's move, awaited
-                transition.update(op, {str(SVC.executionResult): ["screwed"]})
+                transition.update(op, {str(SVC.executionResult): ["drilled"]})
                 ended = time.monotonic()
         finally:
             await mw._stop_heartbeat()
@@ -252,19 +252,19 @@ def test_a_body_awaiting_longer_than_the_heartbeat_interval_delays_no_heartbeat(
     assert max(b - a for a, b in zip(marks, marks[1:])) < 5 * interval
     commit_threads = {thread for kind, _, thread in mw.ogm.calls if kind == "changes"}
     assert loop_thread not in commit_threads
-    assert _values(store, op, SVC.operationStatus) == ["done"]
-    assert _values(store, op, SVC.executionResult) == ["screwed"]
+    assert _values(store, op, SVC.hasOperationStatus) == ["done"]
+    assert _values(store, op, SVC.executionResult) == ["drilled"]
 
 
 def test_fetch_reads_an_operation_under_a_class_scope(store):
     op, _ = _seed(store)
     node = _middleware(store).fetch(
         str(op),
-        class_scope=ClassScope.from_property_chains([[SVC.operationStatus]]),
+        class_scope=ClassScope.from_property_chains([[SVC.hasOperationStatus]]),
         materialize=True,
     )
     assert node.id == op
-    assert [str(value) for value in node.data[SVC.operationStatus]] == ["queued"]
+    assert [str(value) for value in node.data[SVC.hasOperationStatus]] == ["queued"]
     assert node.instance is not None
 
 
@@ -281,4 +281,4 @@ def test_a_deadline_that_cancels_the_body_leaves_the_error_transition(store):
         return deadline.cancelled_caught
 
     assert asyncio.run(scenario())
-    assert _values(store, op, SVC.operationStatus) == ["failed"]
+    assert _values(store, op, SVC.hasOperationStatus) == ["failed"]

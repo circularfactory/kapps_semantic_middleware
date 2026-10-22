@@ -1,4 +1,4 @@
-"""SemanticMiddleware's connector flavours, through the constructor.
+"""SemanticMiddleware's connector wiring, through the constructor.
 
 The seam is tested directly in ``test_semantic_connectors.py`` and against live data in
 ``test_scenario3_wiring_integration.py``. What is left is that the constructor parameters
@@ -65,8 +65,8 @@ class TestWithoutAClassScope:
 
 
 @requires_store
-class TestFlavours:
-    """Three flavours of one library, differing only in what they connect."""
+class TestConnectorWiring:
+    """Three connector wirings of one library, differing only in what they connect."""
 
     def test_a_controller_wires_both_directions(self, seeded_unit, unit_scope):
         middleware = _middleware(seeded_unit, class_scope=unit_scope)
@@ -119,7 +119,7 @@ class TestRegistrationTiming:
 
         assert middleware.connection_registry.connections
 
-    def test_defaults_are_the_controller_flavour(self, seeded_unit, unit_scope):
+    def test_defaults_are_the_controller_wiring(self, seeded_unit, unit_scope):
         """Defaults preserve today's behaviour, so nothing existing changes meaning."""
         middleware = _middleware(seeded_unit, class_scope=unit_scope)
 

@@ -34,7 +34,7 @@ from kapps_semantic_middleware.seeding import (
 from kapps_semantic_middleware.vocabulary import MES
 
 
-DEMO_NS = "https://example.org/kapps-demo#"
+DEMO_NS = "http://example.org/kapps-demo#"
 
 # --- Scenario 1 class IRIs (ground-truth, declared in demo_ontology.ttl) ---
 HELLO_RESOURCE_CLASS = IRI(f"{DEMO_NS}DemoResource")
@@ -74,9 +74,9 @@ HANDOVER_DEST = IRI(f"{DEMO_NS}transfer_module_B")
 HANDOVER_BOX = IRI(f"{DEMO_NS}box_001")
 
 # --- Scenario 3 (TransferUnit) ----------------------------------------------------
-TU_NS = "https://www.sfb1574.kit.edu/ontologies/TransferUnit#"
-TUI_NS = "https://www.sfb1574.kit.edu/ontologies/TransferUnitInstances#"
-INF_NS = "https://www.sfb1574.kit.edu/ontologies/CrcInterfaces#"
+TU_NS = "http://www.sfb1574.kit.edu/ontologies/TransferUnit#"
+TUI_NS = "http://www.sfb1574.kit.edu/ontologies/TransferUnitInstances#"
+INF_NS = "http://www.sfb1574.kit.edu/ontologies/CrcInterfaces#"
 
 TRANSFER_UNIT_CLASS = IRI(f"{TU_NS}TransferUnit")
 CONVEYOR_BELT_CLASS = IRI(f"{TU_NS}ConveyorBelt")
@@ -110,7 +110,7 @@ def _read_demo_ontology(filename: str) -> str:
 
 def load_scenario1_ontologies(db) -> None:
     """Load the shared modules plus ONLY the scenario 1 demo classes."""
-    load_shared_ontologies(db)
+    load_shared_ontologies(db, reload=True)
     db.graph_add(
         _read_demo_ontology("demo_scenario1.ttl"), content_type="application/x-turtle"
     )
@@ -118,7 +118,7 @@ def load_scenario1_ontologies(db) -> None:
 
 def load_scenario2_ontologies(db) -> None:
     """Load the shared modules plus ONLY the scenario 2 (door) demo classes."""
-    load_shared_ontologies(db)
+    load_shared_ontologies(db, reload=True)
     db.graph_add(
         _read_demo_ontology("demo_scenario2.ttl"), content_type="application/x-turtle"
     )
@@ -132,7 +132,7 @@ def load_scenario3_ontologies(db) -> None:
     :func:`seed_scenario3`, and its ``cfc:`` superclasses come from the Core graph rather
     than from local stubs.
     """
-    load_shared_ontologies(db)
+    load_shared_ontologies(db, reload=True)
     db.graph_add(
         _read_demo_ontology("transferunit.ttl"), content_type="application/x-turtle"
     )

@@ -502,9 +502,9 @@ def test_the_422_does_not_win_over_the_real_response() -> None:
 def test_a_tab_name_with_a_space_still_shows_its_panel() -> None:
     """A tab whose title is not a legal identifier still renders a visible panel.
 
-    `Line monitor` is the tab the use case adds, so this is reached on the first subproject
-    tab. `html.escape` leaves a space alone, so the id became `tab-Line monitor` and the
-    selector `#tab-Line monitor:checked`, which no browser parses. The rule was dropped and
+    A project's first tab is often named like `Line monitor`, with a space, so this is reached
+    on the first tab a project adds. `html.escape` leaves a space alone, so the id became
+    `tab-Line monitor` and the selector `#tab-Line monitor:checked`, which no browser parses. The rule was dropped and
     the panel kept `display: none`, leaving a tab strip above nothing.
     """
     import re as _re
@@ -1019,7 +1019,7 @@ async def test_an_async_render_that_raises_still_shows_its_error_in_place() -> N
 # ---------------------------------------------------------------------------
 
 #: The IRI of the resource that the instances below represent.
-MODULE = "http://example.org/jms#Module1"
+MODULE = "http://example.org/demo#Module1"
 
 
 class GraphStore:
@@ -1036,7 +1036,7 @@ class GraphStore:
         self.graph.parse(
             data=(
                 "@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .\n"
-                "@prefix ex: <http://example.org/jms#> .\n" + turtle
+                "@prefix ex: <http://example.org/demo#> .\n" + turtle
             ),
             format="turtle",
         )
@@ -1085,7 +1085,7 @@ def test_the_title_names_the_resource_by_its_label() -> None:
 @pytest.mark.parametrize(
     ("resource_iri", "name"),
     [
-        ("http://example.org/jms#WarehouseManagementSystem1", "WarehouseManagementSystem1"),
+        ("http://example.org/demo#Station1", "Station1"),
         ("http://example.org/modules/Module1", "Module1"),
         ("http://example.org/modules/Module1/", "Module1"),
     ],
@@ -1198,12 +1198,12 @@ def test_a_failed_read_names_the_resource_by_its_local_name(
 # ---------------------------------------------------------------------------
 
 
-def _wms_page(**options: Any) -> FakeMiddleware:
-    """A page with the library's own boxes on "System", and a box of its own on "WMS"."""
+def _planner_page(**options: Any) -> FakeMiddleware:
+    """A page with the library's own boxes on "System", and a box of its own on "Planner"."""
     mw = FakeMiddleware()
     registry = enable_dashboard(mw, **options)
 
-    @registry.box("spawn", title="Spawn", tab="WMS")
+    @registry.box("spawn", title="Spawn", tab="Planner")
     def spawn_box(middleware: Any) -> str:
         return "<p>spawn</p>"
 
@@ -1219,17 +1219,17 @@ def _opened_tab(page: str) -> str:
 
 def test_without_a_query_the_page_opens_on_the_first_tab() -> None:
     """What every page did before: System is first in the bar, and it is open."""
-    page = TestClient(_wms_page().app).get("/dashboard").text
+    page = TestClient(_planner_page().app).get("/dashboard").text
     assert _opened_tab(page) == "system"
 
 
 def test_the_query_opens_the_tab_it_names() -> None:
-    """A link to `dashboard?tab=WMS` opens on WMS; System and its boxes stay on the page."""
-    mw = _wms_page()
-    page = TestClient(mw.app).get("/dashboard", params={"tab": "WMS"}).text
+    """A link to `dashboard?tab=Planner` opens on Planner; System and its boxes stay on the page."""
+    mw = _planner_page()
+    page = TestClient(mw.app).get("/dashboard", params={"tab": "Planner"}).text
 
-    assert _opened_tab(page) == "wms"
-    assert re.findall(r'<label for="tab-([^"]+)"', page) == ["system", "logs", "wms"]
+    assert _opened_tab(page) == "planner"
+    assert re.findall(r'<label for="tab-([^"]+)"', page) == ["system", "logs", "planner"]
     for spec in mw.dashboard.specs():
         assert f'hx-get="dashboard/box/{spec.id}"' in page, f"box {spec.id} left the page"
 
@@ -1237,12 +1237,12 @@ def test_the_query_opens_the_tab_it_names() -> None:
 @pytest.mark.parametrize(
     ("first_tab", "query", "opened"),
     [
-        ("WMS", None, "wms"),
-        ("WMS", "System", "system"),
+        ("Planner", None, "planner"),
+        ("Planner", "System", "system"),
         (None, "Nope", "system"),
-        ("WMS", "Nope", "wms"),
+        ("Planner", "Nope", "planner"),
         ("Nope", None, "system"),
-        ("Nope", "WMS", "wms"),
+        ("Nope", "Planner", "planner"),
     ],
     ids=[
         "the keyword opens its tab",
@@ -1261,7 +1261,7 @@ def test_the_keyword_sets_the_tab_that_opens_and_the_query_overrides_it(
     A name that no tab has opens the tab that would open without it, so a stale link or a
     typo still shows the page.
     """
-    mw = _wms_page(first_tab=first_tab)
+    mw = _planner_page(first_tab=first_tab)
     params = {"tab": query} if query is not None else {}
     page = TestClient(mw.app).get("/dashboard", params=params).text
 
@@ -1291,14 +1291,14 @@ def test_a_first_tab_that_names_no_tab_is_reported_once(
     after the call. The first render that cannot open it says so; a page that is reloaded
     every few seconds does not fill the log.
     """
-    client = TestClient(_wms_page(first_tab="wms").app)
+    client = TestClient(_planner_page(first_tab="planner").app)
     with caplog.at_level(logging.WARNING, logger="kapps_semantic_middleware.dashboard"):
         for _ in range(3):
             assert _opened_tab(client.get("/dashboard").text) == "system"
 
-    reports = [r.getMessage() for r in caplog.records if "'wms'" in r.getMessage()]
+    reports = [r.getMessage() for r in caplog.records if "'planner'" in r.getMessage()]
     assert len(reports) == 1, [r.getMessage() for r in caplog.records]
-    assert "System" in reports[0] and "WMS" in reports[0], reports[0]
+    assert "System" in reports[0] and "Planner" in reports[0], reports[0]
 
 
 def test_the_header_names_the_dataset_of_the_store() -> None:

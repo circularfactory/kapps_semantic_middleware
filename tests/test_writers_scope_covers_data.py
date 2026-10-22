@@ -30,7 +30,7 @@ from kapps_semantic_middleware.registration import (
 )
 from kapps_semantic_middleware.vocabulary import CFC, SVC
 
-EX = "https://example.org/test#"
+EX = "http://example.org/test#"
 CLASS = IRI(f"{EX}Thing")
 THING = IRI(f"{EX}thing_1")
 CAPABILITY = IRI(f"{EX}capability")
@@ -112,7 +112,7 @@ def test_the_operation_writer_names_every_key_of_its_data_and_its_own_properties
     (create,) = ogm.changes
     assert isinstance(create, Create)
     _assert_names_every_key(create.class_scope, create.data)
-    assert {str(CFC.implementsCapability), str(SVC.operationStatus), FREE} <= _named(
+    assert {str(CFC.implementsCapability), str(SVC.hasOperationStatus), FREE} <= _named(
         create.class_scope
     )
 

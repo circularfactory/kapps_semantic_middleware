@@ -42,7 +42,7 @@ from kapps_semantic_middleware.vocabulary import CFC, MES, SVC
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "examples"))
 import seed  # noqa: E402
 
-EX = "https://example.org/test#"
+EX = "http://example.org/test#"
 SNAPSHOT = IRI(f"{EX}DecisionSnapshot")
 DECISION = IRI(f"{EX}decision")
 ABOUT = IRI(f"{EX}aboutOperation")
@@ -51,14 +51,14 @@ _TBOX = f"""
 @prefix owl: <http://www.w3.org/2002/07/owl#> .
 @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
 @prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
-@prefix cfc: <https://w3id.org/circularfactory/Core#> .
+@prefix cfc: <http://w3id.org/circularfactory/Core#> .
 <{SNAPSHOT}> a owl:Class .
 <{DECISION}> a owl:DatatypeProperty ; rdfs:domain <{SNAPSHOT}> ; rdfs:range xsd:string .
 <{ABOUT}> a owl:ObjectProperty ; rdfs:domain <{SNAPSHOT}> ; rdfs:range cfc:Operation .
 """
 
 # Two rules for a decision snapshot. One has a path and two messages; the other is an `sh:or`,
-# which names no path. A snapshot that decides "unscrew" about no Operation breaks both.
+# which names no path. A snapshot that decides "drill" about no Operation breaks both.
 _SNAPSHOT_SHAPES = f"""
 @prefix sh: <http://www.w3.org/ns/shacl#> .
 <{EX}DecisionShape> a sh:NodeShape ;
@@ -84,7 +84,7 @@ _NEVER_RUNNING = f"""
     sh:targetClass <{CFC.Operation}> ;
     sh:property <{EX}StatusValueShape> .
 <{EX}StatusValueShape> a sh:PropertyShape ;
-    sh:path <{SVC.operationStatus}> ;
+    sh:path <{SVC.hasOperationStatus}> ;
     sh:in ( "queued" "done" "failed" ) .
 """
 
@@ -95,7 +95,7 @@ _NEVER_FAILED = f"""
     sh:targetClass <{CFC.Operation}> ;
     sh:property <{EX}NotFailedValueShape> .
 <{EX}NotFailedValueShape> a sh:PropertyShape ;
-    sh:path <{SVC.operationStatus}> ;
+    sh:path <{SVC.hasOperationStatus}> ;
     sh:in ( "queued" "running" "done" ) .
 """
 
@@ -172,7 +172,7 @@ def test_a_refused_create_is_shown_readably_on_both_pages(store):
     def create() -> None:
         with mw.create(SNAPSHOT, ClassScope()) as snapshot:
             created.append(snapshot.iri)
-            snapshot.update({DECISION: ["unscrew"]})
+            snapshot.update({DECISION: ["drill"]})
 
     refusal = _refused(store, _SNAPSHOT_SHAPES, create)
     (snapshot,) = created
@@ -200,7 +200,7 @@ def test_a_refused_create_is_shown_readably_on_both_pages(store):
     assert with_path.severity == Term("Violation", str(SH.Violation))
     assert with_path.focus == Term(local, str(snapshot))
     assert with_path.path == Term("decision", f"<{DECISION}>")
-    assert with_path.value == Term("unscrew", '"unscrew"')
+    assert with_path.value == Term("drill", '"drill"')
     assert with_path.constraint == Term("InConstraintComponent", str(SH.InConstraintComponent))
     without_path = by_shape["KeepOrAboutShape"]
     assert without_path.message == Term(
@@ -244,8 +244,8 @@ def test_a_refused_commit_is_shown_as_a_commit(store):
     mw = _instance(store, seed.HELLO_RESOURCE, seed.HELLO_SERVICE_CLASS)
     operation = IRI(f"{EX}operation_1")
     store.triple_add((operation, RDF.type, CFC.Operation))
-    store.triple_add((operation, SVC.operationStatus, Literal("queued")))
-    running = [Update(instance_iri=operation, data={str(SVC.operationStatus): ["running"]})]
+    store.triple_add((operation, SVC.hasOperationStatus, Literal("queued")))
+    running = [Update(instance_iri=operation, data={str(SVC.hasOperationStatus): ["running"]})]
 
     def commit() -> None:
         with mw.commit(operation, entry=running):
@@ -268,10 +268,10 @@ def test_a_refused_error_transition_is_shown_as_an_error_transition(store):
     mw = _instance(store, seed.HELLO_RESOURCE, seed.HELLO_SERVICE_CLASS)
     operation = IRI(f"{EX}operation_2")
     store.triple_add((operation, RDF.type, CFC.Operation))
-    store.triple_add((operation, SVC.operationStatus, Literal("queued")))
+    store.triple_add((operation, SVC.hasOperationStatus, Literal("queued")))
 
     def status(value: str) -> list:
-        return [Update(instance_iri=operation, data={str(SVC.operationStatus): [value]})]
+        return [Update(instance_iri=operation, data={str(SVC.hasOperationStatus): [value]})]
 
     failure = RuntimeError("the body failed")
 
