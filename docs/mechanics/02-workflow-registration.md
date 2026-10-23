@@ -60,7 +60,7 @@ def get_door_status() -> bool:
     ...
 ```
 
-It takes `capability_class`, `state_property_class`, and an optional `name`. Like Workflows, the Capability instance is created automatically at registration. The live value is never written to the graph — only the stable `svc:endpoint` triple is written at registration time. Peers read the current value by invoking the endpoint, not by querying the graph.
+It takes `capability_class`, `state_property_class`, and an optional `name`. Like Workflows, the Capability instance is created automatically at registration. The live value is never written to the graph — only the stable `svc:hasEndpoint` triple is written at registration time. Peers read the current value by invoking the endpoint, not by querying the graph.
 
 ## Signature-Derived SHACL Shapes
 
@@ -83,12 +83,12 @@ Arguments are supported: `build_workflow_shape` introspects the signature and mi
 
 When a resource-mode middleware starts, it writes two kinds of location metadata to the graph:
 
-- **`svc:address`** on the Service individual — the base URL of this middleware instance
-- **`svc:endpoint`** on each Workflow and StateProperty individual — the full, directly callable URL for that specific entry point
+- **`svc:hasAddress`** on the Service individual — the base URL of this middleware instance
+- **`svc:hasEndpoint`** on each Workflow and StateProperty individual — the full, directly callable URL for that specific entry point
 
-Both are written at registration time. Both are removed when the middleware deregisters (on clean shutdown) or when a watchdog marks the Service stale (on heartbeat failure). Confusing these two is a common mistake: callers resolve a Workflow IRI and read its `svc:endpoint` directly — they do not walk through the Service's `svc:address` and append a route convention.
+Both are written at registration time. Both are removed when the middleware deregisters (on clean shutdown) or when a watchdog marks the Service stale (on heartbeat failure). Confusing these two is a common mistake: callers resolve a Workflow IRI and read its `svc:hasEndpoint` directly — they do not walk through the Service's `svc:hasAddress` and append a route convention.
 
-Storing the endpoint on the Workflow itself means any caller with just a Workflow IRI can invoke it with one property read. The trade-off is duplication: the same host and port appear in both `svc:address` and every `svc:endpoint` under that Service.
+Storing the endpoint on the Workflow itself means any caller with just a Workflow IRI can invoke it with one property read. The trade-off is duplication: the same host and port appear in both `svc:hasAddress` and every `svc:hasEndpoint` under that Service.
 
 ## Vocabulary Layering
 
@@ -96,7 +96,7 @@ Your domain ontology must fit into a three-module stack:
 
 - **`cfc:` (Core)** — Published, external, superior. Includes `cfc:Operation`, `cfc:Capability`, `cfc:Resource`, `cfc:Task`. Import and specialize Core; never modify it. Possession uses Core's `cfc:hasPossessor` / `cfc:hasPossessedWorkpiece` directly, in the possession extension `kapps_semantic_middleware.possession`; registration itself writes only the Capability link `cfc:hasCapability`.
 - **`mes:` (MES)** — Domain-facing. This is where your manufacturing-execution vocabulary lives. Domain experts author terms here. Currently carries handover-ability predicates (`mes:hasHandoverAbility` and its enumerated individuals), which the possession extension's `handover(mw, mode=...)` reads; the generic core names none of them.
-- **`svc:` (Service)** — Middleware-facing. Includes `svc:Service`, `svc:Workflow`, `svc:StateProperty`, `svc:address`, `svc:endpoint`, `svc:lastHeartbeat`, and Operation status/provenance vocabulary. Domain code does not touch this layer.
+- **`svc:` (Service)** — Middleware-facing. Includes `svc:Service`, `svc:Workflow`, `svc:StateProperty`, `svc:hasAddress`, `svc:hasEndpoint`, `svc:hasLastHeartbeat`, and Operation status/provenance vocabulary. Domain code does not touch this layer.
 
 When you introduce new domain terms (a new device type, a new capability kind), author them in `mes:`. Reference Core types from `cfc:`. Never add domain vocabulary to `svc:` — that module is reserved for reachability and coordination state only.
 

@@ -36,6 +36,10 @@ You now have scenario 1 and scenario 2 (each as a `.py` and a `.ipynb`), the see
 and a `docker/` directory. Add the `[notebooks]` extra if you want to open the `.ipynb` files in
 Jupyter; the `.py` versions run with `[examples]` alone.
 
+A productive circular factory already holds the shared ontologies and shapes in its knowledge graph;
+the files shipped with the middleware seed the demonstrations and tests, and document the vocabulary. The examples
+seed them into the throwaway store below.
+
 <!-- vendor-check: off -- the local Docker store -->
 ### Start a GraphDB
 

@@ -90,7 +90,7 @@ def test_event_trigger_dispatch_enqueues_over_rest(store):
 
     server, thread = _start_server(mw_b, B_PORT)
     try:
-        assert db.triples_get(sub=mw_b.service_iri, pred=SVC.address)
+        assert db.triples_get(sub=mw_b.service_iri, pred=SVC.hasAddress)
 
         # A: the planner. Dispatch an Operation for B capability (no hardcoded peer).
         mw_a = SemanticMiddleware(
@@ -243,11 +243,11 @@ def test_pull_and_run_completes_operation(store):
         status = list(db.triples_get(sub=op_iri, pred=SVC.hasOperationStatus))
         assert status and str(status[0][2]) == OperationStatus.DONE
         assert db.triple_exists((op_iri, SVC.executedByWorkflow, wf_instance))
-        assert db.triples_get(sub=op_iri, pred=SVC.executionTimestamp)
-        result = list(db.triples_get(sub=op_iri, pred=SVC.executionResult))
+        assert db.triples_get(sub=op_iri, pred=SVC.hasExecutionTimestamp)
+        result = list(db.triples_get(sub=op_iri, pred=SVC.hasExecutionResult))
         assert result and str(result[0][2]) == "hello world"
-        # A successful Operation carries no failure snapshot (svc:failureState is failure-only).
-        assert not list(db.triples_get(sub=op_iri, pred=SVC.failureState))
+        # A successful Operation carries no failure snapshot (svc:hasFailureState is failure-only).
+        assert not list(db.triples_get(sub=op_iri, pred=SVC.hasFailureState))
     finally:
         server.should_exit = True
         thread.join(timeout=20)
@@ -273,11 +273,11 @@ def test_pull_and_run_failure_marks_failed(store):
         status = list(db.triples_get(sub=op_iri, pred=SVC.hasOperationStatus))
         assert status and str(status[0][2]) == OperationStatus.FAILED
         assert db.triple_exists((op_iri, SVC.executedByWorkflow, wf_instance))
-        result = list(db.triples_get(sub=op_iri, pred=SVC.executionResult))
+        result = list(db.triples_get(sub=op_iri, pred=SVC.hasExecutionResult))
         assert result and "boom" in str(result[0][2])
-        # The resource datamodel is snapshotted into svc:failureState. Atomically with `failed`.
-        failure = list(db.triples_get(sub=op_iri, pred=SVC.failureState))
-        assert failure, "svc:failureState should capture the resource datamodel on failure"
+        # The resource datamodel is snapshotted into svc:hasFailureState. Atomically with `failed`.
+        failure = list(db.triples_get(sub=op_iri, pred=SVC.hasFailureState))
+        assert failure, "svc:hasFailureState should capture the resource datamodel on failure"
         assert json.loads(str(failure[0][2]))["id"] == str(seed.HELLO_RESOURCE)
     finally:
         server.should_exit = True
@@ -338,7 +338,7 @@ def test_callback_runs_operation_on_enqueue(store):
         # The callback runs in the background. Wait for the terminal transition.
         _wait_for_status(db, op_iri, OperationStatus.DONE)
         assert db.triple_exists((op_iri, SVC.executedByWorkflow, wf_instance))
-        result = list(db.triples_get(sub=op_iri, pred=SVC.executionResult))
+        result = list(db.triples_get(sub=op_iri, pred=SVC.hasExecutionResult))
         assert result and str(result[0][2]) == "hello world"
         # The callback drained the queue (no manual claim_next needed).
         assert op_iri not in mw_b._operation_queue
@@ -414,7 +414,7 @@ def test_two_instance_rest_event_trigger_full_lifecycle(store):
         status = list(db.triples_get(sub=op_iri, pred=SVC.hasOperationStatus))
         assert status and str(status[0][2]) == OperationStatus.DONE
         assert db.triple_exists((op_iri, SVC.executedByWorkflow, open_wf))
-        result = list(db.triples_get(sub=op_iri, pred=SVC.executionResult))
+        result = list(db.triples_get(sub=op_iri, pred=SVC.hasExecutionResult))
         assert result and str(result[0][2]) == "opened"
     finally:
         reset_door()

@@ -136,7 +136,7 @@ trigger events itself, so they are not in the graph, and the graph has no kind o
 Operation or notified Workflow.
 
 The sender calls `mw.notify(operation=op, resource=r)`. The call finds the one live Service of `r`
-(a Service with an `svc:address`), posts the IRI to its event trigger, and returns when the
+(a Service with an `svc:hasAddress`), posts the IRI to its event trigger, and returns when the
 receiver confirms receipt. It raises `NotificationUndelivered` (from
 `kapps_semantic_middleware.errors`) when `r` has no live Service, when it has more than one,
 and when the post fails, is refused or times out. It is a blocking call; async code runs it with
@@ -216,6 +216,17 @@ provenance record; there is no separate success flag. A `done` status implies su
 implies an exception or validation error during execution. Transitioning to a terminal state is
 atomic and irreversible without dispatching a fresh Operation.
 
+An Operation has exactly one status, one of these four values. The middleware writes it in the
+commit that creates the Operation and replaces it atomically after. The rule is also a SHACL shape:
+`service-shapes.ttl` ships beside the service ontology, with one node shape that targets Core's
+Operation class, so every subclass too. A store that validates SHACL against it refuses at commit
+an Operation without a status, with two statuses, or with another value, and a refused commit of
+an instance shows in `mw.refused_writes` like any other. A productive store already holds its
+ontologies and shapes. A demonstration or test store gets the shape from its seed:
+`seeding.set_service_shapes(db)` sets it, after the dataset is cleared, because the store validates
+the data already there. On a dataset without SHACL validation it logs one line and the seed goes
+on without the rule.
+
 ## Pull-and-Run
 
 Receiver-side execution uses the `claim_next` transactional context manager. The domain code takes
@@ -236,8 +247,8 @@ with mw.claim_next(scope=view_scope) as claimed:
     result = perform_work(op)          # physical actuation, calculations, etc.
 
     # Assign a str to `claimed.result` to attach a result. On clean exit the
-    # middleware records it as `executionResult`, alongside `executedByWorkflow`
-    # and `executionTimestamp`.
+    # middleware records it as `hasExecutionResult`, alongside `executedByWorkflow`
+    # and `hasExecutionTimestamp`.
     claimed.result = result
 # Exit records done/failed and dumps state on failure
 ```

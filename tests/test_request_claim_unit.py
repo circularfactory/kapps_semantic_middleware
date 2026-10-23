@@ -243,8 +243,8 @@ def test_a_refused_done_records_failed_with_its_provenance_and_raises_the_stores
     (failed,) = ogm.log[-1][1]
     record = _data(failed)
     assert record[str(SVC.executedByWorkflow)] == [{"id": str(WORKFLOW)}]
-    assert record[str(SVC.executionResult)] == ["SHACL validation failed"]
-    assert json.loads(record[str(SVC.failureState)][0]) == {"id": str(RESOURCE)}
+    assert record[str(SVC.hasExecutionResult)] == ["SHACL validation failed"]
+    assert json.loads(record[str(SVC.hasFailureState)][0]) == {"id": str(RESOURCE)}
 
 
 def test_the_claim_is_committed_before_the_body_runs_and_done_with_its_provenance_is_one_commit():
@@ -265,11 +265,11 @@ def test_the_claim_is_committed_before_the_body_runs_and_done_with_its_provenanc
     claim, exit_commit = _commits(ogm)
     (done,) = exit_commit
     record = _data(done)
-    assert record.pop(str(SVC.executionTimestamp))
+    assert record.pop(str(SVC.hasExecutionTimestamp))
     assert record == {
         str(SVC.hasOperationStatus): ["done"],
         str(SVC.executedByWorkflow): [{"id": str(WORKFLOW)}],
-        str(SVC.executionResult): ["4 holes done"],
+        str(SVC.hasExecutionResult): ["4 holes done"],
     }
 
 
@@ -282,12 +282,12 @@ def test_an_error_in_the_body_records_failed_with_its_provenance_and_the_datamod
     claim, error_commit = _commits(ogm)
     (failed,) = error_commit
     record = _data(failed)
-    assert record.pop(str(SVC.executionTimestamp))
-    assert json.loads(record.pop(str(SVC.failureState))[0]) == {"id": str(RESOURCE)}
+    assert record.pop(str(SVC.hasExecutionTimestamp))
+    assert json.loads(record.pop(str(SVC.hasFailureState))[0]) == {"id": str(RESOURCE)}
     assert record == {
         str(SVC.hasOperationStatus): ["failed"],
         str(SVC.executedByWorkflow): [{"id": str(WORKFLOW)}],
-        str(SVC.executionResult): ["gripper jammed"],
+        str(SVC.hasExecutionResult): ["gripper jammed"],
     }
 
 

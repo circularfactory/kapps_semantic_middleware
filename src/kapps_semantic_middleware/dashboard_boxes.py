@@ -17,7 +17,6 @@ from datetime import datetime, timezone
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 from kapps_semantic_middleware.dashboard import (
-    SHORTENING_NOTE,
     DashboardRegistry,
     escape,
     hint,
@@ -351,7 +350,7 @@ def register(registry: DashboardRegistry) -> None:
         ]
 
         # No heartbeat timestamp is held in memory. Querying the graph for
-        # ``svc:lastHeartbeat`` would be traffic the page causes, which this
+        # ``svc:hasLastHeartbeat`` would be traffic the page causes, which this
         # dashboard forbids. Show the configured interval and liveness instead,
         # and label the row so a reader does not mistake it for an observed age.
         queue = attr("_operation_queue", None)
@@ -460,7 +459,6 @@ def register(registry: DashboardRegistry) -> None:
                 now = datetime.now(timezone.utc)
 
                 rows.append("<h3>Interface-accessible parameters</h3>")
-                rows.append(hint(SHORTENING_NOTE))
 
                 for param_chain in parameter_nodes:
                     prop = param_chain[-1]
@@ -685,8 +683,7 @@ def register(registry: DashboardRegistry) -> None:
         # written. Not the last provide: a pushing connector answers that from a value it
         # holds, so it says nothing of the value's age.
         return (
-            hint(SHORTENING_NOTE)
-            + hint(
+            hint(
                 "State, last sync and last error are what this instance has seen since it "
                 "started. The last sync is the last value received or written."
             )

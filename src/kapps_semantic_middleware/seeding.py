@@ -1,22 +1,32 @@
 """Shared seeding helpers for knowledge-graph initialization.
 
 These functions load the published/general ontology modules (Core, svc:,
-mes:) into named graphs, and clear the default graph. Both the example
-scenarios and the multi-process factory demo use this library code, so it
-lives here rather than in examples/.
+mes:) into named graphs, set the service ontology's shapes, and clear the
+default graph. A productive store already holds its ontologies and shapes;
+these helpers seed a demonstration or test store, and the middleware never
+calls them. Both the example scenarios and the multi-process factory demo use
+this library code, so it lives here rather than in examples/.
 """
 
 from __future__ import annotations
 
+import logging
 import os
 from importlib import resources
 from urllib.parse import urlsplit
 
-from kapps_triplestore_interface import IRI, TripleStore, TripleStoreResponseError
+from kapps_triplestore_interface import (
+    IRI,
+    TripleStore,
+    TripleStoreNotSupportedError,
+    TripleStoreResponseError,
+)
 
 from kapps_semantic_middleware import _deprecation
 from kapps_semantic_middleware.errors import DeploymentValueError
 from kapps_semantic_middleware.vocabulary import CORE_ONTOLOGY, MES_ONTOLOGY, SVC_ONTOLOGY
+
+logger = logging.getLogger(__name__)
 
 # Named-graph IRIs for seeding — same terms as vocabulary.py's *_ONTOLOGY constants,
 # aliased here because "graph to load ontology X into" is this module's own concern.
@@ -109,11 +119,54 @@ def _read_mes_ontology() -> str:
     )
 
 
+def read_service_shapes() -> str:
+    """Return the packaged SHACL shapes of the svc: ontology, as Turtle (interim name).
+
+    One rule today: every Operation has exactly one status, one of the four values of
+    ``OperationStatus``. The file ships beside ``service.ttl``. It seeds demonstrations and
+    tests and documents the rule; a productive store already holds its shapes, and the
+    middleware never calls this.
+    """
+    return (
+        resources.files("kapps_semantic_middleware")
+        .joinpath("ontology", "service-shapes.ttl")
+        .read_text(encoding="utf-8")
+    )
+
+
+def set_service_shapes(store: TripleStore) -> bool:
+    """Set the service ontology's shapes as the shapes of the store's dataset (interim name).
+
+    ``shapes_set`` replaces every shape of the dataset and validates the data already there,
+    so a seed calls this after it cleared the dataset. On a dataset that does not validate
+    SHACL, the store refuses with ``TripleStoreNotSupportedError``: this logs one line at
+    WARNING and returns ``False``, and the seed goes on without the rule. Any other error
+    passes on unchanged.
+
+    This seeds a demonstration or test store: a productive store already holds its shapes,
+    and the middleware never calls this.
+
+    Returns:
+        Whether the store took the shapes.
+    """
+    try:
+        store.shapes_set(read_service_shapes(), "text/turtle")
+    except TripleStoreNotSupportedError:
+        logger.warning(
+            "Dataset %r does not validate SHACL, so the operation-status rule (exactly one "
+            "status per Operation) is not checked; the seed goes on without it.",
+            store.dataset,
+        )
+        return False
+    return True
+
+
 def clear_dataset(store: TripleStore) -> None:
     """Clear the default graph of the store's dataset (an authorized test dataset).
 
     Always run this before seeding, so a scenario never accumulates residual
-    triples from a previous run or a different scenario.
+    triples from a previous run or a different scenario. It serves demonstrations and tests;
+    the middleware never calls it.
 
     The seed must stop where the store refused the clear. Any error that
     ``graph_clear()`` raises passes on unchanged.
@@ -150,6 +203,9 @@ def load_shared_ontologies(db, *, reload: bool = False) -> None:
     the default graph. So a seed wipes the scenario's own data, and leaves
     these standing. The store reasons across all graphs, so a domain class
     still resolves its cfc: superclass from here.
+
+    This seeds a demonstration or test store: a productive store already holds
+    these ontologies, and the middleware never calls this.
 
     The operation is idempotent. The function skips a present module unless you set reload.
     ``reload`` wipes the three graphs, so it refuses a store that is not disposable, as

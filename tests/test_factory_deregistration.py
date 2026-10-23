@@ -94,7 +94,7 @@ def _kill_factory(proc: subprocess.Popen) -> None:
 
 
 def _unit_service_addresses(db) -> List[str]:
-    """Every `svc:address` currently attached to a Service of one of this factory's units.
+    """Every `svc:hasAddress` currently attached to a Service of one of this factory's units.
 
     Asks by unit IRI rather than by Service IRI, because the Service IRI is minted per
     middleware instance and this test never learns it. Empty means no unit of
@@ -107,7 +107,7 @@ def _unit_service_addresses(db) -> List[str]:
             f"""
             SELECT ?addr WHERE {{
                 ?service <{SVC.isServiceOf}> <{unit_iri}> .
-                ?service <{SVC.address}> ?addr .
+                ?service <{SVC.hasAddress}> ?addr .
             }}
             """,
             convert_bindings=True,
@@ -183,7 +183,7 @@ def stopped_factory(store) -> Iterator[None]:
         _await(
             lambda: bool(_unit_service_addresses(store)),
             READY_TIMEOUT_SECONDS,
-            f"No unit ever registered an svc:address, so a later absence would prove "
+            f"No unit ever registered an svc:hasAddress, so a later absence would prove "
             f"nothing. The launcher said:\n{_tail()}",
         )
 
@@ -220,7 +220,7 @@ def test_a_clean_stop_leaves_no_unit_reachable(stopped_factory, store):
     _await(
         lambda: _unit_service_addresses(store) == [],
         STOP_TIMEOUT_SECONDS,
-        "A unit still advertises an svc:address after a clean stop through the launcher. "
+        "A unit still advertises an svc:hasAddress after a clean stop through the launcher. "
         "The ordered teardown exists so every middleware deregisters while its PLC "
         "still answers; something in that order did not happen.",
     )

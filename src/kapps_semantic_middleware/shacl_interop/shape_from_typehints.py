@@ -84,8 +84,8 @@ def build_workflow_shape(
         shape_iri = URIRef(shape_iri)
 
     # Convert vocabulary IRIs (kapps_triplestore_interface.IRI) to rdflib.URIRef
-    precondition_iri = URIRef(str(SVC.precondition))
-    outcome_iri = URIRef(str(SVC.outcome))
+    precondition_iri = URIRef(str(SVC.hasPrecondition))
+    outcome_iri = URIRef(str(SVC.hasOutcome))
 
     # Create the NodeShape with targetClass
     g.add((shape_iri, RDF.type, SH.NodeShape))

@@ -55,7 +55,7 @@ def _binding(
 ):
     metadata = {str(INF.accessMode): [access_mode]}
     if address is not None:
-        metadata[str(SVC.address)] = [address]
+        metadata[str(SVC.hasAddress)] = [address]
     return ParameterBinding(
         resource_iri=IRI(resource_iri),
         parameter_property=SPEED,

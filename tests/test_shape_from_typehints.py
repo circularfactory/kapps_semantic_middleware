@@ -34,8 +34,8 @@ def test_zero_arg_none_return_is_minimal_shape():
     assert (shape, RDF.type, SH.NodeShape) in g
     assert (shape, SH.targetClass, URIRef(WF)) in g
     # No precondition/outcome for the empty case.
-    assert (shape, URIRef(str(SVC.precondition)), None) not in g
-    assert (shape, URIRef(str(SVC.outcome)), None) not in g
+    assert (shape, URIRef(str(SVC.hasPrecondition)), None) not in g
+    assert (shape, URIRef(str(SVC.hasOutcome)), None) not in g
     assert len(g) == 2
 
 
@@ -50,8 +50,8 @@ def test_args_and_return_populate_precondition_and_outcome():
     move_cls = "http://example.org/kapps-demo#MoveWorkflow"
     g = build_workflow_shape(_move, move_cls)
     ttl = g.serialize(format="turtle")
-    assert "svc:precondition" in ttl
-    assert "svc:outcome" in ttl
+    assert "svc:hasPrecondition" in ttl
+    assert "svc:hasOutcome" in ttl
     assert "xsd:double" in ttl  # distance: float
     assert "xsd:boolean" in ttl  # fast / return: bool
     assert "xsd:string" in ttl  # note: Optional[str]

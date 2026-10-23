@@ -124,7 +124,7 @@ TEACH = {
 SOURCES = {
     "pipe": "The Launcher read this address from one line of the process stdout. A PLC holds "
     "no graph credentials, so it cannot announce itself any other way.",
-    "graph": "The Launcher read this address from svc:address in the knowledge graph. The "
+    "graph": "The Launcher read this address from svc:hasAddress in the knowledge graph. The "
     "process wrote it there itself, when it registered its Service.",
     "flag": "The Launcher chose this address, and it passed the address as a command-line "
     "flag.",

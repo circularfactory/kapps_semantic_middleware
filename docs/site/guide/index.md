@@ -30,7 +30,7 @@ Written in construction order; a reader can go start to finish without forward r
 | {doc}`05-operation-coordination` | Dispatch, the issuer and the Issued Operation, the event trigger, notifications and the intake, pull-and-run, the status lifecycle, handover, recovery |
 | {doc}`06-views-and-projection` | Defining a ClassScope, what a view cannot select, what the northbound projection removes |
 | {doc}`07-writing-to-the-graph-and-to-devices` | Every path that causes a write, creating an instance and the predefined scopes, naming the field that moved, northbound vs. southbound, IRI handling |
-| {doc}`08-provisioning-and-seeding` | **Read first if `ogm=` is a mystery.** The bootstrap order, loading the shared ontologies, authoring the domain TBox, and seeding the instance data a Parameter needs |
+| {doc}`08-provisioning-and-seeding` | **Read first if `ogm=` is a mystery.** The bootstrap order, loading the shared ontologies, authoring the domain TBox, and seeding the instance data a Parameter needs (for a demonstration or test; a productive store already holds them) |
 | {doc}`09-the-state-dashboard` | The page an instance serves about itself, the box registry a subproject extends, hiding a box, posting to its own workflow, and the Logs tab with a logger's level set at run time |
 
 ```{toctree}
@@ -192,7 +192,7 @@ error on materialization merely because its restriction declares `owl:someValues
 triple means *unknown*, never *false*.
 
 **Any prettified or shortened IRI is display only.** Production code carries fully back-resolvable
-IRIs in their mangled form — REST path segments, datamodel field names, `svc:endpoint` triples. A
+IRIs in their mangled form — REST path segments, datamodel field names, `svc:hasEndpoint` triples. A
 consumer that parses a displayed IRI, or round-trips one back into a query, gets a wrong answer
 with no exception raised.
 

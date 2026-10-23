@@ -4,8 +4,8 @@ The OGM is the real one, subclassed only to record each commit it makes, so "one
 counted at the seam that `mw.create()` writes through. A refusal comes from the store's own SHACL
 engine or from its check that an instance to create does not exist yet. Skipped when the
 TRIPLESTORE_* variables are absent (see conftest). The unit counterpart is `test_create_unit.py`.
-A test that needs a shape sets it with the store's `shapes_set`, which replaces every shape
-of the dataset, and removes every shape again at its end.
+A test that needs a shape sets it joined with the shipped shapes (`_shapes.py`), because the
+store's `shapes_set` replaces every shape of the dataset, and restores the shipped ones at its end.
 """
 
 from __future__ import annotations
@@ -17,6 +17,7 @@ from pathlib import Path
 
 import httpx
 import pytest
+from _shapes import restore_shipped_shapes, with_shipped_shapes
 from kapps_ogm import OGM, Create, Update
 from kapps_ogm.utils.class_scope import ClassScope
 from kapps_triplestore_interface import IRI
@@ -211,7 +212,9 @@ def test_a_decision_snapshot_and_its_operations_done_land_in_one_commit(store):
 def test_a_refused_done_leaves_neither_the_done_nor_the_decision_snapshot(store):
     mw, op = _queued_operation(store)
     # The shape admits every status but done.
-    store.shapes_set(_status_shape("queued", "running", "failed"), "text/turtle")
+    store.shapes_set(
+        with_shipped_shapes(_status_shape("queued", "running", "failed")), "text/turtle"
+    )
     try:
         with pytest.raises(TripleStoreInterfaceError, match="ValidationReport"):
             with mw.claim_next() as claimed:
@@ -219,7 +222,7 @@ def test_a_refused_done_leaves_neither_the_done_nor_the_decision_snapshot(store)
                     snapshot.update({DECISION: ["drill"], ABOUT: [claimed.iri]})
                 claimed.result = "drill"
     finally:
-        store.shapes_set("", "text/turtle")
+        restore_shipped_shapes(store)
 
     assert _values(store, op, SVC.hasOperationStatus) == [OperationStatus.FAILED]
     assert _statements_about(store, snapshot.iri) == []

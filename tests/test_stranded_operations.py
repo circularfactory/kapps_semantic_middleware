@@ -78,9 +78,9 @@ class _Ogm:
     def service(self, iri: IRI, heartbeat: Optional[datetime], address: bool = True) -> None:
         self.add(iri, SVC.isServiceOf, RESOURCE)
         if address:
-            self.add(iri, SVC.address, Literal("http://localhost:1"))
+            self.add(iri, SVC.hasAddress, Literal("http://localhost:1"))
         if heartbeat is not None:
-            self.add(iri, SVC.lastHeartbeat, Literal(heartbeat.isoformat(), datatype=XSD.dateTime))
+            self.add(iri, SVC.hasLastHeartbeat, Literal(heartbeat.isoformat(), datatype=XSD.dateTime))
 
     def realizes(self, workflow: IRI, service: IRI, capability: IRI = CAPABILITY) -> None:
         self.add(workflow, SVC.isWorkflowOf, service)

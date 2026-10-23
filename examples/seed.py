@@ -30,6 +30,7 @@ from kapps_semantic_middleware.seeding import (
     _read_mes_ontology,
     clear_dataset,
     load_shared_ontologies,
+    set_service_shapes,
 )
 from kapps_semantic_middleware.vocabulary import MES
 
@@ -144,9 +145,11 @@ def create_resource(db, resource_iri: IRI, resource_class: IRI) -> None:
 
 
 def seed_scenario1(db) -> None:
-    """Full scenario 1 seed: clear, load ontologies, and create the hello + planner resources."""
+    """Full scenario 1 seed: clear, load ontologies, set the service ontology's shapes, and
+    create the hello + planner resources."""
     clear_dataset(db)
     load_scenario1_ontologies(db)
+    set_service_shapes(db)
     create_resource(db, HELLO_RESOURCE, HELLO_RESOURCE_CLASS)
     create_resource(db, PLANNER_RESOURCE, PLANNER_RESOURCE_CLASS)
 
@@ -155,7 +158,7 @@ def seed_scenario3(db, ogm) -> None:
     """Full scenario 3 seed.
 
     Clears the graph, loads the shared modules and the TransferUnit classes,
-    and creates one TransferUnit with two belts and two light barriers,
+    sets the service ontology's shapes, and creates one TransferUnit with two belts and two light barriers,
     **through the OGM**.
 
     This function creates instances rather than authored as Turtle. So the seed
@@ -167,6 +170,7 @@ def seed_scenario3(db, ogm) -> None:
     """
     clear_dataset(db)
     load_scenario3_ontologies(db)
+    set_service_shapes(db)
 
     for belt, position in (
         (CONVEYOR_BELT_LEFT, "left"),
@@ -234,9 +238,11 @@ def seed_scenario3(db, ogm) -> None:
 
 
 def seed_scenario2(db) -> None:
-    """Full scenario 2 (door) seed: clear, load ontologies, create the door + robot resources."""
+    """Full scenario 2 (door) seed: clear, load ontologies, set the service ontology's shapes,
+    create the door + robot resources."""
     clear_dataset(db)
     load_scenario2_ontologies(db)
+    set_service_shapes(db)
     create_resource(db, DOOR_RESOURCE, DOOR_RESOURCE_CLASS)
     create_resource(db, MOBILE_ROBOT, MOBILE_ROBOT_RESOURCE_CLASS)
 
@@ -244,8 +250,8 @@ def seed_scenario2(db) -> None:
 def seed_handover(db, ogm) -> None:
     """Full handover seed.
 
-    Clears the graph, loads the mes: and handover ontologies, and creates
-    two transfer modules and a box. It gives the destination the ability
+    Clears the graph, loads the mes: and handover ontologies, sets the
+    service ontology's shapes, and creates two transfer modules and a box. It gives the destination the ability
     complementary to Pass (Retrieve). Makes the source currently possess the
     box (Core reified possession, written through the OGM).
     """
@@ -254,6 +260,7 @@ def seed_handover(db, ogm) -> None:
     db.graph_add(
         _read_demo_ontology("demo_handover.ttl"), content_type="application/x-turtle"
     )
+    set_service_shapes(db)
     create_resource(db, HANDOVER_SOURCE, TRANSFER_MODULE_CLASS)
     create_resource(db, HANDOVER_DEST, TRANSFER_MODULE_CLASS)
     create_resource(db, HANDOVER_BOX, BOX_CLASS)

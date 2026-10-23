@@ -428,8 +428,9 @@ class DashboardRegistry:
         return self._boxes.get(box_id)
 
 
-#: Shown above any table that shortens an IRI. Stated once, in one place, so every box
-#: says it the same way and a subproject's box can say it too.
+#: The middleware no longer uses this note: an IRI cell shows its local name and keeps the
+#: full IRI on hover, which needs no sentence. It stays importable, with this value, because
+#: a consumer still imports it; a later release removes it.
 SHORTENING_NOTE = (
     "Identifiers and generated paths are shortened for readability. "
     "Hold the pointer over any shortened value to read it in full."
@@ -439,8 +440,7 @@ SHORTENING_NOTE = (
 def hint(text: str) -> str:
     """Render a short explanatory line above a table.
 
-    Use it wherever a box abbreviates what it shows. A reader who cannot tell that a value
-    was shortened has been given a wrong value, not a short one.
+    Use it for any short explanatory line that a table needs above it.
     """
     return f'<p class="hint">{escape(text)}</p>'
 
@@ -569,7 +569,7 @@ def _shell_html(
     checked. The choice is made here, on the server, so a link can open a tab with no script.
 
     `instance_name` is the name of the instance's resource. The title and the heading say
-    "<instance_name> — dashboard", so each browser tab shows which instance it is. Without a
+    "<instance_name> Dashboard", so each browser tab shows which instance it is. Without a
     name, for an instance that represents no resource, they say "Middleware Dashboard".
 
     An empty registry is a supported state: a subproject calls
@@ -656,7 +656,7 @@ def _shell_html(
         )
 
     heading = (
-        f"{escape(instance_name)} — dashboard" if instance_name else "Middleware Dashboard"
+        f"{escape(instance_name)} Dashboard" if instance_name else "Middleware Dashboard"
     )
 
     return f"""<!DOCTYPE html>
@@ -673,7 +673,7 @@ def _shell_html(
 <body>
 <header>
     <h1>{heading}</h1>
-    <p>State the middleware already holds in memory.</p>
+    <p>Visualization of the middleware state</p>
 </header>
 {"".join(tab_inputs)}
 <div class="tabs">
@@ -792,7 +792,7 @@ def enable_dashboard(
     (``/openapi.json``, which ``/docs`` renders): they are not part of the instance's API.
 
     The page is named after the instance's resource: its ``rdfs:label``, else the local name
-    of its IRI, as in "Module 1 — dashboard". The name is read from the graph here, once, and
+    of its IRI, as in "Module 1 Dashboard". The name is read from the graph here, once, and
     no render reads it again.
 
     ``first_tab`` names the tab that the page opens on, by the title the tab bar shows. A link

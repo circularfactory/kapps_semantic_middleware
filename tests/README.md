@@ -2,9 +2,18 @@
 
 Run the suite with `uv run pytest`. Tests marked `live` (any test that asks for the `store`
 fixture) need the `TRIPLESTORE_*` variables and run against the dataset `Tests`; `-m "not live"`
-selects the rest. A live test that needs a SHACL shape sets it with the store's `shapes_set`,
-which replaces every shape of the dataset, and removes every shape again at its end. So a live
-run also removes the shapes that other code loaded into `Tests`.
+selects the rest.
+
+The live tests seed the ontologies and shapes into a disposable dataset: a productive store already
+holds them.
+
+A live run starts by clearing the default graph of `Tests` and setting the middleware's shipped
+shapes (`service-shapes.ttl`, beside the service ontology) as the dataset's shapes, so every live
+test runs with the operation-status rule active: each Operation has exactly one status. A live
+test that needs a SHACL shape of its own sends it joined with the shipped shapes
+(`_shapes.with_shipped_shapes`), because the store's `shapes_set` replaces every shape of the
+dataset, and restores the shipped shapes at its end (`_shapes.restore_shipped_shapes`), never an
+empty document. So a live run replaces the shapes that other code loaded into `Tests`.
 
 ## The shipped stack
 

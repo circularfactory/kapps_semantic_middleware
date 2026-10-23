@@ -61,6 +61,6 @@ Heartbeat
     A resource-mode Service's periodic re-assertion of its own liveness. Refreshes a timestamp on its Service individual via an internal interval-based Workflow. Read by watchdog-mode instances to decide staleness.
 
 Address vs. Endpoint
-    `svc:address` is a Service's base URL, set on startup and removed on deregistration. `svc:endpoint` is the full, directly callable URL for one specific Workflow or StateProperty, also set on startup and removed on deregistration. They are distinct properties on distinct entity types.
+    `svc:hasAddress` is a Service's base URL, set on startup and removed on deregistration. `svc:hasEndpoint` is the full, directly callable URL for one specific Workflow or StateProperty, also set on startup and removed on deregistration. They are distinct properties on distinct entity types.
 
 ```

@@ -61,11 +61,11 @@ def test_heartbeat_write_and_refresh(store):
     asyncio.run(mw._register_service())
 
     asyncio.run(mw.emit_heartbeat())
-    hb1 = db.triples_get(sub=service_iri, pred=SVC.lastHeartbeat)
+    hb1 = db.triples_get(sub=service_iri, pred=SVC.hasLastHeartbeat)
     assert len(hb1) == 1, "exactly one heartbeat after first emit"
 
     asyncio.run(mw.emit_heartbeat())
-    hb2 = db.triples_get(sub=service_iri, pred=SVC.lastHeartbeat)
+    hb2 = db.triples_get(sub=service_iri, pred=SVC.hasLastHeartbeat)
     assert len(hb2) == 1, "heartbeat is replaced, not accumulated"
 
 
@@ -108,8 +108,8 @@ def test_watchdog_sweeps_only_stale_service(store):
     assert str(stale_service) in swept
     assert str(fresh_service) not in swept
     # The stale service lost its reachability; the fresh one kept it.
-    assert not db.triples_get(sub=stale_service, pred=SVC.address)
-    assert db.triples_get(sub=fresh_service, pred=SVC.address)
+    assert not db.triples_get(sub=stale_service, pred=SVC.hasAddress)
+    assert db.triples_get(sub=fresh_service, pred=SVC.hasAddress)
     # The stale service's individual is preserved (only reachability removed).
     from rdflib.namespace import RDF
 
@@ -211,8 +211,8 @@ def test_a_live_sibling_that_realizes_the_capability_keeps_the_operation(store):
     swept, notified = _sweep_recording_notifications(store)
 
     assert str(dead) in swept and str(live) not in swept
-    assert not db.triples_get(sub=dead, pred=SVC.address)
-    assert db.triples_get(sub=live, pred=SVC.address)
+    assert not db.triples_get(sub=dead, pred=SVC.hasAddress)
+    assert db.triples_get(sub=live, pred=SVC.hasAddress)
     assert _status(db, op_iri) == OperationStatus.QUEUED
     assert notified == []
 
@@ -232,8 +232,8 @@ def test_a_live_sibling_that_does_not_realize_the_capability_does_not_shield_it(
     swept, notified = _sweep_recording_notifications(store)
 
     assert str(controller) in swept and str(monitor) not in swept
-    assert not db.triples_get(sub=controller, pred=SVC.address)
-    assert db.triples_get(sub=monitor, pred=SVC.address)
+    assert not db.triples_get(sub=controller, pred=SVC.hasAddress)
+    assert db.triples_get(sub=monitor, pred=SVC.hasAddress)
     assert _status(db, queued_op) == OperationStatus.FAILED
     assert _status(db, running_op) == OperationStatus.FAILED
     assert sorted(notified) == sorted(
@@ -288,8 +288,8 @@ def test_a_dead_claimer_fails_its_running_operation_despite_a_live_realizer(stor
         claim.gen.close()  # the exit of a crash: the commit writes nothing on GeneratorExit
 
     assert str(a) in swept and str(b) not in swept
-    assert not db.triples_get(sub=a, pred=SVC.address)
-    assert db.triples_get(sub=b, pred=SVC.address)
+    assert not db.triples_get(sub=a, pred=SVC.hasAddress)
+    assert db.triples_get(sub=b, pred=SVC.hasAddress)
     assert _status(db, claimed_op) == OperationStatus.FAILED
     assert _status(db, queued_op) == OperationStatus.QUEUED
     assert notified == [(claimed_op, seed.PLANNER_RESOURCE)]

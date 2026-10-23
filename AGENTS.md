@@ -36,7 +36,7 @@ without forward references.
 | [`docs/mechanics/05-operation-coordination.md`](docs/mechanics/05-operation-coordination.md) | Dispatch, the issuer and the Issued Operation, the event trigger, notifications and the intake, pull-and-run, the status lifecycle, handover, recovery |
 | [`docs/mechanics/06-views-and-projection.md`](docs/mechanics/06-views-and-projection.md) | Defining a ClassScope, what a view cannot select, what the northbound projection removes |
 | [`docs/mechanics/07-writing-to-the-graph-and-to-devices.md`](docs/mechanics/07-writing-to-the-graph-and-to-devices.md) | Every path that causes a write, creating an instance and the predefined scopes, naming the field that moved, northbound vs. southbound, IRI handling |
-| [`docs/mechanics/08-provisioning-and-seeding.md`](docs/mechanics/08-provisioning-and-seeding.md) | **Read first if `ogm=` is a mystery.** The bootstrap order, loading the shared ontologies, authoring the domain TBox, and seeding the instance data a Parameter needs |
+| [`docs/mechanics/08-provisioning-and-seeding.md`](docs/mechanics/08-provisioning-and-seeding.md) | **Read first if `ogm=` is a mystery.** The bootstrap order, loading the shared ontologies, authoring the domain TBox, and seeding the instance data a Parameter needs (for a demonstration or test; a productive store already holds them) |
 | [`docs/mechanics/09-the-state-dashboard.md`](docs/mechanics/09-the-state-dashboard.md) | The page an instance serves about itself, the box registry a subproject extends, hiding a box, posting to its own workflow, and the Logs tab with a logger's level set at run time |
 
 ### Where the reasoning lives
@@ -88,7 +88,8 @@ Binding internals, if you are adding a protocol, live under
 `wiring`.
 
 > `kapps_semantic_middleware/ontology/` is **not** a Python module. It is the directory holding the
-> three vocabulary files (`core.ttl`, `mes.ttl`, `service.ttl`). Importing from it fails.
+> three vocabulary files (`core.ttl`, `mes.ttl`, `service.ttl`) and the service ontology's SHACL
+> shapes (`service-shapes.ttl`). Importing from it fails.
 
 ## Generic and circular-factory-specific modules
 
@@ -201,7 +202,7 @@ error on materialization merely because its restriction declares `owl:someValues
 triple means *unknown*, never *false*.
 
 **Any prettified or shortened IRI is display only.** Production code carries fully back-resolvable
-IRIs in their mangled form — REST path segments, datamodel field names, `svc:endpoint` triples. A
+IRIs in their mangled form — REST path segments, datamodel field names, `svc:hasEndpoint` triples. A
 consumer that parses a displayed IRI, or round-trips one back into a query, gets a wrong answer
 with no exception raised.
 

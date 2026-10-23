@@ -65,9 +65,9 @@ def _explicit_about(db, *subjects: IRI) -> set:
 
 
 def _without_heartbeat(statements: set) -> set:
-    """``statements`` without the ``svc:lastHeartbeat`` ones, whose literal each registration
+    """``statements`` without the ``svc:hasLastHeartbeat`` ones, whose literal each registration
     refreshes."""
-    return {t for t in statements if t[1] != str(SVC.lastHeartbeat)}
+    return {t for t in statements if t[1] != str(SVC.hasLastHeartbeat)}
 
 
 def _register_hello(ogm: OGM, address: str) -> tuple[IRI, IRI, IRI]:
@@ -183,7 +183,7 @@ class TestRestartIntegration:
         self, store
     ):
         """The address and the endpoints come back; nothing else is written. The heartbeat is
-        the one exception, by design: the registration writes a fresh ``svc:lastHeartbeat`` with
+        the one exception, by design: the registration writes a fresh ``svc:hasLastHeartbeat`` with
         the address, so its literal is left out of the comparison (the Service has exactly one)."""
         seed.seed_scenario2(store)
         ogm = OGM(db=store)
@@ -195,7 +195,7 @@ class TestRestartIntegration:
 
         restored = _explicit_about(store, *written)
         assert _without_heartbeat(restored) == registered
-        assert len([t for t in restored if t[1] == str(SVC.lastHeartbeat)]) == 1
+        assert len([t for t in restored if t[1] == str(SVC.hasLastHeartbeat)]) == 1
 
     def test_a_restart_on_another_address_repoints_the_capability_and_writes_nothing_else(
         self, store

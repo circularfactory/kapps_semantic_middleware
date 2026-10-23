@@ -403,11 +403,11 @@ def _spawn_watchdog(dataset: str) -> ChildHandle:
 
 
 def _check_service_address(db: TripleStore, resource_iri: str) -> Optional[str]:
-    """One-shot check of the graph for the svc:address of a resource. No wait, no loop."""
+    """One-shot check of the graph for the svc:hasAddress of a resource. No wait, no loop."""
     sparql = f"""
     SELECT ?addr WHERE {{
         ?svc <{SVC.isServiceOf}> <{resource_iri}> .
-        ?svc <{SVC.address}> ?addr .
+        ?svc <{SVC.hasAddress}> ?addr .
     }}
     """
     result = db.query(sparql, convert_bindings=True)

@@ -100,7 +100,7 @@ every one of those steps is a round trip to a store that may not be on this mach
 
 LIVE_TIMEOUT_SECONDS = 60.0
 """How long every participant then gets to reach ``live``. A middleware and the control station
-turn live only once their ``svc:address`` is in the graph and the launcher's watch thread has
+turn live only once their ``svc:hasAddress`` is in the graph and the launcher's watch thread has
 seen it, and that thread polls once a second."""
 
 MQTT_TIMEOUT_SECONDS = 15.0

@@ -2,8 +2,8 @@
 
 Every knowledge-graph write of the middleware goes through the OGM (`OGM.create`,
 `OGM.commit`), which checks it against the ontology and sends it as one update. Only the seeding
-module writes through the access module directly: it provisions a dataset (clears it and loads
-the shared ontologies) before any service runs.
+module writes through the access module directly: it provisions a dataset (clears it, loads
+the shared ontologies and sets the service ontology's shapes) before any service runs.
 
 This parses every module under the package's source with `ast` and collects each call of an
 attribute whose name is a mutation operation of the store's contract

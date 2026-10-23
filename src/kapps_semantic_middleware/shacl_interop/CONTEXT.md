@@ -16,14 +16,14 @@ vocabulary, once `kapps_ogm` absorbs this capability.
 ## Language
 
 **Precondition shape**:
-The `sh:property` group reachable via `svc:precondition` on a Workflow class's `sh:NodeShape`
+The `sh:property` group reachable via `svc:hasPrecondition` on a Workflow class's `sh:NodeShape`
 (`sh:targetClass`), describing the arguments a Workflow's underlying Python function requires.
 Derived from the function's type hints, not hand-authored.
 _Avoid_: Argument schema, input schema (those describe the Python-level shape; Precondition
 shape is specifically its SHACL-RDF encoding).
 
 **Outcome shape**:
-The `sh:property` group reachable via `svc:outcome` on the same `sh:NodeShape`, describing the
+The `sh:property` group reachable via `svc:hasOutcome` on the same `sh:NodeShape`, describing the
 Workflow's return value. Same derivation and encoding pattern as Precondition shape.
 
 **Signature-derived shape**:

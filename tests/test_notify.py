@@ -33,13 +33,13 @@ class _SenderStore:
     """The sender's view of the graph: the live Services of the receiver and their addresses."""
 
     def __init__(self, addresses: dict):
-        self._addresses = addresses  # Service IRI -> svc:address
+        self._addresses = addresses  # Service IRI -> svc:hasAddress
 
     def query(self, query, update=False, convert_bindings=False):
         if update:
             raise AssertionError(f"notify() wrote to the store: {query}")
         assert f"<{RECEIVER}>" in query
-        assert f"<{SVC.address}>" in query  # only a Service with an address is live
+        assert f"<{SVC.hasAddress}>" in query  # only a Service with an address is live
         bindings = [{"svc": svc, "addr": addr} for svc, addr in self._addresses.items()]
         return {"results": {"bindings": bindings}}
 

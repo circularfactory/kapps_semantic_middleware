@@ -80,7 +80,7 @@ def _publish_service(store, resource_iri, address=SERVICE_ADDRESS):
         INSERT DATA {{
           <{service_iri}> a <{SVC.Service}> ;
               <{SVC.isServiceOf}> <{resource_iri}> ;
-              <{SVC.address}> "{address}" .
+              <{SVC.hasAddress}> "{address}" .
         }}
         """,
         update=True,
@@ -515,14 +515,14 @@ class TestServiceJoinRecognition:
 
         plan = _plan(ogm, unit_scope)
 
-        assert all(b.get(SVC.address) == address for b in plan.bindings)
+        assert all(b.get(SVC.hasAddress) == address for b in plan.bindings)
 
     def test_a_resource_with_no_service_carries_no_address(self, scenario3, unit_scope):
         _, ogm = scenario3
 
         plan = _plan(ogm, unit_scope)
 
-        assert all(b.get(SVC.address) is None for b in plan.bindings)
+        assert all(b.get(SVC.hasAddress) is None for b in plan.bindings)
 
     def test_bindings_carry_the_root_and_the_path_to_their_own_holder(self, scenario3, unit_scope):
         """The left belt's speed is one hop from the unit; the structural path reflects it."""

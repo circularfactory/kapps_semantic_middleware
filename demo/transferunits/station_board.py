@@ -377,7 +377,7 @@ def mount_onto(
                 # still has the peer's broker address in `ParameterBinding.metadata` for
                 # the life of the process. Fixing that needs kapps_ogm to fetch a
                 # parameter node partially, which it cannot do yet; accepted until it can.
-                rendered_elsewhere = {str(INF.accessMode), str(SVC.address)}
+                rendered_elsewhere = {str(INF.accessMode), str(SVC.hasAddress)}
                 facets: Dict[str, Any] = {}
                 for key, val in binding.metadata.items():
                     if key in rendered_elsewhere or key in pruned_set:

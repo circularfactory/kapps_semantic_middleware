@@ -69,7 +69,7 @@ def _start_server(middleware: SemanticMiddleware, port: int) -> tuple[uvicorn.Se
     (``uvicorn/server.py``: *"Signals can only be listened to from the main thread"*), so off
     it, SIGTERM and SIGINT never reach the ASGI lifespan, and the library's three
     ``on_shutdown`` callbacks -- deregistration among them -- never run. A daemon
-    thread then dies with the process without unwinding, leaving an ``svc:address`` published
+    thread then dies with the process without unwinding, leaving an ``svc:hasAddress`` published
     for a process that is gone.
 
     A walkthrough script wants to keep doing things after the server is up, which is why the
@@ -142,8 +142,8 @@ def step_3_inspect_registration(db: TripleStore, ogm: OGM) -> Registration:
     print("Structural triples present (isServiceOf, realizedByWorkflow, isWorkflowOf).")
     print("Note: only the instance-owned direction of each inverse is materialized.")
 
-    address_triples = list(db.triples_get(sub=service_iri, pred=SVC.address))
-    endpoint_triples = list(db.triples_get(sub=workflow_iri, pred=SVC.endpoint))
+    address_triples = list(db.triples_get(sub=service_iri, pred=SVC.hasAddress))
+    endpoint_triples = list(db.triples_get(sub=workflow_iri, pred=SVC.hasEndpoint))
     print(f"Service address advertised:   {address_triples[0][2] if address_triples else 'NONE'}")
     print(f"Workflow endpoint advertised: {endpoint_triples[0][2] if endpoint_triples else 'NONE'}")
     return Registration(service_iri, capability_iri, workflow_iri)
@@ -170,16 +170,16 @@ def step_4_dispatch_and_run(
     )
     # The planner is *served*, not merely constructed. Constructing a resource-mode
     # instance and never running it means `on_start_up` never fires: no Service individual,
-    # no `svc:address`, no heartbeat, no event-trigger route — so `mode="resource"` would be
+    # no `svc:hasAddress`, no heartbeat, no event-trigger route — so `mode="resource"` would be
     # a label with no runtime consequence, and a reader would reasonably copy that. A client
     # that dispatches work is a peer like any other, and peers are discoverable.
     planner_server, planner_thread = _start_server(planner, PLANNER_PORT)
     assert planner.service_iri is not None, "the planner is served, so it must have registered"
     planner_service = planner.service_iri
-    planner_address = list(db.triples_get(sub=planner_service, pred=SVC.address))
+    planner_address = list(db.triples_get(sub=planner_service, pred=SVC.hasAddress))
     print(f"Planner served on port {PLANNER_PORT}")
     print(f"  Service registered:   {bool(planner_address)}")
-    print(f"  svc:address in graph: {planner_address[0][2] if planner_address else 'NONE'}")
+    print(f"  svc:hasAddress in graph: {planner_address[0][2] if planner_address else 'NONE'}")
     assert planner_address, "the planner is served, so it must be discoverable in the graph"
 
     with planner.issue_operation(
@@ -202,8 +202,8 @@ def step_5_inspect_decision_provenance(db: TripleStore, operation_iri: IRI) -> N
     print("\nStep 5 — The Decision is Now Traceable in the Graph (R12)")
     status = list(db.triples_get(sub=operation_iri, pred=SVC.hasOperationStatus))
     executed_by = list(db.triples_get(sub=operation_iri, pred=SVC.executedByWorkflow))
-    timestamp = list(db.triples_get(sub=operation_iri, pred=SVC.executionTimestamp))
-    result = list(db.triples_get(sub=operation_iri, pred=SVC.executionResult))
+    timestamp = list(db.triples_get(sub=operation_iri, pred=SVC.hasExecutionTimestamp))
+    result = list(db.triples_get(sub=operation_iri, pred=SVC.hasExecutionResult))
 
     # The graph stores instants in UTC, so the printed value is UTC and is labelled as such --
     # unlabelled, a reader in another zone reads their own wall clock and sees it as wrong.
@@ -212,8 +212,8 @@ def step_5_inspect_decision_provenance(db: TripleStore, operation_iri: IRI) -> N
     print(f"Terminal state + provenance recorded on {operation_iri}:")
     print(f"  hasOperationStatus:    {status[0][2] if status else 'NONE'}")
     print(f"  executedByWorkflow: {executed_by[0][2] if executed_by else 'NONE'}")
-    print(f"  executionTimestamp: {executed_at}")
-    print(f"  executionResult:    {result[0][2] if result else 'NONE'}")
+    print(f"  hasExecutionTimestamp: {executed_at}")
+    print(f"  hasExecutionResult:    {result[0][2] if result else 'NONE'}")
     assert status and str(status[0][2]) == OperationStatus.DONE
 
 
@@ -238,9 +238,9 @@ def step_6_shutdown_and_verify(
         _stop(server, thread)
     time.sleep(0.5)
 
-    address_after = list(db.triples_get(sub=registration.service_iri, pred=SVC.address))
-    endpoint_after = list(db.triples_get(sub=registration.workflow_iri, pred=SVC.endpoint))
-    planner_address_after = list(db.triples_get(sub=planner_service, pred=SVC.address))
+    address_after = list(db.triples_get(sub=registration.service_iri, pred=SVC.hasAddress))
+    endpoint_after = list(db.triples_get(sub=registration.workflow_iri, pred=SVC.hasEndpoint))
+    planner_address_after = list(db.triples_get(sub=planner_service, pred=SVC.hasAddress))
 
     print("After shutdown:")
     print(f"  Service address removed:   {len(address_after) == 0}")

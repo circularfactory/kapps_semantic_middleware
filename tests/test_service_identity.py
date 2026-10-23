@@ -2,7 +2,7 @@
 
 `mint_service_iri` used to be a pure function of the resource. Two middlewares bound
 to one resource shared a single `svc:Service` node. The second registration overwrote
-the first `svc:address`. Both heartbeated the same `svc:lastHeartbeat`. Either shutdown
+the first `svc:hasAddress`. Both heartbeated the same `svc:hasLastHeartbeat`. Either shutdown
 deregistered the survivor. None of it failed loudly. These tests pin the two properties
 that fix it. A discriminator **stable across restarts of the same deployment**.
 **Distinct between concurrent instances**. The discovery helper replaces reconstructing
@@ -118,7 +118,7 @@ class TestTwoInstancesOnOneResource:
 
         assert mw_a.service_iri != mw_b.service_iri
         for mw in (mw_a, mw_b):
-            addresses = store.triples_get(sub=mw.service_iri, pred=SVC.address)
+            addresses = store.triples_get(sub=mw.service_iri, pred=SVC.hasAddress)
             assert [str(t[2]) for t in addresses] == [mw.address]
             assert store.triple_exists((mw.service_iri, SVC.isServiceOf, seed.HELLO_RESOURCE))
 
@@ -126,7 +126,7 @@ class TestTwoInstancesOnOneResource:
         mw_a, mw_b = _two_registered_instances(store)
 
         def heartbeats(mw) -> list[str]:
-            return [str(t[2]) for t in store.triples_get(sub=mw.service_iri, pred=SVC.lastHeartbeat)]
+            return [str(t[2]) for t in store.triples_get(sub=mw.service_iri, pred=SVC.hasLastHeartbeat)]
 
         # Registration writes each Service's first heartbeat with its address.
         assert len(heartbeats(mw_a)) == 1
@@ -147,13 +147,13 @@ class TestTwoInstancesOnOneResource:
         asyncio.run(mw_b.emit_heartbeat())
         asyncio.run(mw_a._deregister_service())
 
-        assert not store.triples_get(sub=mw_a.service_iri, pred=SVC.address)
-        assert store.triples_get(sub=mw_b.service_iri, pred=SVC.address)
+        assert not store.triples_get(sub=mw_a.service_iri, pred=SVC.hasAddress)
+        assert store.triples_get(sub=mw_b.service_iri, pred=SVC.hasAddress)
         reachable = services_of_resource(OGM(db=store), seed.HELLO_RESOURCE, reachable_only=True)
         assert reachable == [mw_b.service_iri]
         # Discoverable is not the same as alive. The survivor must hold its own heartbeat.
         # A shared node could not have expressed this.
-        assert len(store.triples_get(sub=mw_b.service_iri, pred=SVC.lastHeartbeat)) == 1
+        assert len(store.triples_get(sub=mw_b.service_iri, pred=SVC.hasLastHeartbeat)) == 1
 
     def test_a_restart_reuses_its_node_rather_than_orphaning_one(self, store):
         mw_a, _ = _two_registered_instances(store)
@@ -182,8 +182,8 @@ class TestTwoInstancesOnOneResource:
         swept = sweep_stale_services(ogm, max_age_seconds=60.0)
 
         assert mw_dead.service_iri in swept and mw_live.service_iri not in swept
-        assert not store.triples_get(sub=mw_dead.service_iri, pred=SVC.address)
-        assert store.triples_get(sub=mw_live.service_iri, pred=SVC.address)
+        assert not store.triples_get(sub=mw_dead.service_iri, pred=SVC.hasAddress)
+        assert store.triples_get(sub=mw_live.service_iri, pred=SVC.hasAddress)
 
     def test_services_of_resource_finds_both(self, store):
         mw_a, mw_b = _two_registered_instances(store)

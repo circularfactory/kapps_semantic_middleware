@@ -104,13 +104,13 @@ svc:providesCapability rdf:type owl:ObjectProperty ;
     rdfs:range cfc:Capability ;
     owl:inverseOf svc:providedByStateProperty .
 
-svc:precondition rdf:type owl:ObjectProperty ;
-    rdfs:label "precondition" ;
+svc:hasPrecondition rdf:type owl:ObjectProperty ;
+    rdfs:label "hasPrecondition" ;
     rdfs:comment "Points from a Workflow to the description of its arguments (input parameters). Used by the SHACL shape of a workflow subclass to describe the precondition that must be satisfied for invocation. The range is left open because the concrete SHACL shape is authored per workflow class, not defined in this vocabulary module." ;
     rdfs:domain svc:Workflow .
 
-svc:outcome rdf:type owl:ObjectProperty ;
-    rdfs:label "outcome" ;
+svc:hasOutcome rdf:type owl:ObjectProperty ;
+    rdfs:label "hasOutcome" ;
     rdfs:comment "Points from a Workflow to the description of its return value. Used by the SHACL shape of a workflow subclass to describe the outcome produced by invocation. The range is left open because the concrete SHACL shape is authored per workflow class, not defined in this vocabulary module." ;
     rdfs:domain svc:Workflow .
 
@@ -118,21 +118,21 @@ svc:outcome rdf:type owl:ObjectProperty ;
 # Datatype Properties
 #################################################################
 
-svc:address rdf:type owl:DatatypeProperty ;
-    rdfs:label "address" ;
-    rdfs:comment "The Service's base URL, set at startup and removed at deregistration or when detected as stale by a watchdog-mode instance. Distinct from svc:endpoint, which is the full callable URL for a specific Workflow or StateProperty." ;
+svc:hasAddress rdf:type owl:DatatypeProperty ;
+    rdfs:label "hasAddress" ;
+    rdfs:comment "The Service's base URL, set at startup and removed at deregistration or when detected as stale by a watchdog-mode instance. Distinct from svc:hasEndpoint, which is the full callable URL for a specific Workflow or StateProperty." ;
     rdfs:domain svc:Service ;
     rdfs:range xsd:anyURI .
 
-svc:endpoint rdf:type owl:DatatypeProperty ;
-    rdfs:label "endpoint" ;
+svc:hasEndpoint rdf:type owl:DatatypeProperty ;
+    rdfs:label "hasEndpoint" ;
     rdfs:comment "The full, directly-callable URL for one specific Workflow or StateProperty. Set at startup and removed at deregistration or staleness. Stored on both the Workflow/StateProperty and derivable from the Service's address to remove coupling: any caller with just a Workflow or StateProperty IRI can invoke it with one property read, without walking the graph to find the Service and knowing route-naming conventions." ;
     rdfs:domain [ owl:unionOf ( svc:Workflow svc:StateProperty ) ] ;
     rdfs:range xsd:anyURI .
 
-svc:lastHeartbeat rdf:type owl:DatatypeProperty ;
-    rdfs:label "lastHeartbeat" ;
-    rdfs:comment "The Service's liveness timestamp, periodically refreshed by an internal interval-based Workflow (the heartbeat mechanism). Read by watchdog-mode middleware instances to decide whether a resource-mode Service has become stale and should have its svc:address and svc:endpoint triples removed." ;
+svc:hasLastHeartbeat rdf:type owl:DatatypeProperty ;
+    rdfs:label "hasLastHeartbeat" ;
+    rdfs:comment "The Service's liveness timestamp, periodically refreshed by an internal interval-based Workflow (the heartbeat mechanism). Read by watchdog-mode middleware instances to decide whether a resource-mode Service has become stale and should have its svc:hasAddress and svc:hasEndpoint triples removed." ;
     rdfs:domain svc:Service ;
     rdfs:range xsd:dateTime .
 
@@ -149,7 +149,7 @@ svc:lastHeartbeat rdf:type owl:DatatypeProperty ;
 
 svc:hasOperationStatus rdf:type owl:DatatypeProperty ;
     rdfs:label "hasOperationStatus" ;
-    rdfs:comment "The lifecycle state of an Operation: queued (created and addressed, awaiting pull) -> running (pulled, in progress) -> done | failed (terminal). Written onto a cfc:Operation to drive coordination and recovery. The terminal value (done vs failed) also carries whether execution succeeded, replacing the former svc:executionSuccess boolean. Values are plain xsd:string literals; there is no status class or enumerated individuals in v1." ;
+    rdfs:comment "The lifecycle state of an Operation: queued (created and addressed, awaiting pull) -> running (pulled, in progress) -> done | failed (terminal). Written onto a cfc:Operation to drive coordination and recovery. The terminal value (done vs failed) also carries whether execution succeeded, replacing the former svc:executionSuccess boolean. Values are plain xsd:string literals; there is no status class or enumerated individuals in v1. An Operation has exactly one status, written in the commit that creates the Operation, replaced atomically; the shape svc:OperationShape in service-shapes.ttl states the rule for a store that validates SHACL." ;
     rdfs:domain cfc:Operation ;
     rdfs:range xsd:string .
 
@@ -165,20 +165,20 @@ svc:executedByWorkflow rdf:type owl:ObjectProperty ;
     rdfs:domain cfc:Operation ;
     rdfs:range svc:Workflow .
 
-svc:executionTimestamp rdf:type owl:DatatypeProperty ;
-    rdfs:label "executionTimestamp" ;
+svc:hasExecutionTimestamp rdf:type owl:DatatypeProperty ;
+    rdfs:label "hasExecutionTimestamp" ;
     rdfs:comment "The time at which the Operation reached its terminal state (the pull-and-run transition). Part of the outcome recorded on the Operation." ;
     rdfs:domain cfc:Operation ;
     rdfs:range xsd:dateTime .
 
-svc:executionResult rdf:type owl:DatatypeProperty ;
-    rdfs:label "executionResult" ;
+svc:hasExecutionResult rdf:type owl:DatatypeProperty ;
+    rdfs:label "hasExecutionResult" ;
     rdfs:comment "An optional serialized (string) representation of the value the Workflow returned when the Operation was pulled and run. Part of the outcome recorded on the Operation." ;
     rdfs:domain cfc:Operation ;
     rdfs:range xsd:string .
 
-svc:failureState rdf:type owl:DatatypeProperty ;
-    rdfs:label "failureState" ;
+svc:hasFailureState rdf:type owl:DatatypeProperty ;
+    rdfs:label "hasFailureState" ;
     rdfs:comment "An optional JSON snapshot of the executing resource's transitional_sync_middleware datamodel captured at the moment an Operation failed, written atomically with svc:hasOperationStatus=failed. It records the observed resource state under which the failure occurred, so a failed Operation is diagnosable and replayable from the graph alone. Absent on successful (done) Operations." ;
     rdfs:domain cfc:Operation ;
     rdfs:range xsd:string .

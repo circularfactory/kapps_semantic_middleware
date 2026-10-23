@@ -32,6 +32,10 @@ machine and it disappears from the screen. Nothing is hardcoded.
 
 ## Before you start
 
+A productive circular factory already holds the shared ontologies and shapes in its knowledge graph;
+the files shipped with the middleware seed the demonstrations and tests, and document the
+vocabulary. The launcher seeds the shipped ontologies and shapes for this demonstration.
+
 You need three things.
 
 ### 1. Python and `uv`

@@ -3,7 +3,9 @@
 This module is the single source of truth for the ontology terms the middleware reads and writes.
 Every other module (registration, execution, connectors, tests, notebooks) imports its IRIs from
 here. The Python code and the published ontologies (Core `cfc:`, the project `svc:` module, and
-the domain `mes:` module) can never drift apart.
+the domain `mes:` module) can never drift apart. The ontology files shipped here document the
+vocabulary and seed demonstrations and tests; the knowledge graph of a productive circular factory
+holds the authoritative copy.
 
 Four namespaces appear below: `cfc:`, `svc:`, `mes:`, and `inf:`.
 
@@ -114,21 +116,21 @@ class SVC:
     realizesCapability = IRI("realizesCapability", base=SVC_NS)  # Workflow -> Capability
     providedByStateProperty = IRI("providedByStateProperty", base=SVC_NS)  # Capability -> StateProperty
     providesCapability = IRI("providesCapability", base=SVC_NS)  # StateProperty -> Capability
-    precondition = IRI("precondition", base=SVC_NS)  # Workflow -> (SHACL-described args)
-    outcome = IRI("outcome", base=SVC_NS)  # Workflow -> (SHACL-described return)
+    hasPrecondition = IRI("hasPrecondition", base=SVC_NS)  # Workflow -> (SHACL-described args)
+    hasOutcome = IRI("hasOutcome", base=SVC_NS)  # Workflow -> (SHACL-described return)
 
     # Datatype properties
-    address = IRI("address", base=SVC_NS)  # Service -> xsd:anyURI (base URL)
-    endpoint = IRI("endpoint", base=SVC_NS)  # Workflow|StateProperty -> xsd:anyURI (full URL)
-    lastHeartbeat = IRI("lastHeartbeat", base=SVC_NS)  # Service -> xsd:dateTime
+    hasAddress = IRI("hasAddress", base=SVC_NS)  # Service -> xsd:anyURI (base URL)
+    hasEndpoint = IRI("hasEndpoint", base=SVC_NS)  # Workflow|StateProperty -> xsd:anyURI (full URL)
+    hasLastHeartbeat = IRI("hasLastHeartbeat", base=SVC_NS)  # Service -> xsd:dateTime
 
     # Execution provenance (R12) — written onto a cfc:Operation by the pull-and-run
     # terminal transition. Success is carried by the terminal hasOperationStatus (done/failed).
     hasOperationStatus = IRI("hasOperationStatus", base=SVC_NS)  # Operation -> xsd:string (queued/running/done/failed)
     executedByWorkflow = IRI("executedByWorkflow", base=SVC_NS)  # Operation -> Workflow
-    executionTimestamp = IRI("executionTimestamp", base=SVC_NS)  # Operation -> xsd:dateTime
-    executionResult = IRI("executionResult", base=SVC_NS)  # Operation -> xsd:string
-    failureState = IRI("failureState", base=SVC_NS)  # Operation -> xsd:string (JSON resource-datamodel dump on failure)
+    hasExecutionTimestamp = IRI("hasExecutionTimestamp", base=SVC_NS)  # Operation -> xsd:dateTime
+    hasExecutionResult = IRI("hasExecutionResult", base=SVC_NS)  # Operation -> xsd:string
+    hasFailureState = IRI("hasFailureState", base=SVC_NS)  # Operation -> xsd:string (JSON resource-datamodel dump on failure)
 
     # The issuer of an Operation: the Resource of the instance whose issue_operation() created it. It is
     # responsible for the Operation while it is queued; the Resource that claims it is

@@ -12,16 +12,35 @@ work lands, not at release time.
 finding exactly one of it, and prose naming it is a second occurrence — which stopped a release
 the first time this file was written.)
 
-## 0.2.3 — 2026-10-22
+## 0.2.4 — 2026-10-23
 
 ### Changed
 
+- The dashboard's title and heading read "<instance> Dashboard" (was "<instance> — dashboard").
+- The dashboard's subtitle reads "Visualization of the middleware state".
+- The activity page no longer has a subtitle; its heading stays.
+- The library's own boxes no longer show the shortening note: an IRI cell shows its local name and
+  keeps the full IRI on hover. `SHORTENING_NOTE` stays importable with the same value for one
+  release; a later release removes it.
+- The provisioning-and-seeding page, the README, the tests README and the docstrings of the seeding
+  helpers and the vocabulary say that the shipped ontologies and shapes seed demonstrations and
+  tests: a productive circular factory already holds them in its knowledge graph, and the
+  middleware never calls the seeding helpers. Documentation only; no behaviour changes.
 - **Breaking: the service ontology's status property is renamed.** `svc:operationStatus` is now
   `svc:hasOperationStatus`, so that a triple reads as a sentence ("op hasOperationStatus
   queued"). There is no alias and no equivalence: stored data that carries the old name is not
   read. Reload the shared graphs (`load_shared_ontologies(db, reload=True)`) before you run on
   the new version; the seeds and the demonstrations do it now. The `OperationStatus` enum keeps
   its name.
+- **Breaking: eight more service-ontology properties are named as predicates.**
+  `svc:precondition`, `svc:outcome`, `svc:address`, `svc:endpoint`, `svc:lastHeartbeat`,
+  `svc:executionTimestamp`, `svc:executionResult` and `svc:failureState` are now
+  `svc:hasPrecondition`, `svc:hasOutcome`, `svc:hasAddress`, `svc:hasEndpoint`,
+  `svc:hasLastHeartbeat`, `svc:hasExecutionTimestamp`, `svc:hasExecutionResult` and
+  `svc:hasFailureState`. The vocabulary terms (`SVC.hasAddress` and so on) follow. There is no
+  alias and no equivalence: stored data that carries an old name is not read. Reload the shared
+  graphs (`load_shared_ontologies(db, reload=True)`) before you run on the new version; the
+  seeds and the demonstrations do it now. Names that already read as predicates stay.
 - **Breaking: every ontology namespace uses `http://`.** The copied Core ontology, the service
   and MES ontologies, the transfer-unit demo's CRC namespaces and the example namespaces change
   their scheme from `https` to `http`, in step with the Core ontology. The shared named graphs
@@ -31,6 +50,18 @@ the first time this file was written.)
 
 ### Added
 
+- **Every Operation has exactly one status, and a shipped shape states it.** The service ontology
+  now ships `service-shapes.ttl` (an interim name) beside `service.ttl`: one SHACL node shape that targets Core's
+  Operation class, so every subclass, with a property shape on `svc:hasOperationStatus`: at least
+  one, at most one, and one of `queued`, `running`, `done` and `failed`. A store that validates it
+  refuses at commit an Operation without a status, with two, or with another value; a refused
+  middleware commit shows in `mw.refused_writes` and in the log. A productive store already holds
+  its ontologies and shapes; the file is for seeding a demonstration or test store, and as
+  documentation. `seeding.read_service_shapes()` returns it and `seeding.set_service_shapes(db)`
+  sets it (both interim names); on a dataset without SHACL validation the second logs one line and
+  returns `False`. The examples' seeds and the transfer-unit demo's seed set it now, after they
+  clear the dataset. `shapes_set` replaces every shape: a caller with shapes of its own sends them
+  joined with these. The live tests run with it set for the session.
 - **The factory demo's station board has a prewritten-query dropdown.** It fills the view
   heuristic with All, Even-indexed or Odd-indexed TransferUnits, or a Custom starter. The default
   view, and what "reset" restores, is now all live TransferUnits rather than the even-indexed

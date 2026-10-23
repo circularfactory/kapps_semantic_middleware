@@ -44,7 +44,7 @@ connectors wired `TO_PERSISTENCE`, reads live values, structurally unable to wri
 
 *Protocol.* **MQTT** reaches a device, recognised on the parameter (`inf:hasMQTTTopic`). **REST**
 reads another middleware instance over its recursive REST routes, recognised through the resource's
-Service (`svc:address`). It only reads: a peer's served datamodel has no write route, so driving
+Service (`svc:hasAddress`). It only reads: a peer's served datamodel has no write route, so driving
 wiring over REST is refused at construction, and a peer resource is driven through its workflows. A peer middleware is a device as far as the seam is concerned.
 
 Recognition and the **Projection** run identically in every combination, so connection metadata
@@ -72,7 +72,7 @@ one part of the southbound path that is neither in the graph nor in this library
 _Avoid_: Connector (the client this middleware constructs, one per topic — it *uses* a transport);
 Binding / Binding descriptor (the recognition rule that builds connectors); Broker as a
 general term, since it is one transport and the seam is not MQTT-shaped; Endpoint and Address,
-which are northbound (`svc:address`, the recursive REST routes).
+which are northbound (`svc:hasAddress`, the recursive REST routes).
 
 **Workflow**:
 An invokable function exposed by a Service, registered with `@mw.workflow(...)`. Realizes
@@ -345,7 +345,7 @@ directions: down, "an Operation for you exists" (the Production system level to 
 "this Operation ended or changed" (a Station to the Production system level). It is plumbing that
 stands in for a triple store that cannot trigger events itself: it is not in the graph, nothing is
 written to the graph for it, and no Operation or Workflow is of a notified kind. Every middleware
-can receive one, through its **Event trigger**, found through its `svc:address`. `notify` sends it.
+can receive one, through its **Event trigger**, found through its `svc:hasAddress`. `notify` sends it.
 The middleware itself sends the up direction to an Operation's **Issuer** as **Feedback**, after the
 commit that claims the Operation and after the commit that ends it.
 _Avoid_: Ring, Doorbell, Callback, Event (a notification carries no state change of its own; the
@@ -420,7 +420,12 @@ The lifecycle state of an Operation: `queued` (created and addressed, awaiting p
 `running` (pulled, in progress) → `done` or `failed` (terminal). Drives coordination and
 recovery. Execution provenance (which Workflow ran it, when, the result) is written as part
 of the terminal transition, so the status is itself the provenance record — there is no
-separate success flag.
+separate success flag. An Operation has exactly one status, written in the commit that creates
+it and replaced atomically. The shapes file `service-shapes.ttl` beside the service ontology
+states the rule for a store that validates SHACL, in the node shape `svc:OperationShape` and its
+property shape `svc:OperationStatusShape`; `seeding.read_service_shapes()` reads it, and
+`seeding.set_service_shapes(store)` sets it on a demonstration or test store (all five are
+interim names).
 
 **Pull-and-run**:
 The receiver-side transaction context manager by which domain code takes the next `queued`
@@ -483,18 +488,18 @@ A `SemanticMiddleware` construction-time choice governing what the instance is *
   graph-*consuming* participant (a planner, a mobile robot, a controller) is a resource-mode
   planner with its own Resource, not a server.
 - `"watchdog"` — wraps no Resource, exposes little to no REST surface; runs a sweep loop
-  that removes stale `svc:address`/`svc:endpoint` triples left by resource-mode instances
+  that removes stale `svc:hasAddress`/`svc:hasEndpoint` triples left by resource-mode instances
   that stopped heartbeating.
 _Avoid_: Deployment type, Role (Mode is specifically the constructor discriminator).
 
 **Heartbeat**:
 A resource-mode Service's periodic re-assertion of its own liveness — refreshing
-`svc:lastHeartbeat` on its Service individual via an internal interval-based Workflow. Read
+`svc:hasLastHeartbeat` on its Service individual via an internal interval-based Workflow. Read
 by watchdog-mode instances to decide staleness.
 
 **Address vs. Endpoint**:
-`svc:address` is a Service's base URL, set on startup and removed on
-deregistration/staleness. `svc:endpoint` is the full, directly callable URL for one specific
+`svc:hasAddress` is a Service's base URL, set on startup and removed on
+deregistration/staleness. `svc:hasEndpoint` is the full, directly callable URL for one specific
 Workflow or state parameter, also set on startup and removed on deregistration/staleness. Both
 being present is a deliberate divergence from the literal "address on Service only"
 wording of the architecture description — see the "Address and endpoint" section of
@@ -522,7 +527,7 @@ _Avoid_: liveness (that is the heartbeat of a Service), last update.
 A `queued` or `running` Operation of a Resource that no live Service will finish. A `queued`
 Operation is stranded when no live Service of its Resource realizes its Capability; a `running`
 one when the Service of its recorded executor (`svc:executedByWorkflow`, written by the claim) is
-not live, or no executor is recorded. A Service is live when it has an `svc:address` and a
+not live, or no executor is recorded. A Service is live when it has an `svc:hasAddress` and a
 heartbeat within the staleness threshold. The watchdog's sweep fails the stranded Operations, and
 a restarting instance's reconstruction of its queue fails its own orphaned `running` ones, with
 `registration.find_stranded_operations`.
@@ -531,5 +536,5 @@ reconstruction sees it), dead Operation.
 
 **Deregistration**:
 The reverse of registration: on shutdown (or, for watchdog-mode-detected staleness), removing
-a Service's `svc:address` and its Workflows'/state parameters' `svc:endpoint` triples while
+a Service's `svc:hasAddress` and its Workflows'/state parameters' `svc:hasEndpoint` triples while
 preserving the individuals themselves, for provenance.

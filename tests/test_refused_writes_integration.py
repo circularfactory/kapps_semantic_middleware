@@ -1,10 +1,10 @@
 """A refused write against a live store: the store's own SHACL engine refuses it, and the
 instance's two pages show it.
 
-Each test sets a shape with the store's `shapes_set`, which replaces every shape of the
-dataset, makes the store refuse a `commit`, a `create` or a `handover`, and reads the instance as
+Each test sets a shape, joined with the shipped shapes (`_shapes.py`) because the store's
+`shapes_set` replaces every shape of the dataset, makes the store refuse a `commit`, a `create` or a `handover`, and reads the instance as
 a person would: the dashboard's box "Refused writes", fetched as the page names it, and the
-activity feed's stream. Then it removes every shape again. The report is the one the store sent,
+activity feed's stream. Then it restores the shipped shapes. The report is the one the store sent,
 so these tests also hold the reader against the store's own N-Quads. Skipped when the
 TRIPLESTORE_* variables are absent (see conftest).
 """
@@ -17,6 +17,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from _shapes import restore_shipped_shapes, with_shipped_shapes
 from _refusal_view import BrowserView
 from fastapi.testclient import TestClient
 from kapps_ogm import OGM, Update
@@ -131,13 +132,14 @@ def _instance(store, resource: IRI, service_class: IRI) -> SemanticMiddleware:
 
 
 def _refused(store, shapes: str, write) -> ShaclValidationError:
-    """The store's refusal of `write`, under `shapes`, which are removed again afterwards."""
-    store.shapes_set(shapes, "text/turtle")
+    """The store's refusal of `write`, under `shapes` and the shipped ones; the shipped ones alone
+    are restored afterwards."""
+    store.shapes_set(with_shipped_shapes(shapes), "text/turtle")
     try:
         with pytest.raises(ShaclValidationError) as refusal:
             write()
     finally:
-        store.shapes_set("", "text/turtle")
+        restore_shipped_shapes(store)
     return refusal.value
 
 
@@ -243,8 +245,9 @@ def test_a_refused_commit_is_shown_as_a_commit(store):
     seed.seed_scenario1(store)
     mw = _instance(store, seed.HELLO_RESOURCE, seed.HELLO_SERVICE_CLASS)
     operation = IRI(f"{EX}operation_1")
-    store.triple_add((operation, RDF.type, CFC.Operation))
-    store.triple_add((operation, SVC.hasOperationStatus, Literal("queued")))
+    store.triples_add(
+        [(operation, RDF.type, CFC.Operation), (operation, SVC.hasOperationStatus, Literal("queued"))]
+    )
     running = [Update(instance_iri=operation, data={str(SVC.hasOperationStatus): ["running"]})]
 
     def commit() -> None:
@@ -267,8 +270,9 @@ def test_a_refused_error_transition_is_shown_as_an_error_transition(store):
     seed.seed_scenario1(store)
     mw = _instance(store, seed.HELLO_RESOURCE, seed.HELLO_SERVICE_CLASS)
     operation = IRI(f"{EX}operation_2")
-    store.triple_add((operation, RDF.type, CFC.Operation))
-    store.triple_add((operation, SVC.hasOperationStatus, Literal("queued")))
+    store.triples_add(
+        [(operation, RDF.type, CFC.Operation), (operation, SVC.hasOperationStatus, Literal("queued"))]
+    )
 
     def status(value: str) -> list:
         return [Update(instance_iri=operation, data={str(SVC.hasOperationStatus): [value]})]
@@ -280,12 +284,12 @@ def test_a_refused_error_transition_is_shown_as_an_error_transition(store):
         with mw.commit(operation, entry=status("running"), error=status("failed")):
             raise failure
 
-    store.shapes_set(_NEVER_FAILED, "text/turtle")
+    store.shapes_set(with_shipped_shapes(_NEVER_FAILED), "text/turtle")
     try:
         with pytest.raises(RuntimeError) as raised:
             commit()
     finally:
-        store.shapes_set("", "text/turtle")
+        restore_shipped_shapes(store)
 
     assert raised.value is failure
     assert any("The error transition was not committed" in note for note in failure.__notes__)

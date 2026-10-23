@@ -1,10 +1,10 @@
 """Controller.rebuild_view: the live differential rebuild.
 
 No real peer process here. ``rebuild_view``'s own work -- ``view()`` (a SPARQL query),
-``wire_view()`` (recognition: SPARQL + the graph's own ``svc:address``), and
+``wire_view()`` (recognition: SPARQL + the graph's own ``svc:hasAddress``), and
 ``_load_one_hit()`` (``ogm.fetch`` + in-memory ``persist``) -- never issues HTTP. Only a
 registered connector's own ``provide()``/``consume()`` would, and this file never drives
-one. So "live" here means "has a ``svc:address`` in the graph", published by hand
+one. So "live" here means "has a ``svc:hasAddress`` in the graph", published by hand
 (``_publish_service``, the same helper ``test_controller_view.py`` and
 ``test_scenario3_wiring_integration.py`` already use) -- not a genuinely reachable
 process. The REST round trip itself is covered separately, against a real peer, in
@@ -35,7 +35,7 @@ def _publish_service(store, resource_iri, address: str) -> None:
         INSERT DATA {{
           <{service_iri}> a <{SVC.Service}> ;
               <{SVC.isServiceOf}> <{resource_iri}> ;
-              <{SVC.address}> "{address}" .
+              <{SVC.hasAddress}> "{address}" .
         }}
         """,
         update=True,
@@ -70,7 +70,7 @@ def _query_selecting(*indices: int) -> str:
     SELECT ?resource WHERE {{
         ?resource a <{seed.TRANSFER_UNIT_CLASS}> .
         ?svc <{SVC.isServiceOf}> ?resource ;
-             <{SVC.address}> ?addr .
+             <{SVC.hasAddress}> ?addr .
         BIND(STRAFTER(STR(?resource), "#TransferUnit") AS ?suffix)
         FILTER(?suffix IN ({suffixes}))
     }}

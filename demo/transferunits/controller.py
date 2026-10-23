@@ -9,7 +9,7 @@ Control Expert's steps (``CONTEXT.md``):
 
 1. ``view()`` runs the caller's own SPARQL query -- the view -- and returns every IRI it
    binds to ``?resource``. The query is the whole view: which class, which liveness join
-   (a live resource's Service carries ``svc:address``), and any heuristic that narrows it
+   (a live resource's Service carries ``svc:hasAddress``), and any heuristic that narrows it
    further are authored by the caller. Nothing here assumes a domain class.
 2. ``wire_view()`` runs ``ogm.fetch`` per hit and recognizes its interface-accessible
    parameters, exactly like ``SemanticMiddleware.__init__`` does for its own resource --
@@ -80,8 +80,8 @@ class ResourceInfo:
         resource_iri: The individual's IRI.
         resource_type: The class IRI (e.g. tu:TransferUnit).
         label: Human-readable label, if present.
-        address: The service's svc:address — presence means live, absence means offline.
-        last_heartbeat: The service's svc:lastHeartbeat timestamp, if present.
+        address: The service's svc:hasAddress — presence means live, absence means offline.
+        last_heartbeat: The service's svc:hasLastHeartbeat timestamp, if present.
     """
 
     resource_iri: IRI
@@ -94,14 +94,14 @@ class ResourceInfo:
     """Human-readable label, if present."""
 
     address: Optional[str]
-    """The service's svc:address. Presence means live. Absence means offline."""
+    """The service's svc:hasAddress. Presence means live. Absence means offline."""
 
     last_heartbeat: Optional[str]
-    """The service's svc:lastHeartbeat timestamp, if present."""
+    """The service's svc:hasLastHeartbeat timestamp, if present."""
 
     @property
     def is_live(self) -> bool:
-        """Live iff svc:address is present (MVP liveness)."""
+        """Live iff svc:hasAddress is present (MVP liveness)."""
         return self.address is not None
 
 
@@ -262,7 +262,7 @@ class Controller(SemanticMiddleware):
         every IRI it binds to ``?resource``, in result order, deduplicated.
 
         The query is the whole view. Which class, the liveness join (a live resource's
-        Service carries ``svc:address``), and any heuristic that narrows the result
+        Service carries ``svc:hasAddress``), and any heuristic that narrows the result
         further are all authored by the caller, in the query text. Nothing here assumes
         a domain class or a column beyond ``?resource`` itself, so no rework here can
         ever compile a domain class into the controller.
@@ -602,7 +602,7 @@ class Controller(SemanticMiddleware):
         """Whether a still-selected view hit is reachable, and the age of its last
         heartbeat in seconds.
 
-        A cleanly stopped unit deregisters and drops its ``svc:address`` entirely, so
+        A cleanly stopped unit deregisters and drops its ``svc:hasAddress`` entirely, so
         ``view()`` stops selecting it -- ``rebuild_view`` sees it as a leaver, and its
         card leaves within one poll. A ``kill -9``'d unit keeps its address: ``view()``
         keeps selecting it, so it stays in ``self.units`` ("leave the unchanged alone"),
@@ -615,7 +615,7 @@ class Controller(SemanticMiddleware):
             was ever recorded (unreachable is then ``True``).
         """
         info = self._get_service_info(IRI(str(resource_iri)))
-        last_heartbeat = info.get("lastHeartbeat")
+        last_heartbeat = info.get("hasLastHeartbeat")
         if not last_heartbeat:
             return True, None
         try:
@@ -650,8 +650,8 @@ class Controller(SemanticMiddleware):
             SELECT ?resource ?label ?svc ?addr ?hb WHERE {{
                 ?resource a <{resource_class_iri}> .
                 OPTIONAL {{ ?svc <{SVC.isServiceOf}> ?resource . }}
-                OPTIONAL {{ ?svc <{SVC.address}> ?addr . }}
-                OPTIONAL {{ ?svc <{SVC.lastHeartbeat}> ?hb . }}
+                OPTIONAL {{ ?svc <{SVC.hasAddress}> ?addr . }}
+                OPTIONAL {{ ?svc <{SVC.hasLastHeartbeat}> ?hb . }}
                 OPTIONAL {{ ?resource <{RDFS.label}> ?label . }}
             }}
             """
@@ -694,23 +694,23 @@ class Controller(SemanticMiddleware):
         """Get the service metadata for a resource.
 
         Queries the graph for the Service linked to this resource via svc:isServiceOf,
-        returning address and lastHeartbeat.
+        returning address and hasLastHeartbeat.
 
         Args:
             resource_iri: The resource's IRI.
 
         Returns:
-            Dict with 'address' and 'lastHeartbeat' keys, both possibly None.
+            Dict with 'address' and 'hasLastHeartbeat' keys, both possibly None.
         """
-        result: Dict[str, Optional[str]] = {"address": None, "lastHeartbeat": None}
+        result: Dict[str, Optional[str]] = {"address": None, "hasLastHeartbeat": None}
 
         try:
             # Query for the Service linked to this resource via svc:isServiceOf.
             sparql = f"""
             SELECT ?svc ?addr ?hb WHERE {{
                 ?svc <{SVC.isServiceOf}> <{resource_iri}> .
-                OPTIONAL {{ ?svc <{SVC.address}> ?addr . }}
-                OPTIONAL {{ ?svc <{SVC.lastHeartbeat}> ?hb . }}
+                OPTIONAL {{ ?svc <{SVC.hasAddress}> ?addr . }}
+                OPTIONAL {{ ?svc <{SVC.hasLastHeartbeat}> ?hb . }}
             }}
             """
             db_result = self.ogm.db.query(sparql, convert_bindings=True)
@@ -727,7 +727,7 @@ class Controller(SemanticMiddleware):
                 if addr_val is not None:
                     result["address"] = str(addr_val)
                 if hb_val is not None:
-                    result["lastHeartbeat"] = str(hb_val)
+                    result["hasLastHeartbeat"] = str(hb_val)
 
         except Exception as e:
             logger.debug("Failed to get service info for %s: %s", resource_iri, e)

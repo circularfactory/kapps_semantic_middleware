@@ -72,6 +72,6 @@ def test_the_title_reads_the_preferred_label_from_the_store(
     store.triples_add(triples)
     try:
         expected = name if name is not None else "Module1"
-        assert _title(store, resource) == f"{expected} — dashboard"
+        assert _title(store, resource) == f"{expected} Dashboard"
     finally:
         store.triples_delete(triples)

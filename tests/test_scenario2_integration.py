@@ -69,10 +69,10 @@ def _discover_door_endpoints(ogm, door_resource_iri) -> tuple[str, str]:
         ?svc <{SVC.isServiceOf}> <{door_resource_iri}> .
         ?sp <{SVC.isStatePropertyOf}> ?svc .
         ?sp a <{seed.DOOR_STATUS_STATE_CLASS}> .
-        ?sp <{SVC.endpoint}> ?status_url .
+        ?sp <{SVC.hasEndpoint}> ?status_url .
         ?wf <{SVC.isWorkflowOf}> ?svc .
         ?wf a <{seed.DOOR_OPEN_WORKFLOW_CLASS}> .
-        ?wf <{SVC.endpoint}> ?open_url .
+        ?wf <{SVC.hasEndpoint}> ?open_url .
     }}
     """
     result = ogm.db.query(sparql, convert_bindings=True)
@@ -161,8 +161,8 @@ def test_scenario2_door_direct_invocation_by_mobile_robot(store):
         assert db.triple_exists((status_sp, RDF.type, seed.DOOR_STATUS_STATE_CLASS))
         status_cap = mint_capability_iri(seed.DOOR_RESOURCE, "door_status")
         assert db.triple_exists((status_cap, SVC.providedByStateProperty, status_sp))
-        assert db.triples_get(sub=status_sp, pred=SVC.endpoint)
-        assert db.triples_get(sub=open_wf, pred=SVC.endpoint)
+        assert db.triples_get(sub=status_sp, pred=SVC.hasEndpoint)
+        assert db.triples_get(sub=open_wf, pred=SVC.hasEndpoint)
 
         # The mobile robot: a minimal second middleware. It exposes nothing itself. Its
         # scripted domain logic discovers and drives the door purely through the graph +
@@ -198,5 +198,5 @@ def test_scenario2_door_direct_invocation_by_mobile_robot(store):
         time.sleep(0.5)
 
     # Deregistration removed the state property endpoint too. Kept the individual.
-    assert not db.triples_get(sub=status_sp, pred=SVC.endpoint)
+    assert not db.triples_get(sub=status_sp, pred=SVC.hasEndpoint)
     assert db.triple_exists((status_sp, RDF.type, seed.DOOR_STATUS_STATE_CLASS))

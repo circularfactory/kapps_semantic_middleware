@@ -300,12 +300,12 @@ def test_registration_writes_the_address_and_a_fresh_heartbeat_in_one_commit():
     addressed = [
         call.kwargs
         for call in ogm.commit.call_args_list
-        if str(SVC.address) in call.kwargs.get("data", {})
+        if str(SVC.hasAddress) in call.kwargs.get("data", {})
     ]
     assert len(addressed) == 1, "the address is written in one commit"
     data = addressed[0]["data"]
-    assert data[str(SVC.address)] == ["http://127.0.0.1:8001"]
-    [heartbeat] = data[str(SVC.lastHeartbeat)]
+    assert data[str(SVC.hasAddress)] == ["http://127.0.0.1:8001"]
+    [heartbeat] = data[str(SVC.hasLastHeartbeat)]
     written = datetime.fromisoformat(heartbeat)
     assert before <= written <= datetime.now(timezone.utc) + timedelta(seconds=1)
 
@@ -425,9 +425,9 @@ def test_deregistration_removes_the_endpoints_first_and_the_address_last():
 
     calls = [(c.kwargs["instance_iri"], set(c.kwargs["data"])) for c in ogm.commit.call_args_list]
     assert calls == [
-        (workflow, {str(SVC.endpoint)}),
-        (state_property, {str(SVC.endpoint)}),
-        (FIRST, {str(SVC.address)}),
+        (workflow, {str(SVC.hasEndpoint)}),
+        (state_property, {str(SVC.hasEndpoint)}),
+        (FIRST, {str(SVC.hasAddress)}),
     ]
 
 

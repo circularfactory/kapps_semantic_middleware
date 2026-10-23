@@ -4,6 +4,11 @@ Every other page in this set takes `ogm=ogm` as given. This page shows how to co
 `OGM`, the store under it, and the ontology and instance data the middleware needs before its
 first registration. It is the bootstrap order the other pages assume you are already past.
 
+This page is the bootstrap of a demonstration or test store. A productive circular factory already
+holds these ontologies and shapes in its knowledge graph; the files shipped with the middleware seed the
+demonstrations and tests, and document the vocabulary. A service in a productive factory starts at
+constructing the middleware.
+
 :::{dropdown} Terms this page assumes
 {term}`Parameter` · {term}`ClassScope` · {term}`Capability` · {term}`Workflow` · {term}`Service` ·
 {term}`Resource` · {term}`Projection`
@@ -12,7 +17,13 @@ first registration. It is the bootstrap order the other pages assume you are alr
 ## Bootstrap Order
 
 The order is fixed: construct the store, wrap it in an OGM, load the shared ontologies,
-author and seed the domain data, then construct the middleware.
+author and seed the domain data, then construct the middleware. In a productive store the
+ontologies and the domain data are already there, so the order starts at the last step.
+
+The examples keep to this order and add one rule: each notebook is self-contained. It runs against its
+own dummy user and dataset, clears it first, and seeds the ontology modules and instance data its
+scenario starts from, so a re-run never writes to production state and a newcomer needs no local
+setup of their own. See *Self-contained* in `examples/CONTEXT.md`.
 
 ```python
 from kapps_triplestore_interface import IRI
@@ -44,13 +55,15 @@ from `kapps_triplestore_interface`.
 
 Constructing the middleware wires its connectors and prepares its registration; serving `mw.app`
 (an ASGI application) with `uvicorn` is what brings it live and fires the on-startup registration.
-Registration fails if a referenced class is missing, which is why the ontologies load first.
+Registration fails if a referenced class is missing, so the ontologies must be in the store first: a
+demonstration or test loads them, and a productive store already holds them.
 
 ## Loading the Shared Ontologies
 
-Every scenario needs the published Core, service, and MES modules. `load_shared_ontologies(db, *,
-reload=False)` loads all three; each lands in its own named graph and is skipped if already present
-unless you pass `reload=True`.
+Every scenario needs the published Core, service, and MES modules in the store. A demonstration or
+test loads them with `load_shared_ontologies(db, *, reload=False)`; a productive store already holds
+them and never calls it. The function loads all three; each lands in its own named graph and is
+skipped if already present unless you pass `reload=True`.
 
 ```python
 from kapps_semantic_middleware.seeding import load_shared_ontologies, clear_dataset
@@ -98,14 +111,16 @@ db.graph_add(
 )
 ```
 
-The Turtle declares classes, not individuals. Keeping the TBox stable across many identical resource
-deployments is why the class is authored once here rather than minted per instance.
+A demonstration or test authors and loads this TBox; a productive store already holds its domain
+classes. The Turtle declares classes, not individuals. Keeping the TBox stable across many
+identical resource deployments is why the class is authored once here rather than minted per instance.
 
 The **interface ontology** must be among the classes the store holds before the serving path runs:
 the northbound {term}`Projection` reads it at every startup to decide which connection properties to
 prune (see {doc}`06-views-and-projection`). If it is absent when a payload is projected, the
 projection raises `ProjectionError`, naming the property it could not resolve — a loud failure, not a
-silent one. There is no tool that fetches or seeds it for you today; load it yourself as shown above.
+silent one. The ontology must be in the store. No tool fetches or seeds it today: a demonstration or
+test loads it as shown above, and a productive store already holds it.
 
 ## Seeding the Instance Data a Parameter Needs
 

@@ -23,6 +23,7 @@ from pathlib import Path
 from unittest.mock import Mock, call
 
 import pytest
+from _shapes import restore_shipped_shapes, with_shipped_shapes
 from kapps_triplestore_interface import IRI, SPARQLQuery, TripleStore, XSDToPythonTypes
 from kapps_triplestore_interface.exceptions import PreconditionFailedError, ShaclValidationError
 from kapps_triplestore_interface.utils.utils import convert_multi_bindings_to_python_type
@@ -468,7 +469,7 @@ class TestOneResourceShapeIntegration:
         address = ADDR_A
         service_iri = mint_service_iri(seed.DOOR_RESOURCE, address)
         ogm = OGM(db=store)
-        store.shapes_set(ONE_RESOURCE_SHAPE, "text/turtle")
+        store.shapes_set(with_shipped_shapes(ONE_RESOURCE_SHAPE), "text/turtle")
         try:
             # The shape fires: a Capability created on its own is refused.
             with pytest.raises(ShaclValidationError):
@@ -527,4 +528,4 @@ class TestOneResourceShapeIntegration:
             assert register(OGM(db=store)) == capabilities
             assert capabilities <= _capabilities(store, seed.DOOR_RESOURCE)
         finally:
-            store.shapes_set("", "text/turtle")
+            restore_shipped_shapes(store)

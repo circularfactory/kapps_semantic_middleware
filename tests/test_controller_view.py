@@ -70,7 +70,7 @@ def _publish_service(store, resource_iri, address: str) -> None:
         INSERT DATA {{
           <{service_iri}> a <{SVC.Service}> ;
               <{SVC.isServiceOf}> <{resource_iri}> ;
-              <{SVC.address}> "{address}" .
+              <{SVC.hasAddress}> "{address}" .
         }}
         """,
         update=True,
@@ -90,7 +90,7 @@ def _view_query() -> str:
     PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
     SELECT ?resource WHERE {{
         ?resource a <{seed.TRANSFER_UNIT_CLASS}> .
-        ?svc <{SVC.isServiceOf}> ?resource ; <{SVC.address}> ?addr .
+        ?svc <{SVC.isServiceOf}> ?resource ; <{SVC.hasAddress}> ?addr .
         BIND(STRAFTER(STR(?resource), "#TransferUnit") AS ?suffix)
         FILTER(?suffix != "" && (xsd:integer(?suffix) - 2 * FLOOR(xsd:integer(?suffix) / 2)) = 0)
     }}
@@ -250,7 +250,7 @@ def _spawn_peer_middleware(unit_index: int, dataset: str) -> subprocess.Popen:
     ``dataset`` must be passed explicitly, and must be the one this test seeded. The
     child names its dataset in code and ignores TRIPLESTORE_DATASET, so
     inheriting the environment is no longer enough to put both ends in the same graph --
-    without this the peer would join the demo's dataset and publish its svc:address
+    without this the peer would join the demo's dataset and publish its svc:hasAddress
     where the test is not looking.
     """
     return subprocess.Popen(
@@ -274,14 +274,14 @@ def _spawn_peer_middleware(unit_index: int, dataset: str) -> subprocess.Popen:
 
 
 async def _await_service_address(store, resource_iri, timeout: float = 30.0) -> str:
-    """Poll the graph for ``resource_iri``'s ``svc:address`` -- the same signal
+    """Poll the graph for ``resource_iri``'s ``svc:hasAddress`` -- the same signal
     ``_register_service`` publishes once the middleware's own lifespan has actually
     started, reachable across a process boundary because it goes through
     the graph rather than any pipe or shared memory."""
     deadline = time.monotonic() + timeout
     sparql = f"""
     SELECT ?addr WHERE {{
-        ?svc <{SVC.isServiceOf}> <{resource_iri}> ; <{SVC.address}> ?addr .
+        ?svc <{SVC.isServiceOf}> <{resource_iri}> ; <{SVC.hasAddress}> ?addr .
     }}
     """
     while time.monotonic() < deadline:
@@ -292,7 +292,7 @@ async def _await_service_address(store, resource_iri, timeout: float = 30.0) -> 
         if bindings:
             return str(bindings[0]["addr"])
         await asyncio.sleep(0.2)
-    raise AssertionError(f"{resource_iri} never published a svc:address in time")
+    raise AssertionError(f"{resource_iri} never published a svc:hasAddress in time")
 
 
 def _terminate(proc: subprocess.Popen, timeout: float = 10.0) -> None:

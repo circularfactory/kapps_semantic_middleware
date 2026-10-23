@@ -925,7 +925,7 @@ def test_the_watchdog_notifies_the_issuer_of_an_operation_that_it_fails():
     def rows(sparql: str, answer=graph._rows) -> list[dict]:
         if str(CFC.hasCapability) in sparql:  # the Resource's stranded Operations
             return [{"op": OPERATION}]
-        if str(SVC.lastHeartbeat) in sparql:  # the stale Services
+        if str(SVC.hasLastHeartbeat) in sparql:  # the stale Services
             return [{"s": stale}]
         if f"<{stale}> <{SVC.isServiceOf}>" in sparql:  # the Resource of the stale Service
             return [{"r": DRILLER}]

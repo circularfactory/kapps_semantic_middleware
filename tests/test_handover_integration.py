@@ -6,8 +6,8 @@ is Core's reified `cfc:PossessionState`, one state per resource. The entry of th
 commits the possession change, one OGM commit that re-points the workpiece to the
 counterpart's state, before the body moves the workpiece. The shape "a module holds at most one
 box" plays the domain's rule. Skipped when TRIPLESTORE_* env vars are absent (see conftest).
-A test that needs a shape sets it with the store's `shapes_set`, which replaces every shape
-of the dataset, and removes every shape again at its end.
+A test that needs a shape sets it joined with the shipped shapes (`_shapes.py`), because the
+store's `shapes_set` replaces every shape of the dataset, and restores the shipped ones at its end.
 """
 
 from __future__ import annotations
@@ -19,6 +19,7 @@ from typing import Callable, Optional
 from unittest.mock import patch
 
 import pytest
+from _shapes import restore_shipped_shapes, with_shipped_shapes
 from kapps_triplestore_interface import IRI
 from kapps_triplestore_interface.exceptions import (
     PreconditionFailedError,
@@ -194,8 +195,12 @@ def _running_operation(db) -> IRI:
     """An Operation that the handover completes, and the vocabulary its status needs."""
     load_shared_ontologies(db, reload=True)
     operation = IRI(f"{seed.DEMO_NS}transport_001")
-    db.triple_add((operation, RDF.type, CFC.Operation))
-    db.triple_add((operation, SVC.hasOperationStatus, Literal(OperationStatus.RUNNING)))
+    db.triples_add(
+        [
+            (operation, RDF.type, CFC.Operation),
+            (operation, SVC.hasOperationStatus, Literal(OperationStatus.RUNNING)),
+        ]
+    )
     return operation
 
 
@@ -646,7 +651,7 @@ def test_a_handover_onto_an_occupied_counterpart_is_refused_before_its_body_runs
 
     # The shape goes in only now, because the seed itself is valid under it. Outside the
     # `raises`: a store that cannot set the shape must fail the test, not pass it.
-    db.shapes_set(_ONE_WORKPIECE_PER_MODULE, "text/turtle")
+    db.shapes_set(with_shipped_shapes(_ONE_WORKPIECE_PER_MODULE), "text/turtle")
     try:
         with pytest.raises(TripleStoreInterfaceError) as refusal:
             with handover(
@@ -658,7 +663,7 @@ def test_a_handover_onto_an_occupied_counterpart_is_refused_before_its_body_runs
             ):
                 body_ran = True
     finally:
-        db.shapes_set("", "text/turtle")
+        restore_shipped_shapes(db)
 
     assert not body_ran
     assert str(seed.HANDOVER_DEST) in str(refusal.value)
@@ -766,7 +771,7 @@ def test_a_refused_possession_change_writes_no_entry_change(store):
     body_ran = False
 
     # Outside the `raises`: a store that cannot set the shape must fail the test, not pass it.
-    db.shapes_set(_ONE_WORKPIECE_PER_MODULE, "text/turtle")
+    db.shapes_set(with_shipped_shapes(_ONE_WORKPIECE_PER_MODULE), "text/turtle")
     try:
         with pytest.raises(TripleStoreInterfaceError):
             with handover(
@@ -778,7 +783,7 @@ def test_a_refused_possession_change_writes_no_entry_change(store):
             ):
                 body_ran = True
     finally:
-        db.shapes_set("", "text/turtle")
+        restore_shipped_shapes(db)
 
     assert not body_ran
     assert _explicit_statements(db) == before

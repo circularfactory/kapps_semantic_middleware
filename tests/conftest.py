@@ -145,15 +145,26 @@ def store():
     destroyed and rewritten) once per session: a dataset
     seeded by an earlier version keeps its old service graph, and the mapper then refuses
     the properties that the current one declares.
+
+    Then the default graph is cleared and the middleware's shipped shapes are set, so every
+    live test runs with the operation-status rule active. ``shapes_set`` validates the data
+    already there, so it runs after the clear. A dataset that does not validate SHACL fails
+    here: the live tier is not run without the rule.
     """
     if not triplestore_env_present():
         pytest.skip("TRIPLESTORE_* environment variables not set")
     from kapps_semantic_middleware.credentials import triplestore_for
 
-    from kapps_semantic_middleware.seeding import load_shared_ontologies
+    from kapps_semantic_middleware.seeding import (
+        clear_dataset,
+        load_shared_ontologies,
+        read_service_shapes,
+    )
 
     db = triplestore_for(TEST_DATASET)
     load_shared_ontologies(db, reload=True)
+    clear_dataset(db)
+    db.shapes_set(read_service_shapes(), "text/turtle")
     yield db
     db.close()
 

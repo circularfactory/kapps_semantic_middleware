@@ -89,9 +89,9 @@ class TestSVCExecutionProvenance:
         assert hasattr(SVC, "executedByWorkflow")
 
     def test_execution_timestamp_exists(self):
-        """svc:executionTimestamp remains for timing provenance."""
-        assert hasattr(SVC, "executionTimestamp")
+        """svc:hasExecutionTimestamp carries the timing provenance."""
+        assert hasattr(SVC, "hasExecutionTimestamp")
 
     def test_execution_result_exists(self):
-        """svc:executionResult remains for result provenance."""
-        assert hasattr(SVC, "executionResult")
+        """svc:hasExecutionResult carries the result provenance."""
+        assert hasattr(SVC, "hasExecutionResult")

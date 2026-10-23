@@ -66,7 +66,7 @@ class TestResourceInfo:
     """Tests for the ResourceInfo dataclass."""
 
     def test_is_live_when_address_present(self):
-        """A resource is live iff svc:address is present."""
+        """A resource is live iff svc:hasAddress is present."""
         info = ResourceInfo(
             resource_iri=IRI("http://example.org/Unit1"),
             resource_type=IRI("http://example.org/TransferUnit"),
@@ -77,7 +77,7 @@ class TestResourceInfo:
         assert info.is_live is True
 
     def test_is_offline_when_address_absent(self):
-        """A resource is offline when svc:address is absent."""
+        """A resource is offline when svc:hasAddress is absent."""
         info = ResourceInfo(
             resource_iri=IRI("http://example.org/Unit1"),
             resource_type=IRI("http://example.org/TransferUnit"),
@@ -107,7 +107,7 @@ class TestControllerDiscovery:
         asyncio.run(controller._register_service())
 
         service_triples = seeded_graph.db.triples_get(
-            sub=controller.service_iri, pred=SVC.address
+            sub=controller.service_iri, pred=SVC.hasAddress
         )
         assert len(service_triples) == 1
 
@@ -138,7 +138,7 @@ class TestControllerDiscovery:
 
     @requires_store
     def test_discovered_units_have_service_metadata(self, seeded_graph):
-        """Discovered units have svc:address from their Service nodes."""
+        """Discovered units have svc:hasAddress from their Service nodes."""
         controller = Controller(
             resource_iri="http://example.org/ControlStation1",
             ogm=seeded_graph,
@@ -159,7 +159,7 @@ class TestControllerDiscovery:
         """The controller appears in its own discovery list, once it registers.
 
         register_service only writes the Service side (svc:isServiceOf,
-        svc:address and a first svc:lastHeartbeat). It expects the resource individual to already exist,
+        svc:hasAddress and a first svc:hasLastHeartbeat). It expects the resource individual to already exist,
         the same way a domain seed writes a TransferUnit before its
         middleware starts. The demo's seed_factory does this for the control
         station too; here, the test does it by hand, with the
@@ -193,7 +193,7 @@ class TestGetServiceInfo:
 
     @requires_store
     def test_gets_address_from_service(self, seeded_graph):
-        """_get_service_info returns svc:address for a resource with a Service."""
+        """_get_service_info returns svc:hasAddress for a resource with a Service."""
         controller = Controller(
             resource_iri="http://example.org/ControlStation1",
             ogm=seeded_graph,
@@ -203,7 +203,7 @@ class TestGetServiceInfo:
         # Get info for one of the seeded transfer units
         service_info = controller._get_service_info(seed.TRANSFER_UNIT_1)
 
-        # The seed writes svc:address for each unit
+        # The seed writes svc:hasAddress for each unit
         assert service_info.get("address") is not None
 
     @requires_store
@@ -221,7 +221,7 @@ class TestGetServiceInfo:
         service_info = controller._get_service_info(fake_iri)
 
         assert service_info["address"] is None
-        assert service_info["lastHeartbeat"] is None
+        assert service_info["hasLastHeartbeat"] is None
 
 
 class TestParameterPathDerivation:

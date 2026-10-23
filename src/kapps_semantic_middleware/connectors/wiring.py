@@ -233,7 +233,7 @@ def _recognise(
 
     **The evidence may sit on the parameter or on the resource's Service**. An MQTT connector recognises ``inf:hasMQTTTopic`` on
     the parameter itself. A REST connector has no such marker; its evidence is the resource's
-    own ``svc:address``, one hop out through ``svc:isServiceOf``. Look that address up **once**
+    own ``svc:hasAddress``, one hop out through ``svc:isServiceOf``. Look that address up **once**
     per resource here, and fold it into every recognised binding's metadata alongside whatever
     the parameter node itself carries — a binding descriptor that does not care (MQTT) simply
     never reads the key.
@@ -270,7 +270,7 @@ def _recognise(
 
         metadata = normalize_metadata(metadata)
         if address is not None:
-            metadata.setdefault(str(SVC.address), [address])
+            metadata.setdefault(str(SVC.hasAddress), [address])
 
         bindings.append(
             ParameterBinding(
@@ -329,7 +329,7 @@ def _parameter_properties(*, ogm: Any, root_iri: IRI, spec: Any, steps: Tuple[Tu
 
 
 def _service_address(*, ogm: Any, resource_iri: IRI) -> Optional[str]:
-    """The resource's own ``svc:address``, one hop out through ``svc:isServiceOf``.
+    """The resource's own ``svc:hasAddress``, one hop out through ``svc:isServiceOf``.
 
     One query per ``_recognise`` call, not per parameter — a resource has one Service, and
     every parameter on it shares the same answer. ``None`` when the resource has no Service,
@@ -341,7 +341,7 @@ def _service_address(*, ogm: Any, resource_iri: IRI) -> Optional[str]:
     rows = ogm.db.query(
         _asserted_select(
             ["?addr"],
-            f"?svc <{SVC.isServiceOf}> <{resource_iri}> ; <{SVC.address}> ?addr",
+            f"?svc <{SVC.isServiceOf}> <{resource_iri}> ; <{SVC.hasAddress}> ?addr",
         ),
         convert_bindings=True,
     )["results"]["bindings"]

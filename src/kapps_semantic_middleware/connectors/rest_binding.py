@@ -13,7 +13,7 @@ parameter itself. First, the parameter is interface-accessible at all — a subp
 ``inf:isInterfaceAccessibleParameter``, the generic root, with no more specific protocol
 marker (a parameter that also carries ``inf:hasMQTTTopic`` etc. resolves to that protocol's
 binding instead; ``wiring.py``'s ``_descriptor_for`` already picks the most specific
-registered match). Second, the parameter's resource carries a live ``svc:address`` on its
+registered match). Second, the parameter's resource carries a live ``svc:hasAddress`` on its
 Service, one hop out through ``svc:isServiceOf``. That address is not a marker on the
 parameter — it is looked up once per resource in ``wiring.py``'s ``_recognise`` and folded
 into every recognised binding's metadata. This binding reads it out exactly like MQTT reads
@@ -372,7 +372,7 @@ class RESTBinding:
 def _read_registrations(binding: ParameterBinding) -> Iterable[Registration]:
     """The read leg of one parameter, or nothing when there is no route to read."""
 
-    address = binding.get(SVC.address)
+    address = binding.get(SVC.hasAddress)
     if not address:
         # A generically interface-accessible parameter whose resource has no live
         # Service is not a REST-recognition failure -- it is the ordinary state of a
@@ -383,7 +383,7 @@ def _read_registrations(binding: ParameterBinding) -> Iterable[Registration]:
             "parameter will be served but no value will flow.",
             binding.parameter_property,
             binding.resource_iri,
-            SVC.address,
+            SVC.hasAddress,
         )
         return
     if binding.root_iri is None or binding.root_class_local_name is None:

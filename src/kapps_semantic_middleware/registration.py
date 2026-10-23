@@ -123,7 +123,7 @@ def mint_service_iri(resource_iri: IRI, address: str) -> IRI:
     satisfies two requirements at once. It is stable across restarts of the same
     deployment (a returning instance re-adopts its node). It is distinct between concurrent
     instances (a controller and a monitor on one resource do not overwrite each other
-    ``svc:address`` and heartbeat). ``lined`` rather than a hash. Production IRIs remain
+    ``svc:hasAddress`` and heartbeat). ``lined`` rather than a hash. Production IRIs remain
     back-resolvable. ``IRI.from_lined`` reads the address off the node IRI.
 
     ``address`` is required. A default would silently reinstate the shared node.
@@ -281,7 +281,7 @@ def register_service(
 ) -> None:
     """Register a Service instance for a resource. Set its base address and a first heartbeat.
 
-    The address and ``svc:lastHeartbeat`` (now) are written in one commit. A Service with an
+    The address and ``svc:hasLastHeartbeat`` (now) are written in one commit. A Service with an
     address is stale to the watchdog when its heartbeat is missing or old, so an address written
     alone would let a sweep that runs before the heartbeat loop's first beat deregister a Service
     that is starting, or one that restarts after its old heartbeat aged past the threshold.
@@ -296,8 +296,8 @@ def register_service(
         ogm,
         service_iri,
         {
-            str(SVC.address): [str(address)],
-            str(SVC.lastHeartbeat): [datetime.now(timezone.utc).isoformat()],
+            str(SVC.hasAddress): [str(address)],
+            str(SVC.hasLastHeartbeat): [datetime.now(timezone.utc).isoformat()],
         },
         named_graph,
     )
@@ -364,7 +364,7 @@ def register_workflow(
 ) -> None:
     """Register a Workflow instance, its Capability instance, and their links.
 
-    The Workflow owns ``svc:isWorkflowOf`` (-> service) and ``svc:endpoint``. The Capability
+    The Workflow owns ``svc:isWorkflowOf`` (-> service) and ``svc:hasEndpoint``. The Capability
     owns ``svc:realizedByWorkflow`` (-> workflow). The resource links to the Capability it
     *provides* (``cfc:hasCapability``, Resource -> Capability). The resource *provides* the
     Capability. Raises OntologyGroundTruthError if the classes are not the required subclasses.
@@ -375,7 +375,7 @@ def register_workflow(
     _create_or_adopt(
         ogm, workflow_class, workflow_iri, {str(SVC.isWorkflowOf): [_ref(service_iri)]}, named_graph
     )
-    _set(ogm, workflow_iri, {str(SVC.endpoint): [str(endpoint)]}, named_graph)
+    _set(ogm, workflow_iri, {str(SVC.hasEndpoint): [str(endpoint)]}, named_graph)
     # The resource *provides* the Capability (cfc:hasCapability, Resource -> Capability), and the
     # link goes into the Capability's own commit. It lets a restarting resource (or the watchdog)
     # find its own Operations by ontology traversal rather than by match of IRI names, and it
@@ -404,7 +404,7 @@ def register_state_property(
 ) -> None:
     """Register a StateProperty instance, its Capability instance, and their links.
 
-    The StateProperty owns ``svc:isStatePropertyOf`` (-> service) and ``svc:endpoint``. The
+    The StateProperty owns ``svc:isStatePropertyOf`` (-> service) and ``svc:hasEndpoint``. The
     Capability owns ``svc:providedByStateProperty`` (-> state property). The resource links to
     the Capability it *provides* (``cfc:hasCapability``). Only the stable endpoint receives
     write. The live value receives no persist.
@@ -419,7 +419,7 @@ def register_state_property(
         {str(SVC.isStatePropertyOf): [_ref(service_iri)]},
         named_graph,
     )
-    _set(ogm, state_property_iri, {str(SVC.endpoint): [str(endpoint)]}, named_graph)
+    _set(ogm, state_property_iri, {str(SVC.hasEndpoint): [str(endpoint)]}, named_graph)
     # The resource provides this Capability too (cfc:hasCapability), linked in the Capability's
     # own commit. See register_workflow.
     _register_capability(
@@ -455,16 +455,16 @@ def deregister_service(
     for wf_node, _, _ in db.triples_get(
         pred=SVC.isWorkflowOf, obj=service_iri, named_graph=named_graph
     ):
-        _set(ogm, _named(wf_node, "Workflow", service_iri), {str(SVC.endpoint): []}, named_graph)
+        _set(ogm, _named(wf_node, "Workflow", service_iri), {str(SVC.hasEndpoint): []}, named_graph)
 
     for sp_node, _, _ in db.triples_get(
         pred=SVC.isStatePropertyOf, obj=service_iri, named_graph=named_graph
     ):
         _set(
-            ogm, _named(sp_node, "StateProperty", service_iri), {str(SVC.endpoint): []}, named_graph
+            ogm, _named(sp_node, "StateProperty", service_iri), {str(SVC.hasEndpoint): []}, named_graph
         )
 
-    _set(ogm, service_iri, {str(SVC.address): []}, named_graph)
+    _set(ogm, service_iri, {str(SVC.hasAddress): []}, named_graph)
 
 
 def _named(node: IRI | BNode, kind: str, service_iri: IRI) -> IRI:
@@ -495,10 +495,10 @@ def update_heartbeat(
     timestamp: Optional[datetime] = None,
     named_graph: Optional[IRI] = None,
 ) -> None:
-    """Refresh a Service ``svc:lastHeartbeat`` via OGM.commit (atomic replace)."""
+    """Refresh a Service ``svc:hasLastHeartbeat`` via OGM.commit (atomic replace)."""
     if timestamp is None:
         timestamp = datetime.now(timezone.utc)
-    _set(ogm, service_iri, {str(SVC.lastHeartbeat): [timestamp.isoformat()]}, named_graph)
+    _set(ogm, service_iri, {str(SVC.hasLastHeartbeat): [timestamp.isoformat()]}, named_graph)
 
 
 def find_stale_services(
@@ -510,9 +510,9 @@ def find_stale_services(
 ) -> list[IRI]:
     """Find reachable-but-silent Services whose heartbeat has gone stale (a read).
 
-    A service is stale if it currently has an ``svc:address`` but either has no
-    ``svc:lastHeartbeat`` or its latest heartbeat is older than ``max_age_seconds``. Services
-    are identified by ``svc:address`` presence (real services are subclass-typed, so
+    A service is stale if it currently has an ``svc:hasAddress`` but either has no
+    ``svc:hasLastHeartbeat`` or its latest heartbeat is older than ``max_age_seconds``. Services
+    are identified by ``svc:hasAddress`` presence (real services are subclass-typed, so
     ``rdf:type svc:Service`` would not match).
     """
     if now is None:
@@ -520,8 +520,8 @@ def find_stale_services(
     cutoff_iso = (now - timedelta(seconds=max_age_seconds)).isoformat()
     sparql = f"""
     SELECT DISTINCT ?s WHERE {{
-        ?s <{SVC.address}> ?addr .
-        OPTIONAL {{ ?s <{SVC.lastHeartbeat}> ?hb . }}
+        ?s <{SVC.hasAddress}> ?addr .
+        OPTIONAL {{ ?s <{SVC.hasLastHeartbeat}> ?hb . }}
         FILTER ( !bound(?hb) || ?hb < "{cutoff_iso}"^^<http://www.w3.org/2001/XMLSchema#dateTime> )
     }}
     """
@@ -547,7 +547,7 @@ def sweep_stale_services(
     it deregistered; one skipped on a store error is left for the next sweep and not returned.
 
     The decision is per Operation (:func:`find_stranded_operations`), live meaning a Service
-    with an ``svc:address`` and an ``svc:lastHeartbeat`` within ``max_age_seconds`` of ``now``:
+    with an ``svc:hasAddress`` and an ``svc:hasLastHeartbeat`` within ``max_age_seconds`` of ``now``:
     a ``queued`` Operation is stranded when its Capability is realized by no live Service of
     its resource; a ``running`` one when the Service of the Workflow that claimed it
     (``svc:executedByWorkflow``) is not live, or no claimer is recorded. The stale Service is
@@ -714,8 +714,8 @@ def resolve_dispatch_target(
     """Resolve a reachable receiver for a Capability *class*.
 
     Bind a Capability *instance* of ``capability_class`` realized by a Workflow whose Service
-    has a live ``svc:address``: ``Capability --realizedByWorkflow--> Workflow --isWorkflowOf-->
-    Service --address``. If ``target_resource`` is given, the Service is pinned to that resource
+    has a live ``svc:hasAddress``: ``Capability --realizedByWorkflow--> Workflow --isWorkflowOf-->
+    Service --hasAddress``. If ``target_resource`` is given, the Service is pinned to that resource
     (``svc:isServiceOf``). The bound Capability instance is what the dispatched Operation will
     ``cfc:implementsCapability``.
 
@@ -737,7 +737,7 @@ def resolve_dispatch_target(
         ?wf <{SVC.isWorkflowOf}> ?svc ."""
     sparql = f"""
     SELECT ?cap ?svc ?addr WHERE {{{realized}
-        ?svc <{SVC.address}> ?addr .{resource_filter}
+        ?svc <{SVC.hasAddress}> ?addr .{resource_filter}
     }}
     """
     result = ogm.db.query(sparql, convert_bindings=True)
@@ -748,7 +748,7 @@ def resolve_dispatch_target(
         message = (
             f"Capability class {capability_class} cannot be resolved to any reachable "
             "Service (no Capability of that class is realized by a Workflow whose Service "
-            "has a current svc:address)."
+            "has a current svc:hasAddress)."
         )
         answer = ogm.db.query(f"ASK {{{realized}{resource_filter}\n    }}")
         if isinstance(answer, dict) and answer.get("boolean", False):
@@ -766,7 +766,7 @@ def resolve_operation_workflow(
 ) -> IRI:
     """Resolve an Operation to the Workflow that realizes its Capability, WITHOUT require of a
     live endpoint. This is the provenance resolver used by
-    pull-and-run so `executedByWorkflow` receives record even if the workflow `svc:endpoint` was
+    pull-and-run so `executedByWorkflow` receives record even if the workflow `svc:hasEndpoint` was
     deregistered mid-run.
 
     Raises:
@@ -939,7 +939,7 @@ def _terminal_status_update(
 
     Status and provenance are one change, so one commit writes them together. An Operation is
     never terminal-without-provenance. On failure, ``failure_state`` (a JSON snapshot of the
-    resource datamodel) goes into ``svc:failureState`` in the same change. The failed status and
+    resource datamodel) goes into ``svc:hasFailureState`` in the same change. The failed status and
     the state that produced it are never separable. Nothing is written here: ``claim_next()``
     commits it as the exit or the error transition of ``mw.commit()``.
     """
@@ -948,12 +948,12 @@ def _terminal_status_update(
     data: dict = {
         str(SVC.hasOperationStatus): [status],
         str(SVC.executedByWorkflow): [_ref(workflow_iri)],
-        str(SVC.executionTimestamp): [timestamp.isoformat()],
+        str(SVC.hasExecutionTimestamp): [timestamp.isoformat()],
     }
     if result is not None:
-        data[str(SVC.executionResult)] = [str(result)]
+        data[str(SVC.hasExecutionResult)] = [str(result)]
     if failure_state is not None:
-        data[str(SVC.failureState)] = [failure_state]
+        data[str(SVC.hasFailureState)] = [failure_state]
     return Update(instance_iri=IRI(operation_iri), data=data)
 
 
@@ -1039,7 +1039,7 @@ def find_stranded_operations(
 ) -> list[IRI]:
     """Find a resource own Operations, in one of ``statuses``, that no live Service will finish.
 
-    A Service is live when it has an ``svc:address`` and an ``svc:lastHeartbeat`` no older than
+    A Service is live when it has an ``svc:hasAddress`` and an ``svc:hasLastHeartbeat`` no older than
     ``max_age_seconds`` before ``now``, and is not in ``excluding``. The Operations are the
     resource own, as :func:`find_resource_operations` finds them (``cfc:implementsCapability``
     and ``cfc:hasCapability``). Two rules, one read:
@@ -1089,7 +1089,7 @@ def find_stranded_operations(
             listed = ", ".join(f"<{iri}>" for iri in excluding)
             exclusion = f" FILTER({service} NOT IN ({listed}))"
         return (
-            f"{service} <{SVC.address}> ?addr . {service} <{SVC.lastHeartbeat}> ?hb . "
+            f"{service} <{SVC.hasAddress}> ?addr . {service} <{SVC.hasLastHeartbeat}> ?hb . "
             f"FILTER(?hb >= {cutoff}){exclusion}"
         )
 
@@ -1134,7 +1134,7 @@ def services_of_resource(
     Args:
         ogm: The OGM instance.
         resource_iri: The resource whose services to find.
-        reachable_only: Keep only Services that currently carry an ``svc:address``. A
+        reachable_only: Keep only Services that currently carry an ``svc:hasAddress``. A
             deregistered instance keeps its individual but loses its address. This is
             the reachable-now set rather than the ever-registered set.
         named_graph: Optional named graph for the read.
@@ -1142,7 +1142,7 @@ def services_of_resource(
     Returns:
         List of Service IRIs.
     """
-    reachability = f"\n        ?svc <{SVC.address}> ?addr ." if reachable_only else ""
+    reachability = f"\n        ?svc <{SVC.hasAddress}> ?addr ." if reachable_only else ""
     sparql = f"""
     SELECT DISTINCT ?svc WHERE {{
         ?svc <{SVC.isServiceOf}> <{resource_iri}> .{reachability}
@@ -1184,24 +1184,24 @@ def mark_operation_failed(
         operation_iri,
         {
             str(SVC.hasOperationStatus): [OperationStatus.FAILED],
-            str(SVC.executionResult): [reason],
+            str(SVC.hasExecutionResult): [reason],
         },
         named_graph,
     )
 
 
 def reachable_service_addresses(ogm: "OGM", resource_iri: IRI) -> list[Tuple[IRI, str]]:
-    """Every reachable Service of a resource, with its ``svc:address``.
+    """Every reachable Service of a resource, with its ``svc:hasAddress``.
 
     The reachability rule of ``services_of_resource(..., reachable_only=True)``: a Service is
-    reachable while it carries an ``svc:address``. The address is read in the same query, so a
+    reachable while it carries an ``svc:hasAddress``. The address is read in the same query, so a
     Service cannot lose it between two reads. A resource may have several reachable Services
     (one per middleware instance); the caller decides what that means.
     """
     sparql = f"""
     SELECT DISTINCT ?svc ?addr WHERE {{
         ?svc <{SVC.isServiceOf}> <{resource_iri}> .
-        ?svc <{SVC.address}> ?addr .
+        ?svc <{SVC.hasAddress}> ?addr .
     }}
     """
     result = ogm.db.query(sparql, convert_bindings=True)

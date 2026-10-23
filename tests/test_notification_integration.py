@@ -92,8 +92,9 @@ def _stop_server(server: uvicorn.Server, thread: threading.Thread) -> None:
 
 def _seed_transport(db, status: str) -> None:
     """A transport: an Operation with a status, addressed to no Capability."""
-    db.triple_add((TRANSPORT, RDF.type, CFC.Operation))
-    db.triple_add((TRANSPORT, SVC.hasOperationStatus, Literal(status)))
+    db.triples_add(
+        [(TRANSPORT, RDF.type, CFC.Operation), (TRANSPORT, SVC.hasOperationStatus, Literal(status))]
+    )
 
 
 def _statuses(db, operation) -> list[str]:

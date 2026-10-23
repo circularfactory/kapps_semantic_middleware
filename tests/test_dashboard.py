@@ -29,6 +29,7 @@ from pydantic import BaseModel
 from rdflib import Graph
 
 from kapps_semantic_middleware.dashboard import (
+    SHORTENING_NOTE,
     DashboardRegistry,
     _fragment_for_box,
     _serve_static_file,
@@ -422,6 +423,9 @@ def test_spec_parameter_without_a_binding_is_still_shown() -> None:
     assert "isOccupied" in response.text
     assert "hasOPCUATemperature" in response.text
     assert "No binding recognized" in response.text
+    # The shortening note is gone; the IRI cell keeps the full IRI on hover instead.
+    assert "are shortened for readability" not in response.text
+    assert 'title="http://example.org/LightBarrier1"' in response.text
 
     # The point of the acceptance criterion: the parameter's pruned metadata is shown, not
     # only counted. Asserting the parameter name and the sentence is not enough -- both were
@@ -1075,11 +1079,11 @@ def _title_and_heading(mw: FakeMiddleware) -> tuple[str, str]:
 
 
 def test_the_title_names_the_resource_by_its_label() -> None:
-    """A tab shows which resource its page belongs to: the label, then "— dashboard"."""
+    """A tab shows which resource its page belongs to: the label, then "Dashboard"."""
     mw = _instance(MODULE, GraphStore('ex:Module1 rdfs:label "Module 1" .'))
     enable_dashboard(mw)
 
-    assert _title_and_heading(mw) == ("Module 1 — dashboard", "Module 1 — dashboard")
+    assert _title_and_heading(mw) == ("Module 1 Dashboard", "Module 1 Dashboard")
 
 
 @pytest.mark.parametrize(
@@ -1098,7 +1102,7 @@ def test_without_a_label_the_title_names_the_resource_by_its_local_name(
     mw = _instance(resource_iri, GraphStore('ex:Other rdfs:label "Other" .'))
     enable_dashboard(mw)
 
-    assert _title_and_heading(mw) == (f"{name} — dashboard", f"{name} — dashboard")
+    assert _title_and_heading(mw) == (f"{name} Dashboard", f"{name} Dashboard")
 
 
 def test_an_instance_without_a_resource_keeps_the_general_title() -> None:
@@ -1119,7 +1123,7 @@ def test_the_name_is_escaped_in_the_title_and_the_heading() -> None:
     )
     enable_dashboard(mw)
 
-    escaped = "&lt;script&gt;alert(1)&lt;/script&gt; &amp; Co — dashboard"
+    escaped = "&lt;script&gt;alert(1)&lt;/script&gt; &amp; Co Dashboard"
     assert _title_and_heading(mw) == (escaped, escaped)
 
 
@@ -1159,7 +1163,7 @@ def test_of_several_labels_one_is_chosen_whatever_their_order(
         mw = _instance(MODULE, GraphStore(turtle))
         enable_dashboard(mw)
 
-        assert _title_and_heading(mw)[0] == f"{name} — dashboard", ordered
+        assert _title_and_heading(mw)[0] == f"{name} Dashboard", ordered
 
 
 def test_the_name_is_read_once_when_the_dashboard_is_enabled() -> None:
@@ -1186,7 +1190,7 @@ def test_a_failed_read_names_the_resource_by_its_local_name(
     with caplog.at_level(logging.WARNING, logger="kapps_semantic_middleware.dashboard"):
         enable_dashboard(mw)
 
-    assert _title_and_heading(mw)[0] == "Module1 — dashboard"
+    assert _title_and_heading(mw)[0] == "Module1 Dashboard"
     assert any(
         MODULE in record.getMessage() and "the store is down" in record.getMessage()
         for record in caplog.records
@@ -1317,3 +1321,22 @@ def test_the_header_shows_a_dash_for_an_instance_without_a_store() -> None:
     fragment = TestClient(mw.app).get("/dashboard/box/header").text
 
     assert "<tr><th>Dataset</th><td>&mdash;</td></tr>" in fragment
+
+
+def test_the_subtitle_reads_visualization_of_the_middleware_state() -> None:
+    """The page under the heading reads "Visualization of the middleware state"."""
+    mw = _instance(None)
+    enable_dashboard(mw)
+
+    page = TestClient(mw.app).get("/dashboard").text
+
+    assert "<p>Visualization of the middleware state</p>" in page
+    assert "already holds in memory" not in page
+
+
+def test_the_shortening_note_stays_importable_with_its_value() -> None:
+    """A consumer still imports the note, so it keeps its value for one release."""
+    assert SHORTENING_NOTE == (
+        "Identifiers and generated paths are shortened for readability. "
+        "Hold the pointer over any shortened value to read it in full."
+    )

@@ -720,3 +720,13 @@ async def test_a_fresh_stream_after_eviction_reports_no_drop(fake_middleware):
     events = await _drive_stream(fake_middleware, 3)
 
     assert [json.loads(event["data"])["message"] for event in events] == ["msg7", "msg8", "msg9"]
+
+
+def test_the_activity_page_has_a_heading_and_no_subtitle(fake_middleware):
+    """The page shows "Middleware Activity" and no line of explanation under it."""
+    enable_activity_feed(fake_middleware)
+
+    body = TestClient(fake_middleware.app).get("/activity").text
+
+    assert "<h1>Middleware Activity</h1>" in body
+    assert "Shows machinery" not in body

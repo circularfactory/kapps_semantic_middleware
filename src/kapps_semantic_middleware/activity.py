@@ -290,7 +290,6 @@ def enable_activity_feed(
 <body>
     <header>
         <h1>Middleware Activity</h1>
-        <p>Shows machinery: wiring, traffic, registrations. Not resource state.</p>
     </header>
     <div id="log" class="log"></div>
     <script>

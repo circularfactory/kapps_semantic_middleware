@@ -44,7 +44,7 @@ posix_signals = pytest.mark.skipif(
 
 
 def _address(db, service_iri) -> list[str]:
-    return [str(triple[2]) for triple in db.triples_get(sub=service_iri, pred=SVC.address)]
+    return [str(triple[2]) for triple in db.triples_get(sub=service_iri, pred=SVC.hasAddress)]
 
 
 def _await_serving(proc: subprocess.Popen, timeout: float = 60.0) -> None:

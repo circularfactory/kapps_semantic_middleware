@@ -130,7 +130,7 @@ def build_view_query(parity: str = "all") -> str:
     verify by inspection. A real algorithm would narrow by area of the plant, topology, or
     workload instead.
 
-    Live means the resource's Service carries ``svc:address``. The query joins from
+    Live means the resource's Service carries ``svc:hasAddress``. The query joins from
     ``?resource`` to its Service via ``svc:isServiceOf``, then requires ``?addr`` to be
     bound. For "even" and "odd" the unit index is extracted from the IRI's local name (e.g.
     ``...#TransferUnit4`` -> ``4``) and tested for parity arithmetically: SPARQL 1.1
@@ -162,7 +162,7 @@ def _live_units_query(heuristic: str) -> str:
     SELECT ?resource WHERE {{
         ?resource a <{seed.TRANSFER_UNIT_CLASS}> .
         ?svc <{SVC.isServiceOf}> ?resource .
-        ?svc <{SVC.address}> ?addr .
+        ?svc <{SVC.hasAddress}> ?addr .
         {heuristic}
     }}
     """

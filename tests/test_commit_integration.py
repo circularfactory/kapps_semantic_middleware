@@ -4,8 +4,8 @@ Two Operations of the hello resource carry the state: the commit is about the fi
 second is a further instance that the body or the exit transition changes. The OGM is the real
 one, subclassed only to record each `commit` call, so "one commit" is counted at the seam that
 `mw.commit()` writes through. Skipped when the TRIPLESTORE_* variables are absent (see conftest).
-A test that needs a shape sets it with the store's `shapes_set`, which replaces every shape
-of the dataset, and removes every shape again at its end.
+A test that needs a shape sets it joined with the shipped shapes (`_shapes.py`), because the
+store's `shapes_set` replaces every shape of the dataset, and restores the shipped ones at its end.
 """
 
 from __future__ import annotations
@@ -18,6 +18,7 @@ from pathlib import Path
 
 import anyio
 import pytest
+from _shapes import restore_shipped_shapes, with_shipped_shapes
 from kapps_ogm import OGM, Update
 from kapps_ogm.utils.class_scope import ClassScope
 from kapps_triplestore_interface import IRI
@@ -142,7 +143,9 @@ def test_a_refused_entry_runs_no_body_and_writes_nothing(store):
     op, _ = _seed(store)
     mw = _middleware(store)
     ran = []
-    store.shapes_set(_status_shape("queued", "done", "failed"), "text/turtle")
+    store.shapes_set(
+        with_shipped_shapes(_status_shape("queued", "done", "failed")), "text/turtle"
+    )
     try:
         before = _explicit_statements(store)
         with pytest.raises(TripleStoreInterfaceError, match="ValidationReport"):
@@ -155,7 +158,7 @@ def test_a_refused_entry_runs_no_body_and_writes_nothing(store):
                 ran.append(True)
         after = _explicit_statements(store)
     finally:
-        store.shapes_set("", "text/turtle")
+        restore_shipped_shapes(store)
     assert ran == []
     assert after == before
 
@@ -167,12 +170,12 @@ def test_an_error_in_the_body_leaves_only_the_error_transition(store):
         with mw.commit(
             op, entry=_status(op, "running"), exit=_status(op, "done"), error=_status(op, "failed")
         ) as transition:
-            transition.update(op, {str(SVC.executionResult): ["half a hole"]})
-            transition.update(other, {str(SVC.executionResult): ["never written"]})
+            transition.update(op, {str(SVC.hasExecutionResult): ["half a hole"]})
+            transition.update(other, {str(SVC.hasExecutionResult): ["never written"]})
             raise RuntimeError("gripper jammed")
     assert _values(store, op, SVC.hasOperationStatus) == ["failed"]
-    assert _values(store, op, SVC.executionResult) == []
-    assert _values(store, other, SVC.executionResult) == []
+    assert _values(store, op, SVC.hasExecutionResult) == []
+    assert _values(store, other, SVC.hasExecutionResult) == []
     assert _values(store, other, SVC.hasOperationStatus) == ["queued"]
 
 
@@ -182,12 +185,12 @@ def test_a_clean_exit_is_one_commit_and_merges_the_changes_to_one_instance(store
     mw = _middleware(store)
     with mw.commit(op, entry=_status(op, "running"), exit=_status(op, "done")) as transition:
         assert _values(store, op, SVC.hasOperationStatus) == ["running"]
-        transition.update(op, {str(SVC.executionResult): ["drilled"]})
-        transition.update(other, {str(SVC.executionResult): ["handed on"]})
+        transition.update(op, {str(SVC.hasExecutionResult): ["drilled"]})
+        transition.update(other, {str(SVC.hasExecutionResult): ["handed on"]})
     assert [kind for kind, _, _ in mw.ogm.calls] == ["changes", "changes"]  # entry, exit
     assert _values(store, op, SVC.hasOperationStatus) == ["done"]
-    assert _values(store, op, SVC.executionResult) == ["drilled"]
-    assert _values(store, other, SVC.executionResult) == ["handed on"]
+    assert _values(store, op, SVC.hasExecutionResult) == ["drilled"]
+    assert _values(store, other, SVC.hasExecutionResult) == ["handed on"]
 
 
 def test_a_body_that_sets_the_status_commits_its_value_and_skips_the_exit_transition(store):
@@ -195,28 +198,30 @@ def test_a_body_that_sets_the_status_commits_its_value_and_skips_the_exit_transi
     mw = _middleware(store)
     exit_transition = [
         Update(instance_iri=op, data={str(SVC.hasOperationStatus): ["done"]}),
-        Update(instance_iri=other, data={str(SVC.executionResult): ["exit ran"]}),
+        Update(instance_iri=other, data={str(SVC.hasExecutionResult): ["exit ran"]}),
     ]
     with mw.commit(op, entry=_status(op, "running"), exit=exit_transition) as transition:
         transition.update(op, {str(SVC.hasOperationStatus): ["queued"]})  # put back for a later try
     assert _values(store, op, SVC.hasOperationStatus) == ["queued"]
-    assert _values(store, other, SVC.executionResult) == []
+    assert _values(store, other, SVC.hasExecutionResult) == []
 
 
 def test_a_refused_exit_commits_the_error_transition_and_raises(store):
     op, _ = _seed(store)
     mw = _middleware(store)
-    store.shapes_set(_status_shape("queued", "running", "failed"), "text/turtle")
+    store.shapes_set(
+        with_shipped_shapes(_status_shape("queued", "running", "failed")), "text/turtle"
+    )
     try:
         with pytest.raises(TripleStoreInterfaceError, match="ValidationReport"):
             with mw.commit(
                 op, entry=_status(op, "running"), exit=_status(op, "done"), error=_status(op, "failed")
             ) as transition:
-                transition.update(op, {str(SVC.executionResult): ["drilled"]})
+                transition.update(op, {str(SVC.hasExecutionResult): ["drilled"]})
     finally:
-        store.shapes_set("", "text/turtle")
+        restore_shipped_shapes(store)
     assert _values(store, op, SVC.hasOperationStatus) == ["failed"]
-    assert _values(store, op, SVC.executionResult) == []
+    assert _values(store, op, SVC.hasExecutionResult) == []
 
 
 def test_a_body_awaiting_longer_than_the_heartbeat_interval_delays_no_heartbeat(store):
@@ -236,7 +241,7 @@ def test_a_body_awaiting_longer_than_the_heartbeat_interval_delays_no_heartbeat(
             ) as transition:
                 started = time.monotonic()
                 await asyncio.sleep(2.0)  # a robot's move, awaited
-                transition.update(op, {str(SVC.executionResult): ["drilled"]})
+                transition.update(op, {str(SVC.hasExecutionResult): ["drilled"]})
                 ended = time.monotonic()
         finally:
             await mw._stop_heartbeat()
@@ -253,7 +258,7 @@ def test_a_body_awaiting_longer_than_the_heartbeat_interval_delays_no_heartbeat(
     commit_threads = {thread for kind, _, thread in mw.ogm.calls if kind == "changes"}
     assert loop_thread not in commit_threads
     assert _values(store, op, SVC.hasOperationStatus) == ["done"]
-    assert _values(store, op, SVC.executionResult) == ["drilled"]
+    assert _values(store, op, SVC.hasExecutionResult) == ["drilled"]
 
 
 def test_fetch_reads_an_operation_under_a_class_scope(store):

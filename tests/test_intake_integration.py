@@ -239,9 +239,13 @@ def test_a_notification_of_an_operation_of_no_own_capability_reaches_the_handler
     db = store
     seed.seed_scenario1(db)
     db.triple_add((PLANNER_CAPABILITY, RDF.type, CFC.Capability))
-    db.triple_add((TRANSPORT, RDF.type, CFC.Operation))
-    db.triple_add((TRANSPORT, CFC.implementsCapability, PLANNER_CAPABILITY))
-    db.triple_add((TRANSPORT, SVC.hasOperationStatus, Literal(OperationStatus.DONE)))
+    db.triples_add(
+        [
+            (TRANSPORT, RDF.type, CFC.Operation),
+            (TRANSPORT, CFC.implementsCapability, PLANNER_CAPABILITY),
+            (TRANSPORT, SVC.hasOperationStatus, Literal(OperationStatus.DONE)),
+        ]
+    )
     ran: list = []
     handled: list = []
     receiver = _receiver(store, ran.append, handled.append)

@@ -374,7 +374,7 @@ class _ClaimedOperation:
     ``operation`` is the re-fetched Operation (a `kapps_ogm` Node — hydrated under the
     domain-supplied ClassScope, or a bare reference when no scope was given). The body reads
     it to decide what work to do. It sets ``result`` to the outcome, which is recorded as
-    ``svc:executionResult`` in the terminal transition.
+    ``svc:hasExecutionResult`` in the terminal transition.
     """
 
     def __init__(self, iri: IRI, operation: Any) -> None:
@@ -944,7 +944,7 @@ class SemanticMiddleware(Middleware):
         self._heartbeat_task = asyncio.create_task(self._heartbeat_loop())
 
     async def _heartbeat_loop(self) -> None:
-        """Refresh svc:lastHeartbeat once at startup, after a random phase, then every ``heartbeat_interval`` seconds, until the system cancels it.
+        """Refresh svc:hasLastHeartbeat once at startup, after a random phase, then every ``heartbeat_interval`` seconds, until the system cancels it.
 
         A beat that fails on a store error is logged as one warning; the next beat is at the next
         interval. Any other error ends the loop, logged at ERROR, and is raised.
@@ -1097,7 +1097,7 @@ class SemanticMiddleware(Middleware):
                 op, class_scope=scope, entry=running, exit=done, error=failed
             ) as transition:
                 reading = await tool.apply(transition.node.instance)  # the physical work
-                transition.update(op, {str(SVC.executionResult): [reading]})
+                transition.update(op, {str(SVC.hasExecutionResult): [reading]})
 
         and the same with ``with`` in code that runs in a worker thread, such as a callback, a
         notification handler or a script. ``entry``, ``exit`` and ``error`` are lists of
@@ -1886,7 +1886,7 @@ class SemanticMiddleware(Middleware):
         and it is never queued and never runs a workflow.
 
         The call finds the resource's live Service in the graph (one that carries an
-        `svc:address`), posts the IRI to that Service's event trigger, and returns when the
+        `svc:hasAddress`), posts the IRI to that Service's event trigger, and returns when the
         receiver confirms receipt, which it does at once. It raises
         `NotificationUndelivered` when the resource has no live Service, when it has more
         than one (the call does not choose between them), and when the post fails, is
@@ -2107,13 +2107,13 @@ class SemanticMiddleware(Middleware):
           and the graph keeps it as it was. Then the Operation is re-fetched under the
           domain-supplied `ClassScope`, so the body gets exactly the object shape it needs.
         - **Body.** It runs the work, and may set `claimed.result`.
-        - **Clean exit.** `done` plus provenance (`executedByWorkflow` / `executionTimestamp` /
-          `executionResult`) is one commit.
+        - **Clean exit.** `done` plus provenance (`executedByWorkflow` / `hasExecutionTimestamp` /
+          `hasExecutionResult`) is one commit.
         - **Error.** On a body exception, a fetch that fails after the claim, or a refused
           `done`, `failed` plus provenance and the exception message is one commit, and the
           exception is raised. Provenance is folded into the terminal transition. On failure the
           CM also dumps the resource datamodel and stores it as the Operation's
-          ``svc:failureState`` in the same commit, so the state that produced the failure
+          ``svc:hasFailureState`` in the same commit, so the state that produced the failure
           survives the exception.
         - **The issuer.** After the claim, and after `done` or `failed`, the Operation's issuer
           (`svc:issuedBy`) is notified, as after any :meth:`commit` that moves an Operation.
@@ -2136,7 +2136,7 @@ class SemanticMiddleware(Middleware):
 
         # Precondition, BEFORE any mutation: resolve the Workflow for provenance
         # without requiring a live endpoint, so `executedByWorkflow` is recorded even if the
-        # workflow's `svc:endpoint` the system deregistered it mid-run. If this raises, the Operation
+        # workflow's `svc:hasEndpoint` the system deregistered it mid-run. If this raises, the Operation
         # stays queued (in the graph and this in-memory queue) for a later retry. The same read
         # finds the Operation's issuer, whom the claim and the end notify.
         read = _resolve_claim(self.ogm, op_iri, named_graph=self.named_graph)
@@ -2220,7 +2220,7 @@ class SemanticMiddleware(Middleware):
         """Register a domain work callback fired on enqueue.
 
         `callback` is the work function `callback(operation) -> result`. It runs the
-        Operation's work, and returns the value recorded as `svc:executionResult`. On each
+        Operation's work, and returns the value recorded as `svc:hasExecutionResult`. On each
         enqueue, The middleware drives a background pull-and-run around it:
         `with claim_next(scope) as c: c.result = callback(c.operation)`. The middleware
         handles status (`running`->`done`/`failed`) and provenance. The domain writes only
@@ -2588,7 +2588,7 @@ class SemanticMiddleware(Middleware):
         """Serialize this resource's transitional_sync_middleware datamodel to a JSON string, or None.
 
         This is the failed Operation state snapshot. On a body exception,
-        `claim_next` records this alongside `hasOperationStatus=failed` (`svc:failureState`),
+        `claim_next` records this alongside `hasOperationStatus=failed` (`svc:hasFailureState`),
         so the user can diagnose the resource state from the
         graph. This is best-effort. A resource with no materializable datamodel, or a
         serialization error, yields None. The `failed` status and error string are still

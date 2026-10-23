@@ -17,7 +17,11 @@ from kapps_ogm.utils.class_scope import ClassScope
 from rdflib import Literal
 from rdflib.namespace import RDF, RDFS
 
-from kapps_semantic_middleware.seeding import clear_dataset, load_shared_ontologies
+from kapps_semantic_middleware.seeding import (
+    clear_dataset,
+    load_shared_ontologies,
+    set_service_shapes,
+)
 from kapps_semantic_middleware.vocabulary import INF, SVC
 
 
@@ -207,7 +211,8 @@ def _load_demo_ontologies(db) -> None:
 
 
 def seed_factory(db, ogm, units: int) -> None:
-    """Seed the factory: clear the default graph, load ontologies, create N units plus one control station.
+    """Seed the factory: clear the default graph, load ontologies, set the service ontology's
+    shapes, create N units plus one control station.
 
     Args:
         db: The store.
@@ -217,6 +222,7 @@ def seed_factory(db, ogm, units: int) -> None:
     clear_dataset(db)
     load_shared_ontologies(db, reload=True)
     _load_demo_ontologies(db)
+    set_service_shapes(db)
 
     for n in range(1, units + 1):
         _create_transfer_unit(ogm, n)
@@ -230,8 +236,8 @@ def seed_factory(db, ogm, units: int) -> None:
 def factory_is_live(db, max_age_seconds: float = 90.0) -> list[IRI]:
     """Check whether a factory is currently live in the graph.
 
-    A factory is live when any Service node carries both svc:address and a
-    svc:lastHeartbeat within the staleness window. This inverts the query
+    A factory is live when any Service node carries both svc:hasAddress and a
+    svc:hasLastHeartbeat within the staleness window. This inverts the query
     shape from registration.find_stale_services (live is bound(?hb) and
     fresh, not stale or absent).
 
@@ -247,8 +253,8 @@ def factory_is_live(db, max_age_seconds: float = 90.0) -> list[IRI]:
 
     sparql = f"""
     SELECT DISTINCT ?s WHERE {{
-        ?s <{SVC.address}> ?addr .
-        ?s <{SVC.lastHeartbeat}> ?hb .
+        ?s <{SVC.hasAddress}> ?addr .
+        ?s <{SVC.hasLastHeartbeat}> ?hb .
         FILTER (?hb >= "{cutoff_iso}"^^<http://www.w3.org/2001/XMLSchema#dateTime>)
     }}
     """

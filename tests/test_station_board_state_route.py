@@ -22,7 +22,7 @@ Five rules live here, none of which the controller-level tests can hold on their
    leaves; a ``kill -9``'d one keeps its address, so it stays selected and its card reads
    ``unreachable`` with its last-known values and an age.
 
-No real peer process here. A ``svc:address`` that nothing listens on is enough for the
+No real peer process here. A ``svc:hasAddress`` that nothing listens on is enough for the
 board to wire a unit and serve its loaded values without paying for a subprocess. A value
 travelling from a real peer is covered in ``test_controller_view.py``. The board's read view
 without any store is covered in ``test_station_board_read_view.py``.
@@ -56,7 +56,7 @@ def _publish_service(store, resource_iri, address: str) -> None:
         INSERT DATA {{
           <{service_iri}> a <{SVC.Service}> ;
               <{SVC.isServiceOf}> <{resource_iri}> ;
-              <{SVC.address}> "{address}" .
+              <{SVC.hasAddress}> "{address}" .
         }}
         """,
         update=True,
@@ -90,7 +90,7 @@ def _query_selecting(*indices: int) -> str:
     SELECT ?resource WHERE {{
         ?resource a <{seed.TRANSFER_UNIT_CLASS}> .
         ?svc <{SVC.isServiceOf}> ?resource ;
-             <{SVC.address}> ?addr .
+             <{SVC.hasAddress}> ?addr .
         BIND(STRAFTER(STR(?resource), "#TransferUnit") AS ?suffix)
         FILTER(?suffix IN ({suffixes}))
     }}
@@ -326,7 +326,7 @@ class TestTheViewTracksTheGraphUnattended:
 
     async def test_a_cleanly_stopped_unit_leaves_within_one_poll(self, store, ogm, unit_scope):
         """The launcher SIGTERMs the middleware first, so a clean stop takes
-        the unit's ``svc:address`` out of the graph. It then stops matching the live
+        the unit's ``svc:hasAddress`` out of the graph. It then stops matching the live
         clause and its card leaves -- the "cleanly stopped" half of the two deaths."""
         client, _ = await _board(
             store, ogm, unit_scope, name="CS-leave1", live=(1, 2), query=_query_selecting(1, 2)
@@ -438,7 +438,7 @@ class TestABadHeuristicIsReportedInPlace:
 
 
 def _set_heartbeat(store, resource_iri, *, seconds_ago: float) -> None:
-    """Give ``resource_iri``'s Service a ``svc:lastHeartbeat`` that many seconds in the
+    """Give ``resource_iri``'s Service a ``svc:hasLastHeartbeat`` that many seconds in the
     past -- the one thing a ``kill -9``'d unit stops doing.
 
     Deletes any existing heartbeat first, so a test can bring a unit to life and then
@@ -446,14 +446,14 @@ def _set_heartbeat(store, resource_iri, *, seconds_ago: float) -> None:
     """
     service_iri = f"{resource_iri}Service"
     store.query(
-        f"DELETE WHERE {{ <{service_iri}> <{SVC.lastHeartbeat}> ?o }}",
+        f"DELETE WHERE {{ <{service_iri}> <{SVC.hasLastHeartbeat}> ?o }}",
         update=True,
     )
     heartbeat_at = datetime.now(timezone.utc) - timedelta(seconds=seconds_ago)
     store.query(
         f"""
         INSERT DATA {{
-          <{service_iri}> <{SVC.lastHeartbeat}>
+          <{service_iri}> <{SVC.hasLastHeartbeat}>
               "{heartbeat_at.isoformat()}"^^<http://www.w3.org/2001/XMLSchema#dateTime> .
         }}
         """,
@@ -473,11 +473,11 @@ def _find_unit(body, resource_iri: str):
 @pytest.mark.asyncio
 class TestAKilledUnitStaysAndReadsUnreachable:
     """The second death. A ``kill -9``'d unit never gets to deregister, so its
-    ``svc:address`` stays in the graph and the view's live clause goes on matching it --
+    ``svc:hasAddress`` stays in the graph and the view's live clause goes on matching it --
     it is not a leaver, and dropping its card would be a lie about what the graph says.
     What stops is its heartbeat, and that is what the board reports.
 
-    Driven entirely by writing ``svc:lastHeartbeat`` at chosen ages against the real
+    Driven entirely by writing ``svc:hasLastHeartbeat`` at chosen ages against the real
     90 s ``staleness_threshold``: no process is killed here, because ``liveness_of``
     reads the graph and nothing else, and a subprocess would only make the test slower
     and flakier without testing anything more.

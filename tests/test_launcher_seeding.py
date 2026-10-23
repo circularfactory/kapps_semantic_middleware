@@ -271,11 +271,11 @@ class TestLiveSeeding:
 
         service_iri = IRI("http://example.org/test_service")
         store.triple_add((service_iri, SVC.isServiceOf, seed._mint_transfer_unit_iri(1)))
-        store.triple_add((service_iri, SVC.address, "http://localhost:8000"))
+        store.triple_add((service_iri, SVC.hasAddress, "http://localhost:8000"))
         store.triple_add(
             (
                 service_iri,
-                SVC.lastHeartbeat,
+                SVC.hasLastHeartbeat,
                 Literal(datetime.now(timezone.utc).isoformat(), datatype=XSD.dateTime),
             )
         )

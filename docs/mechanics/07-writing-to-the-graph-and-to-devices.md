@@ -25,7 +25,7 @@ async with mw.commit(
     op, class_scope=scope, entry=status("running"), exit=status("done"), error=status("failed")
 ) as transition:
     reading = await tool.apply(transition.node.instance)  # the work; no transaction is held
-    transition.update(op, {str(SVC.executionResult): [reading]})  # written at the clean exit
+    transition.update(op, {str(SVC.hasExecutionResult): [reading]})  # written at the clean exit
 ```
 
 `entry`, `exit` and `error` are lists of kapps_ogm `Create` and `Update` changes. Each is written as one commit, so each may span several instances. `mw.commit()` knows no vocabulary of its own: any datamodel and any state transition fit. The object it yields is the transition.
@@ -159,4 +159,4 @@ The formatter reassembles the blanknode from cached facets plus the live value. 
 
 Any prettified or shortened form of an IRI is display only. Production code carries fully back-resolvable IRIs in their mangled form. The generated API documentation renders a readable form where it can, but nothing parses that form back.
 
-**Silent failure:** A consumer that parses a displayed IRI, or round-trips one back into a query, gets a wrong answer with no exception raised. Use the mangled form (`IRI.lined`) for all production operations — REST path segments, datamodel field names, `svc:endpoint` triples. The mangled form is mechanically reversible to the original IRI. Pretty-printing is a rendering concern with no correctness weight.
+**Silent failure:** A consumer that parses a displayed IRI, or round-trips one back into a query, gets a wrong answer with no exception raised. Use the mangled form (`IRI.lined`) for all production operations — REST path segments, datamodel field names, `svc:hasEndpoint` triples. The mangled form is mechanically reversible to the original IRI. Pretty-printing is a rendering concern with no correctness weight.

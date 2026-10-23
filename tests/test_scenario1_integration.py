@@ -92,8 +92,8 @@ def test_scenario1_hello_world_end_to_end(store):
         assert db.triple_exists((cap_instance, RDF.type, seed.HELLO_CAPABILITY_CLASS))
         assert db.triple_exists((cap_instance, SVC.realizedByWorkflow, wf_instance))
         assert db.triple_exists((wf_instance, SVC.isWorkflowOf, service_iri))
-        assert db.triples_get(sub=service_iri, pred=SVC.address)
-        assert db.triples_get(sub=wf_instance, pred=SVC.endpoint)
+        assert db.triples_get(sub=service_iri, pred=SVC.hasAddress)
+        assert db.triples_get(sub=wf_instance, pred=SVC.hasEndpoint)
 
         # A second middleware (a planner) dispatches an operation for the hello capability:
         # it creates the Operation `queued` in the graph and rings the hello resource's
@@ -126,8 +126,8 @@ def test_scenario1_hello_world_end_to_end(store):
         status = list(db.triples_get(sub=op_iri, pred=SVC.hasOperationStatus))
         assert status and str(status[0][2]) == OperationStatus.DONE
         assert db.triple_exists((op_iri, SVC.executedByWorkflow, wf_instance))
-        assert db.triples_get(sub=op_iri, pred=SVC.executionTimestamp)
-        result = list(db.triples_get(sub=op_iri, pred=SVC.executionResult))
+        assert db.triples_get(sub=op_iri, pred=SVC.hasExecutionTimestamp)
+        result = list(db.triples_get(sub=op_iri, pred=SVC.hasExecutionResult))
         assert result and str(result[0][2]) == "hello world"
     finally:
         server.should_exit = True
@@ -135,8 +135,8 @@ def test_scenario1_hello_world_end_to_end(store):
         time.sleep(0.5)
 
     # Deregistration on shutdown removed reachability but preserved the individuals.
-    assert not db.triples_get(sub=service_iri, pred=SVC.address)
-    assert not db.triples_get(sub=wf_instance, pred=SVC.endpoint)
+    assert not db.triples_get(sub=service_iri, pred=SVC.hasAddress)
+    assert not db.triples_get(sub=wf_instance, pred=SVC.hasEndpoint)
     assert db.triple_exists((wf_instance, RDF.type, seed.HELLO_WORKFLOW_CLASS))
 
 

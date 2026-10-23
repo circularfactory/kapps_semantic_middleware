@@ -4,8 +4,8 @@ the feedback that its issuer gets after the claim and after the end, and the cla
 The OGM is the real one, subclassed only to record each write it makes, so "one commit" is
 counted at the seam that `mw.commit()` writes through. A claim is refused by the store's own SHACL
 engine. Skipped when the TRIPLESTORE_* variables are absent (see conftest).
-A test that needs a shape sets it with the store's `shapes_set`, which replaces every shape
-of the dataset, and removes every shape again at its end.
+A test that needs a shape sets it joined with the shipped shapes (`_shapes.py`), because the
+store's `shapes_set` replaces every shape of the dataset, and restores the shipped ones at its end.
 """
 
 from __future__ import annotations
@@ -21,6 +21,7 @@ from typing import Iterator
 
 import httpx
 import pytest
+from _shapes import restore_shipped_shapes, with_shipped_shapes
 import uvicorn
 from kapps_ogm import OGM, Create, Update
 from kapps_triplestore_interface import IRI
@@ -350,9 +351,9 @@ def test_a_claim_is_one_commit_and_done_with_its_provenance_is_one_more(store):
     assert _values(store, operation, SVC.hasOperationStatus) == [OperationStatus.DONE]
     workflow = mint_workflow_iri(mw.service_iri, "hello_world")
     assert store.triple_exists((operation, SVC.executedByWorkflow, workflow))
-    assert store.triples_get(sub=operation, pred=SVC.executionTimestamp)
-    assert _values(store, operation, SVC.executionResult) == ["hello world"]
-    assert _values(store, operation, SVC.failureState) == []
+    assert store.triples_get(sub=operation, pred=SVC.hasExecutionTimestamp)
+    assert _values(store, operation, SVC.hasExecutionResult) == ["hello world"]
+    assert _values(store, operation, SVC.hasFailureState) == []
 
 
 def test_a_failed_body_is_one_commit_of_failed_with_its_provenance_and_the_datamodel(store):
@@ -365,8 +366,8 @@ def test_a_failed_body_is_one_commit_of_failed_with_its_provenance_and_the_datam
     assert _values(store, operation, SVC.hasOperationStatus) == [OperationStatus.FAILED]
     workflow = mint_workflow_iri(mw.service_iri, "hello_world")
     assert store.triple_exists((operation, SVC.executedByWorkflow, workflow))
-    assert _values(store, operation, SVC.executionResult) == ["boom"]
-    (failure_state,) = _values(store, operation, SVC.failureState)
+    assert _values(store, operation, SVC.hasExecutionResult) == ["boom"]
+    (failure_state,) = _values(store, operation, SVC.hasFailureState)
     assert json.loads(failure_state)["id"] == str(seed.HELLO_RESOURCE)
 
 
@@ -374,13 +375,15 @@ def test_a_claim_that_the_store_refuses_runs_no_body(store):
     mw, operation = _queued_operation(store)
     ran = []
     # The shape admits every status but running.
-    store.shapes_set(_status_shape("queued", "done", "failed"), "text/turtle")
+    store.shapes_set(
+        with_shipped_shapes(_status_shape("queued", "done", "failed")), "text/turtle"
+    )
     try:
         with pytest.raises(TripleStoreInterfaceError, match="ValidationReport"):
             with mw.claim_next():
                 ran.append(True)
     finally:
-        store.shapes_set("", "text/turtle")
+        restore_shipped_shapes(store)
 
     assert ran == []
     assert mw.ogm.writes == []
@@ -390,20 +393,22 @@ def test_a_claim_that_the_store_refuses_runs_no_body(store):
 def test_a_done_that_the_store_refuses_records_failed_with_its_provenance_and_raises(store):
     mw, operation = _queued_operation(store)
     # The shape admits every status but done.
-    store.shapes_set(_status_shape("queued", "running", "failed"), "text/turtle")
+    store.shapes_set(
+        with_shipped_shapes(_status_shape("queued", "running", "failed")), "text/turtle"
+    )
     try:
         with pytest.raises(TripleStoreInterfaceError, match="ValidationReport") as refused:
             with mw.claim_next() as claimed:
                 claimed.result = hello_world()
     finally:
-        store.shapes_set("", "text/turtle")
+        restore_shipped_shapes(store)
 
     # Two writes reached the store: the claim, and failed in place of the refused done.
     assert [kind for kind, _ in mw.ogm.writes] == ["commit", "commit"]
     assert _values(store, operation, SVC.hasOperationStatus) == [OperationStatus.FAILED]
     workflow = mint_workflow_iri(mw.service_iri, "hello_world")
     assert store.triple_exists((operation, SVC.executedByWorkflow, workflow))
-    assert store.triples_get(sub=operation, pred=SVC.executionTimestamp)
-    assert _values(store, operation, SVC.executionResult) == [str(refused.value)]
-    (failure_state,) = _values(store, operation, SVC.failureState)
+    assert store.triples_get(sub=operation, pred=SVC.hasExecutionTimestamp)
+    assert _values(store, operation, SVC.hasExecutionResult) == [str(refused.value)]
+    (failure_state,) = _values(store, operation, SVC.hasFailureState)
     assert json.loads(failure_state)["id"] == str(seed.HELLO_RESOURCE)

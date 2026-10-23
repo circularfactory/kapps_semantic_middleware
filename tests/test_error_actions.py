@@ -124,7 +124,7 @@ class _DispatchStore:
         assert not update, f"the dispatch wrote to the store: {sparql}"
         self.queries.append(str(sparql))
         assert f"<{CAPABILITY_CLASS}>" in str(sparql)
-        if f"<{SVC.address}>" in str(sparql):  # the read of a live receiver
+        if f"<{SVC.hasAddress}>" in str(sparql):  # the read of a live receiver
             rows = [{"cap": CAPABILITY, "svc": RECEIVER, "addr": "http://127.0.0.1:9"}]
             return {"results": {"bindings": rows if self.realized and self.live else []}}
         assert str(sparql).lstrip().startswith("ASK"), sparql

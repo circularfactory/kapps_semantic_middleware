@@ -49,7 +49,7 @@ def _start_server(middleware: SemanticMiddleware, port: int) -> tuple[uvicorn.Se
     (``uvicorn/server.py``: *"Signals can only be listened to from the main thread"*), so off
     it, SIGTERM and SIGINT never reach the ASGI lifespan, and the library's three
     ``on_shutdown`` callbacks -- deregistration among them -- never run. A daemon
-    thread then dies with the process without unwinding, leaving an ``svc:address`` published
+    thread then dies with the process without unwinding, leaving an ``svc:hasAddress`` published
     for a process that is gone.
 
     A walkthrough script wants to keep doing things after the server is up, which is why the
@@ -133,8 +133,8 @@ def step_3_inspect_registration(db: TripleStore, ogm: OGM) -> str:
     assert db.triple_exists((open_wf, SVC.isWorkflowOf, service_iri))
     assert db.triple_exists((status_sp, SVC.isStatePropertyOf, service_iri))
     assert db.triple_exists((status_cap, SVC.providedByStateProperty, status_sp))
-    open_url = list(db.triples_get(sub=open_wf, pred=SVC.endpoint))
-    status_url = list(db.triples_get(sub=status_sp, pred=SVC.endpoint))
+    open_url = list(db.triples_get(sub=open_wf, pred=SVC.hasEndpoint))
+    status_url = list(db.triples_get(sub=status_sp, pred=SVC.hasEndpoint))
     print(f"Open workflow endpoint:  {open_url[0][2] if open_url else 'NONE'}")
     print(f"Status state endpoint:   {status_url[0][2] if status_url else 'NONE'}")
     return service_iri
@@ -145,13 +145,13 @@ def _discover_door_endpoints(ogm, door_resource_iri) -> tuple[str, str]:
     sparql = f"""
     SELECT ?status_url ?open_url WHERE {{
         ?svc <{SVC.isServiceOf}> <{door_resource_iri}> .
-        ?svc <{SVC.address}> ?addr .
+        ?svc <{SVC.hasAddress}> ?addr .
         ?sp <{SVC.isStatePropertyOf}> ?svc .
         ?sp a <{seed.DOOR_STATUS_STATE_CLASS}> .
-        ?sp <{SVC.endpoint}> ?status_url .
+        ?sp <{SVC.hasEndpoint}> ?status_url .
         ?wf <{SVC.isWorkflowOf}> ?svc .
         ?wf a <{seed.DOOR_OPEN_WORKFLOW_CLASS}> .
-        ?wf <{SVC.endpoint}> ?open_url .
+        ?wf <{SVC.hasEndpoint}> ?open_url .
     }}
     """
     result = ogm.db.query(sparql, convert_bindings=True)
@@ -218,9 +218,9 @@ def step_6_shutdown(
     time.sleep(0.5)
 
     status_sp = mint_state_property_iri(service_iri, "door_status")
-    endpoint_gone = len(list(db.triples_get(sub=status_sp, pred=SVC.endpoint))) == 0
+    endpoint_gone = len(list(db.triples_get(sub=status_sp, pred=SVC.hasEndpoint))) == 0
     preserved = db.triple_exists((status_sp, RDF.type, seed.DOOR_STATUS_STATE_CLASS))
-    robot_address_gone = len(list(db.triples_get(sub=robot_service, pred=SVC.address))) == 0
+    robot_address_gone = len(list(db.triples_get(sub=robot_service, pred=SVC.hasAddress))) == 0
 
     print(f"  State property endpoint removed:    {endpoint_gone}")
     print(f"  State property individual preserved: {preserved}")
@@ -255,7 +255,7 @@ def main() -> None:
         )
         # The robot is *served*, not merely constructed. Constructing a resource-mode
         # instance and never running it means `on_start_up` never fires: no Service, no
-        # `svc:address`, no heartbeat. The robot would exist only to hold an `ogm`, making
+        # `svc:hasAddress`, no heartbeat. The robot would exist only to hold an `ogm`, making
         # `mode=Mode.RESOURCE` a label with no runtime consequence. A robot that drives a
         # door is a peer, and peers are discoverable — the door could ring it back.
         robot_server, robot_thread = _start_server(robot, ROBOT_PORT)
@@ -263,10 +263,10 @@ def main() -> None:
         assert robot.service_iri is not None, "the robot is served, so it must have registered"
         dispatched_robot_service = robot.service_iri
         robot_service = dispatched_robot_service
-        robot_address = list(db.triples_get(sub=robot_service, pred=SVC.address))
+        robot_address = list(db.triples_get(sub=robot_service, pred=SVC.hasAddress))
         print(f"\nMobile robot served on port {ROBOT_PORT}")
         print(f"  Service registered:   {bool(robot_address)}")
-        print(f"  svc:address in graph: {robot_address[0][2] if robot_address else 'NONE'}")
+        print(f"  svc:hasAddress in graph: {robot_address[0][2] if robot_address else 'NONE'}")
         assert robot_address, "the robot is served, so it must be discoverable in the graph"
 
         step_4_robot_passes_through_door(robot.ogm, seed.DOOR_RESOURCE)

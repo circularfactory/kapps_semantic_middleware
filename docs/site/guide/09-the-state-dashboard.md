@@ -26,9 +26,9 @@ registry = enable_dashboard(middleware, register_default_boxes=False)
 
 ## The Page's Name
 
-The page's title and its heading name the instance's resource, as in "Module 1 — dashboard". With several dashboards open, each browser tab shows which instance it belongs to.
+The page's title and its heading name the instance's resource, as in "Module 1 Dashboard". With several dashboards open, each browser tab shows which instance it belongs to.
 
-The name is the resource's `rdfs:label`. A resource without one is named by the local name of its IRI, the part after the last `#` or `/`: `…#Station1` gives "Station1 — dashboard". An instance that represents no resource keeps the title "Middleware Dashboard".
+The name is the resource's `rdfs:label`. A resource without one is named by the local name of its IRI, the part after the last `#` or `/`: `…#Station1` gives "Station1 Dashboard". An instance that represents no resource keeps the title "Middleware Dashboard".
 
 A resource may carry several labels. The page uses the same one every time. A label without a language tag comes first, then an English one (`@en`, `@en-GB`, …), then the others. Within each group the first language tag in code-point order wins, and within one tag the first label in code-point order. A value that is an IRI, or that holds only white space, is not a name.
 
@@ -250,7 +250,7 @@ These come from `kapps_semantic_middleware.dashboard`:
 - `kv_table(rows)` — a two-column table from a sequence of `(label, value)` pairs.
 - `hint(text)` — one short explanatory line, in the muted style.
 - `escape(value)` — `html.escape(str(value))`, with `None` rendered as an em dash.
-- `SHORTENING_NOTE` — the one sentence every box uses above a table that shortens an identifier.
+- `SHORTENING_NOTE` — a sentence about shortened identifiers. Deprecated: the library's own boxes do not use it, because an IRI cell shows its local name and keeps the full IRI on hover.
 
 `kv_table` escapes every cell it renders. Pass raw values to it and never pre-escape them, or the reader sees the escape rather than the value.
 

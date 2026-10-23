@@ -2,7 +2,7 @@
 
 Both existing scenarios used to construct a middleware for their *client* — scenario 1's
 planner, scenario 2's mobile robot — and never run it. Because `uvicorn` never started them,
-`on_start_up` never fired: no Service individual, no `svc:address`, no heartbeat, no
+`on_start_up` never fired: no Service individual, no `svc:hasAddress`, no heartbeat, no
 event-trigger route. The instances existed only to hold an `ogm`, which made
 `mode=Mode.RESOURCE` a label with no runtime consequence — and a reader would reasonably
 conclude that is how clients are meant to work.
@@ -90,7 +90,7 @@ def test_every_constructed_middleware_is_served(script):
     assert not unserved, (
         f"{script.name} constructs {sorted(unserved)} in resource mode and never serves "
         f"it. `on_start_up` will not fire, so it registers no Service, advertises no "
-        f"svc:address, and holds no heartbeat — `mode=Mode.RESOURCE` becomes a label with "
+        f"svc:hasAddress, and holds no heartbeat — `mode=Mode.RESOURCE` becomes a label with "
         f"no runtime consequence. Pass it to `_start_server` and stop it on the way "
         f"out, or drop the middleware and use a bare OGM if it genuinely is not a peer."
     )
