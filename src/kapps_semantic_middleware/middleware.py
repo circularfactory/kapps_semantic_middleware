@@ -15,10 +15,12 @@ import asyncio
 import atexit
 import collections
 import contextlib
+import contextvars
 import functools
 import inspect
 import json
 import logging
+import queue
 import random
 import threading
 import time
@@ -135,6 +137,11 @@ _heartbeat_wait = asyncio.sleep
 _heartbeat_phase = random.uniform
 # The sweep loop's wait, replaced by a test in the same way.
 _sweep_wait = asyncio.sleep
+# The stop's deregistration: no new attempt starts after the window, and a store error is followed
+# by the pause before the next attempt. Seconds; a test replaces them here. The window and the
+# notifications' stop fit a supervisor's stop budget of about 5 s.
+_DEREGISTRATION_WINDOW = 3.0
+_DEREGISTRATION_PAUSE = 0.25
 
 __all__ = ["SemanticMiddleware", "IssuedOperation", "OperationResolutionError", "Mode"]
 
@@ -484,6 +491,93 @@ class _Notifier:
 
 #: Every notifier, for the exit handler.
 _NOTIFIERS: "weakref.WeakSet[_Notifier]" = weakref.WeakSet()
+
+
+def _in_daemon_thread(function: Callable[[], Any]) -> "asyncio.Future[Any]":
+    """Run ``function`` in a new daemon thread, and return a future of its result on this loop.
+
+    A store call that hangs then neither holds the event loop nor the process's exit: cancelling
+    the future abandons the call, and the thread ends with the process. AnyIO's worker threads
+    are joined at the exit, so a hung call there holds it until the store client's timeout. A
+    result that arrives after the future was cancelled, or after the loop closed, is dropped.
+    """
+    loop = asyncio.get_running_loop()
+    future: "asyncio.Future[Any]" = loop.create_future()
+    threading.Thread(
+        target=_run_and_settle,
+        args=(loop, future, function, contextvars.copy_context()),
+        name="ksm-store-call",
+        daemon=True,
+    ).start()
+    return future
+
+
+def _run_and_settle(
+    loop: asyncio.AbstractEventLoop,
+    future: "asyncio.Future[Any]",
+    function: Callable[[], Any],
+    context: contextvars.Context,
+) -> None:
+    """Run ``function`` in ``context`` on this thread, and settle ``future`` on ``loop`` with its
+    outcome.
+
+    A call whose future was cancelled before it started does not run. A result that arrives after
+    the future was cancelled, or after the loop closed, is dropped.
+    """
+    if future.cancelled():
+        return
+
+    def settle(result: Any, error: Optional[BaseException]) -> None:
+        if future.done():
+            return
+        if error is not None:
+            future.set_exception(error)
+        else:
+            future.set_result(result)
+
+    result, error = None, None
+    try:
+        result = context.run(function)
+    except BaseException as caught:
+        error = caught
+    try:
+        loop.call_soon_threadsafe(settle, result, error)
+    except RuntimeError:
+        pass  # the loop closed while the call ran: the process is ending
+
+
+class _DaemonWorker:
+    """One daemon thread that runs the calls it is given one after the other.
+
+    For a call that repeats for the process's life, such as the heartbeat's beat: a store client
+    keeps one session per thread that ever called it, so a new thread per call would grow that
+    list by one session per call. ``close`` lets an idle thread end; a thread hung in a call is
+    abandoned and ends with the process, as with ``_in_daemon_thread``.
+    """
+
+    _CLOSE = object()
+
+    def __init__(self, name: str) -> None:
+        self._calls: "queue.SimpleQueue[Any]" = queue.SimpleQueue()
+        threading.Thread(target=self._serve, name=name, daemon=True).start()
+
+    def _serve(self) -> None:
+        while True:
+            call = self._calls.get()
+            if call is self._CLOSE:
+                return
+            _run_and_settle(*call)
+
+    def run(self, function: Callable[[], Any]) -> "asyncio.Future[Any]":
+        """Queue ``function``, and return a future of its result on this loop."""
+        loop = asyncio.get_running_loop()
+        future: "asyncio.Future[Any]" = loop.create_future()
+        self._calls.put((loop, future, function, contextvars.copy_context()))
+        return future
+
+    def close(self) -> None:
+        """End the thread once the calls queued before this one are done."""
+        self._calls.put(self._CLOSE)
 
 
 def _stop_notifiers_at_exit() -> None:
@@ -854,6 +948,10 @@ class SemanticMiddleware(Middleware):
             self._register_event_trigger()
 
             self.add_callback("on_start_up", self._register_service)
+            # The stop: the heartbeat first, so no beat races the deregistration, then the
+            # deregistration. The issuers' notifications stop after it, further below.
+            if heartbeat_interval and heartbeat_interval > 0:
+                self.add_callback("on_shutdown", self._stop_heartbeat)
             self.add_callback("on_shutdown", self._deregister_service)
             # Stand up the resource's REST interface from graph ground truth
             # (generate_rest_interface: OGM-fetch the resource instance -> datamodel -> API).
@@ -868,7 +966,6 @@ class SemanticMiddleware(Middleware):
             self.add_callback("on_start_up", self._reconstruct_queue)
             if heartbeat_interval and heartbeat_interval > 0:
                 self.add_callback("on_start_up", self._start_heartbeat)
-                self.add_callback("on_shutdown", self._stop_heartbeat)
 
             if class_scope is not None:
                 self._wire_semantic_connectors()
@@ -926,16 +1023,64 @@ class SemanticMiddleware(Middleware):
         )
 
     async def _deregister_service(self) -> None:
-        """Deregister the Service instance (remove reachability) on shutdown."""
+        """Deregister the Service instance (remove reachability) on shutdown. Never raises.
+
+        The framework skips every later stop step after one that raises, so this step logs its
+        failure instead. A store error is logged as a warning and the whole deregistration is
+        tried again after a pause; no new attempt starts after the window. An attempt still
+        running at the end of the window is abandoned. A final failure, or any other error, is
+        logged as one ERROR: the address stays until a watchdog sweeps it.
+        """
         own = self._own_iris("the Service's deregistration is only valid in resource mode")
-        await anyio.to_thread.run_sync(
-            functools.partial(
-                deregister_service,
-                self.ogm,
-                own.service,
-                named_graph=self.named_graph,
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + _DEREGISTRATION_WINDOW
+        while True:
+            attempt = _in_daemon_thread(
+                functools.partial(
+                    deregister_service,
+                    self.ogm,
+                    own.service,
+                    named_graph=self.named_graph,
+                )
             )
-        )
+            try:
+                await asyncio.wait_for(attempt, timeout=max(deadline - loop.time(), 0.0))
+                return
+            except _LIVENESS_STORE_ERRORS as error:
+                if loop.time() + _DEREGISTRATION_PAUSE >= deadline:
+                    logger.error(
+                        "The deregistration of %s failed for %g s and is given up; its address "
+                        "stays until a watchdog sweeps it: %r",
+                        own.service,
+                        _DEREGISTRATION_WINDOW,
+                        error,
+                    )
+                    return
+                logger.warning(
+                    "The deregistration of %s failed and is retried in %g s: %r",
+                    own.service,
+                    _DEREGISTRATION_PAUSE,
+                    error,
+                )
+                await asyncio.sleep(_DEREGISTRATION_PAUSE)
+            except Exception as error:
+                # A timeout with the attempt cancelled is the window ending while it ran. A
+                # timeout that the attempt raised itself is an error like any other.
+                if isinstance(error, asyncio.TimeoutError) and attempt.cancelled():
+                    logger.error(
+                        "The deregistration of %s did not finish within %g s and is abandoned; "
+                        "its address stays until a watchdog sweeps it",
+                        own.service,
+                        _DEREGISTRATION_WINDOW,
+                    )
+                    return
+                logger.error(
+                    "The deregistration of %s failed; its address stays until a watchdog "
+                    "sweeps it",
+                    own.service,
+                    exc_info=True,
+                )
+                return
 
     # --- Liveness: per-service heartbeat (resource mode) ------------------- #
 
@@ -952,12 +1097,16 @@ class SemanticMiddleware(Middleware):
         # The loop is only started when a positive interval was configured.
         interval = self.heartbeat_interval or 30.0
         own = self._own_iris("the heartbeat is only valid in resource mode")
+        # One thread for every beat of this loop: see _DaemonWorker.
+        worker = _DaemonWorker("ksm-heartbeat")
 
         async def beat() -> None:
             # A store error costs this beat, not the loop: the next one is due at the next
             # interval, and the staleness threshold spans several intervals.
             try:
-                await anyio.to_thread.run_sync(
+                # In the heartbeat's daemon thread, so that the stop abandons a beat that hangs
+                # on the store.
+                await worker.run(
                     functools.partial(
                         update_heartbeat,
                         self.ogm,
@@ -988,15 +1137,23 @@ class SemanticMiddleware(Middleware):
         except Exception:
             logger.error("The heartbeat loop of %s ended", own.service, exc_info=True)
             raise
+        finally:
+            worker.close()
 
     async def _stop_heartbeat(self) -> None:
-        """Cancel the heartbeat loop on shutdown."""
-        if self._heartbeat_task is not None:
-            self._heartbeat_task.cancel()
-            try:
-                await self._heartbeat_task
-            except asyncio.CancelledError:
-                pass
+        """Cancel the heartbeat loop on shutdown. Never raises.
+
+        A beat in flight is abandoned, not awaited: it writes only the heartbeat, never the
+        address, so it cannot make a deregistered Service live. A loop that already ended with an
+        error logged it then, and the stop goes on.
+        """
+        task = self._heartbeat_task
+        if task is None:
+            return
+        task.cancel()
+        await asyncio.wait({task})
+        if not task.cancelled() and task.exception() is not None:
+            logger.debug("The heartbeat loop of %s had ended with an error", self.service_iri)
 
     async def emit_heartbeat(self) -> None:
         """Refresh this service's heartbeat once (also useful for tests/manual pings).

@@ -17,15 +17,16 @@ a factory floor.
 | program | what it pretends to be |
 | --- | --- |
 | **PLC 1** and **PLC 2** | Two conveyor machines. Each has 2 belts and 2 light barriers. Each has its own small web page. |
-| **Middleware 1** and **Middleware 2** | One "translator" per machine. It reads the machine over MQTT and offers it to the network over HTTP. |
-| **Control station** | An operator screen. It finds the machines by asking a database, then shows what they report. |
+| **Middleware 1** and **Middleware 2** | One middleware instance per machine. It reads the broker and the topics of each parameter from the knowledge graph, builds its MQTT connectors from them, and offers the machine's values to the network over HTTP. |
+| **Control station** | An operator screen. It finds the machines with a query on the knowledge graph, then shows what they report. |
 | **Watchdog** | A middleware in watchdog mode. It sweeps the knowledge graph every 5 seconds and removes the address of any program that stopped reporting. It registers nothing itself, so the launcher page shows its state and no address. |
 | **Launcher** | Starts all of the above and shows you a picture of them. |
 
 A **TransferUnit** is one conveyor machine: 2 belts and 2 light barriers.
 
-**The point of the demo:** the control station is never told where the machines are. It asks a
-knowledge graph (a database of facts), finds whatever is there, and reads it. You can stop a
+**The point of the demo:** the control station is never told where the machines are. It asks the
+knowledge graph, which describes every machine, its parameters and how to reach them, finds
+whatever is there, and reads it. You can stop a
 machine and it disappears from the screen. Nothing is hardcoded.
 
 ---
@@ -152,7 +153,7 @@ asking for 3 m/s takes about 3 seconds. This is on purpose — a real belt has m
 ### 3. Open the control station — the station board
 
 Click the **control station** box. This screen never talked to the machines directly. It ran a
-database query, found them, and connected. It only reads: it has no set control.
+query on the knowledge graph, found them, and connected. It only reads: it has no set control.
 
 Try this:
 
@@ -247,11 +248,17 @@ broken.
 | `plc/` | The pretend machine and its own panel page. |
 | `factory.ttl`, `transferunit.ttl` | The vocabulary: what a TransferUnit is made of. |
 
-**The path this demo proves:**
+**The two paths this demo proves:**
 
 ```
-PLC → MQTT → middleware → knowledge graph → control station finds it → HTTP read → station board
+connection: knowledge graph (broker, topics) → middleware builds its MQTT connectors
+discovery:  middleware registers its address → knowledge graph → control station finds it
+values:     PLC → MQTT → middleware (its data model) → HTTP read → control station → station board
 ```
+
+Live values stay in each middleware's data model. They do not enter the knowledge graph: the
+graph holds what each machine is, how to reach its parameters, and the address of each live
+middleware.
 
 The way back to the PLC returns with workflows: a machine changes only through a workflow of its
 service, and this demo has none yet.

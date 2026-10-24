@@ -1,6 +1,6 @@
 [project]
 name = "kapps-semantic-middleware"
-version = "0.2.4"
+version = "0.2.5"
 description = "Semantic middleware for industrial data integration, built on transitional-sync-middleware"
 readme = "README.md"
 license = "MIT"
@@ -165,8 +165,9 @@ build-backend = "hatchling.build"
 # remap below satisfies both.
 #
 # Nothing here decides whether a consumer gets the demo's dependencies: that is the
-# `demonstrations` extra. Wheels cannot select files by extra, so the demo's ~200 KB always
-# ships, and importing it without the extra fails on fastapi with a clear ImportError.
+# `examples` extra, the one name for it. Wheels cannot select files by extra, so the demo's
+# ~200 KB always ships, and without the extra the first middleware fails to start its broker
+# and names the missing `amqtt`.
 packages = ["src/kapps_semantic_middleware", "demo", "examples"]
 
 # An editable install cannot follow the rewrite below -- hatchling refuses a dev-mode build

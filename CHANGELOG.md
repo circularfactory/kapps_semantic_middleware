@@ -12,6 +12,27 @@ work lands, not at release time.
 finding exactly one of it, and prose naming it is a second occurrence — which stopped a release
 the first time this file was written.)
 
+## 0.2.5 — 2026-10-24
+
+### Fixed
+
+- A clean stop no longer leaves a resource-mode instance live in the graph after one store error.
+  Before, a deregistration that failed was tried once, and its error skipped the rest of the stop:
+  the address stayed, and the Service counted as live for up to the liveness limit. Now the
+  heartbeat stops first, the deregistration is tried again on a store error for about 3 s, and a
+  final failure is logged as one ERROR that names the Service; the notifications' stop still runs.
+  A store call that hangs at the stop no longer holds the process's exit. Count about 4 s for the
+  library's stop: 3 s of deregistration and 1 s of notifications.
+
+### Documentation
+
+- The TransferUnit factory demo's README names its parts as the rest of the documentation does.
+  Each middleware is a middleware instance that builds its MQTT connectors from the broker and
+  topics in the knowledge graph, not a "translator"; the control station queries the knowledge
+  graph, not "a database". The path diagram now shows that live values stay in each middleware's
+  data model and never enter the graph. The packaging comment names `examples` as the demo's one
+  extra; `demonstrations` was a stale name.
+
 ## 0.2.4 — 2026-10-23
 
 ### Changed
