@@ -138,9 +138,11 @@ _heartbeat_phase = random.uniform
 # The sweep loop's wait, replaced by a test in the same way.
 _sweep_wait = asyncio.sleep
 # The stop's deregistration: no new attempt starts after the window, and a store error is followed
-# by the pause before the next attempt. Seconds; a test replaces them here. The window and the
-# notifications' stop fit a supervisor's stop budget of about 5 s.
-_DEREGISTRATION_WINDOW = 3.0
+# by the pause before the next attempt. Seconds; a test replaces them here. The library's stop
+# budget, after the web server's own graceful shutdown: up to 8 s of deregistration and 1 s of
+# notifications, so a caller's kill timeout must cover its graceful shutdown plus 9 s. Many
+# instances that stop at once queue their deregistrations at a shared store, past 3 s.
+_DEREGISTRATION_WINDOW = 8.0
 _DEREGISTRATION_PAUSE = 0.25
 
 __all__ = ["SemanticMiddleware", "IssuedOperation", "OperationResolutionError", "Mode"]

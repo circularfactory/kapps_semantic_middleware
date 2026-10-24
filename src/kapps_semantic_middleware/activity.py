@@ -48,7 +48,7 @@ STREAM_LIFETIME_SECONDS = 2.0
 """How long one ``/activity/stream`` response lasts before it ends by itself.
 
 Shorter than a supervisor's stop timeout, so that a stop always reaches the deregistration. The
-demo launcher allows 5 s.
+demo launcher allows 13 s.
 """
 
 POLL_SECONDS = 0.25

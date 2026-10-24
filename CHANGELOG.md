@@ -12,6 +12,17 @@ work lands, not at release time.
 finding exactly one of it, and prose naming it is a second occurrence — which stopped a release
 the first time this file was written.)
 
+## 0.2.6 — 2026-10-24
+
+### Fixed
+
+- A clean stop of many resource-mode instances at once no longer leaves most of them live in the
+  graph. Their deregistrations queue behind each other at a shared store and took longer than the
+  deregistration window of 3 s, so they were abandoned and the instances stayed live until a
+  watchdog swept them. The window is now 8 s. Count up to 9 s for the library's stop, after the web
+  server's own graceful shutdown: a supervisor's kill timeout must cover that shutdown plus 9 s.
+  The TransferUnit demo's launcher now gives a child 13 s to stop (was 5 s).
+
 ## 0.2.5 — 2026-10-24
 
 ### Fixed

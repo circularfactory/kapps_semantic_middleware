@@ -35,7 +35,7 @@ import seed  # noqa: E402
 SERVED_PORT = 8983
 ADDRESS = f"http://127.0.0.1:{SERVED_PORT}"
 
-STOP_BOUND_SECONDS = 5.0
+STOP_BOUND_SECONDS = 13.0
 """The demo launcher's stop timeout. A supervisor kills an instance that takes longer."""
 
 posix_signals = pytest.mark.skipif(

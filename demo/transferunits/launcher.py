@@ -64,18 +64,21 @@ PANEL_POLL_SECONDS = 0.1
 """How often the PLC spawn wait looks at its unit's middleware. The panel line itself ends the
 wait at once."""
 
-STOP_TIMEOUT_SECONDS = 5.0
+STOP_TIMEOUT_SECONDS = 13.0
 """How long a child gets to stop gracefully before the launcher kills it. A kill skips the
-middleware's deregistration."""
+middleware's deregistration.
+
+13 s = ``GRACEFUL_SHUTDOWN_SECONDS`` (3 s) + the library's stop (up to 8 s of deregistration and
+1 s of notifications) + 1 s of margin."""
 
 GRACEFUL_SHUTDOWN_SECONDS = 3.0
 """How long a child's uvicorn waits for open connections before it cancels them.
 
 uvicorn runs the lifespan shutdown, where a middleware deregisters, only after that wait, and it
 waits without a limit by default. So one connection that stays open holds the stop open until
-``STOP_TIMEOUT_SECONDS`` passes and the kill comes. The bound leaves the deregistration two
-seconds before the kill. The activity stream already ends by itself within its lifetime; the
-bound covers every other connection that stays open."""
+``STOP_TIMEOUT_SECONDS`` passes and the kill comes. The bound leaves the library's stop 10 s
+before the kill: its 9 s and 1 s of margin. The activity stream already ends by itself within its
+lifetime; the bound covers every other connection that stays open."""
 if sys.platform == "win32":
     _NEW_PROCESS_GROUP = subprocess.CREATE_NEW_PROCESS_GROUP
 else:
