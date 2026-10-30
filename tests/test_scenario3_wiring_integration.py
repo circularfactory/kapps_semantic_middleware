@@ -1,10 +1,9 @@
 """Scenario 3 wiring: graph -> recognition -> connectors -> served payload.
 
-Live store, plus a live MQTT broker that runs in-process. This is the ticket real acceptance
-surface. The middleware reads the seeded TransferUnit out of the graph. Recognize
-which properties are interface-accessible parameters. Build the right number of
-connectors in the right directions. The regression matters. Serve a payload that
-carries no connection metadata, regardless of the connector wiring.
+Live store, plus a live MQTT broker that runs in-process. The middleware reads the seeded
+TransferUnit out of the graph, recognizes which properties are interface-accessible
+parameters, builds the right number of connectors in the right directions, and serves a
+payload that carries no connection metadata, regardless of the connector wiring.
 """
 
 from __future__ import annotations
@@ -159,10 +158,10 @@ class TestRecognition:
         """The broker port is the first non-string literal any seed here writes.
 
         write 18831 -> graph -> ClassSpec -> ``binding.get()`` must hand back the integer
-        18831, not the string "18831" -- `_parameter_metadata` used to force every value
-        through `str()`, which was a no-op for every property so far because they were all
-        `xsd:string`. A connector handed a string port fails at the socket layer, not at
-        construction, so this is load-bearing rather than a type-purity nicety.
+        18831, not the string "18831". A `str()` on every value would be harmless for the
+        `xsd:string` properties and still break this one. A connector handed a string port
+        fails at the socket layer, not at construction, so this is load-bearing rather than a
+        type-purity nicety.
         """
         store, ogm = scenario3
         store.query(
@@ -439,15 +438,13 @@ class TestNorthboundProjection:
 class TestAConsumerLoadsThePrunedShape:
     """Prune-on-load: a consumer fetching a peer's datamodel gets the prune.
 
-    These four tests used to drive ``projection.load_northbound``, a second entry point
-    nothing in the product called. It was deleted and the tests moved onto the path the
-    controller really takes: ``plan_wiring`` builds the plan, and the fetch runs with
-    ``WiringPlan.northbound_fetch_kwargs()`` (``demo/transferunits/controller.py:636``).
+    These tests drive the path the controller really takes: ``plan_wiring`` builds the
+    plan, and the fetch runs with ``WiringPlan.northbound_fetch_kwargs()``
+    (``Controller._load_one_hit`` in ``demo/transferunits/controller.py``).
 
-    One of the four is gone rather than moved. It asserted that a protocol declared only
-    in the graph is pruned with no code change, which is exactly
+    That a protocol declared only in the graph is pruned with no code change is
     ``TestNorthboundProjection.test_a_protocol_with_no_registered_binding_is_still_hidden``
-    on this same path -- keeping both would have been the same claim written twice.
+    on this same path, and is not asserted twice.
     """
 
     def _loaded(self, ogm, unit_scope):
@@ -502,7 +499,7 @@ class TestAConsumerLoadsThePrunedShape:
 
 @requires_store
 class TestServiceJoinRecognition:
-    """The Service-join amendment of 2026-08-03: evidence may sit on the resource's Service.
+    """The Service join: evidence may sit on the resource's Service.
 
     ``_recognise`` looks the address up once per resource and folds it into every binding's
     metadata, regardless of which protocol ends up matching. These tests exercise that against
@@ -549,7 +546,7 @@ class TestRESTRecognition:
     """A live resource, generically interface-accessible, binds a REST connector."""
 
     def test_mqtt_still_wins_when_both_bindings_are_registered(self, scenario3, unit_scope):
-        """The acceptance criterion: MQTT recognition is unchanged. A parameter carrying an
+        """MQTT recognition is unchanged. A parameter carrying an
         MQTT marker keeps resolving to MQTTBinding even with RESTBinding in the registry and
         a live Service present -- wiring.py's existing most-specific-match tie-break, exercised
         against a new competitor."""
@@ -600,8 +597,7 @@ class TestRESTRecognition:
     def test_a_resource_with_no_live_service_binds_nothing_and_says_so(
         self, scenario3, unit_scope, caplog
     ):
-        """The acceptance criterion this ticket names explicitly: recognition still runs,
-        but no connector is built and the reason is logged."""
+        """Recognition still runs, but no connector is built and the reason is logged."""
         _, ogm = scenario3
 
         with caplog.at_level(logging.WARNING):

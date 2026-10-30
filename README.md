@@ -187,3 +187,5 @@ say what it changes and why, and it will be applied on the development side and 
 This package is developed as part of the INF subproject of the CRC 1574: Circular Factory for the
 Perpetual Product. This work is therefore supported by the Deutsche Forschungsgemeinschaft (DFG,
 German Research Foundation) [grant-number: SFB-1574-471687386].
+
+This library imports [`transitional-sync-middleware`](https://pypi.org/project/transitional-sync-middleware/), a fork of Sebastian Behrendt's aas-middleware ([Behrendt et al. 2025](https://doi.org/10.1016/j.ifacol.2025.12.315)) with four synchronization fixes.

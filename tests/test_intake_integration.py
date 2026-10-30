@@ -28,7 +28,7 @@ from kapps_triplestore_interface import IRI
 from rdflib import Literal
 from rdflib.namespace import RDF
 
-from _explicit import explicit_select
+from _explicit import explicit_statements
 from kapps_semantic_middleware import SemanticMiddleware
 from kapps_semantic_middleware.credentials import triplestore_env_present, triplestore_for
 from kapps_semantic_middleware.possession import find_possession_state, handover
@@ -134,14 +134,6 @@ def _wait_until(
     assert not mw._intake_working
 
 
-def _explicit_statements(db) -> set:
-    result = db.query(
-        explicit_select(["?s", "?p", "?o"], "?s ?p ?o"),
-        convert_bindings=True,
-    )
-    return {(str(b["s"]), str(b["p"]), str(b["o"])) for b in result["results"]["bindings"]}
-
-
 def _statuses(db, operation) -> list[str]:
     return [str(t[2]) for t in db.triples_get(sub=operation, pred=SVC.hasOperationStatus)]
 
@@ -163,7 +155,7 @@ def test_a_requested_operation_of_an_own_capability_runs_its_workflow_once_and_w
     seen: list = []
 
     def workflow(operation: Node) -> None:
-        seen.append(_explicit_statements(db))
+        seen.append(explicit_statements(db))
         ran.append(operation)
 
     receiver = _receiver(store, workflow, handled.append)
@@ -179,7 +171,7 @@ def test_a_requested_operation_of_an_own_capability_runs_its_workflow_once_and_w
         assert _values(operation, SVC.hasOperationStatus) == [OperationStatus.QUEUED]
         assert operation.instance is not None  # materialized under the scope
         assert handled == []
-        assert _explicit_statements(db) == seen[0]
+        assert explicit_statements(db) == seen[0]
         assert _statuses(db, op_iri) == [OperationStatus.QUEUED]
         assert not db.triples_get(sub=op_iri, pred=SVC.executedByWorkflow)
         assert receiver._operation_queue == []
@@ -251,7 +243,7 @@ def test_a_notification_of_an_operation_of_no_own_capability_reaches_the_handler
     receiver = _receiver(store, ran.append, handled.append)
     server, thread = _start_server(receiver)
     try:
-        before = _explicit_statements(db)
+        before = explicit_statements(db)
 
         _planner(store).notify(operation=TRANSPORT, resource=seed.HELLO_RESOURCE)
 
@@ -261,7 +253,7 @@ def test_a_notification_of_an_operation_of_no_own_capability_reaches_the_handler
         assert _values(operation, CFC.implementsCapability) == [PLANNER_CAPABILITY]
         assert _values(operation, SVC.hasOperationStatus) == [OperationStatus.DONE]
         assert ran == []
-        assert _explicit_statements(db) == before
+        assert explicit_statements(db) == before
     finally:
         _stop_server(server, thread)
 

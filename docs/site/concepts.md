@@ -10,7 +10,7 @@ Several packages work together:
 
 - **kapps-ogm** — handles all knowledge graph reads and writes through a validated object-graph mapping layer.
 - **kapps-triplestore-interface** — provides raw triple-store access where the OGM has no equivalent yet, such as instance discovery.
-- **transitional-sync-middleware** — the synchronization layer, a transitional fork of `aas-middleware` carrying four synchronization fixes, incrementally reimplemented locally. It is retired within a few releases; do not build on it directly.
+- **transitional-sync-middleware** — the synchronization layer. Its `Middleware` class, which `SemanticMiddleware` extends, serves the REST surface and keeps an instance's data model in step with its connectors.
 - **The triple store** — the examples bring one up with `docker compose` from the `docker/` directory that `kapps-examples` copies out. It runs the ruleset `rdfsplus-optimized`.
 - **Per-unit in-process broker** — each middleware unit runs its own MQTT broker for southbound device communication.
 
@@ -25,13 +25,16 @@ A store without that ruleset returns fewer statements to the reads that are infe
 ```{glossary}
 
 Service
-    A distributed runtime entity wrapped by a single middleware instance, such as a door controller or a drilling-resource controller. Typed via a domain-specific subclass that must pre-exist in the ontology. One Service per middleware instance, not per Resource; several instances may be bound to one Resource.
+    A distributed runtime entity that runs as an addressable unit on the network and wraps one Resource: a door controller, an anomaly detector, a planner. A middleware instance hosts it. It can expose workflows, each of which realizes one capability of its Resource. Its Service node in the knowledge graph is an individual of a domain-specific subclass of `svc:Service`. The node states that the Service exists, where it answers (`svc:hasAddress`), that it is alive (`svc:hasLastHeartbeat`), and which Resource it wraps (`svc:isServiceOf`). A Resource can have several Services: one for each middleware instance bound to it.
 
 Resource
-    The physical or logical thing a Service wraps, such as a door, a transformer cell, or a drill. Required at construction time in resource mode.
+    Defined in Core (`cfc:Resource`). The physical or logical thing that a Service wraps: a machine, a door, a planning system. A middleware instance in resource mode is bound to its Resource at construction.
+
+Middleware instance
+    One `SemanticMiddleware` object in a running process. It hosts Services and holds their data model, into which its connectors read the device values. In resource mode, it hosts one Service for each Resource it is bound to. In watchdog mode, it hosts no Service; it removes the registrations of Services that stopped sending heartbeats.
 
 Mode
-    A construction-time choice governing what the middleware instance is for: `"resource"` wraps one Resource and exposes its Workflows and StateProperties; `"server"` is reserved and not built: constructing one raises; `"watchdog"` wraps no Resource and sweeps stale addresses from the graph.
+    A construction-time choice governing what the middleware instance is for: `"resource"` hosts the Services of the Resources it is bound to and exposes their Workflows and StateProperties; `"server"` is reserved and not built: constructing one raises; `"watchdog"` wraps no Resource and sweeps stale addresses from the graph.
 
 Workflow
     An invokable function exposed by a Service, registered with a decorator. Realizes exactly one Capability. Typed via a domain-specific subclass that must pre-exist in the ontology, carrying a SHACL shape describing its arguments and return value.

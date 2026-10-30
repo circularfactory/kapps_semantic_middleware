@@ -12,6 +12,27 @@ work lands, not at release time.
 finding exactly one of it, and prose naming it is a second occurrence — which stopped a release
 the first time this file was written.)
 
+## 0.3.0 — 2026-10-30
+
+### Changed
+
+- **The siblings are pinned to the releases this version is tested against**
+  (`kapps-triplestore-interface~=2.3.0` and `kapps-ogm~=0.4.0`; were `~=2.2.2` and `~=0.3.2`).
+  The interface 2.2.3 adds `validate` and `_close_sessions` to its client.
+- The comments and docstrings of the released tree describe only the code they belong to. None
+  points into the issue tracker, by number, by handle or in a sentence, and a person's name
+  stands only in the credits: the licence, the manifest's authors and maintainers, the docs
+  site's author line, the test that checks the footer renders it, and the README's credit of the
+  synchronization layer's origin. A dashboard tab in a test is no longer named after a person.
+- Every name marked interim in an earlier entry is final.
+
+### Documentation
+
+- The documentation and the service ontology's comments say that a middleware instance hosts
+  Services and that a Service wraps a Resource. A Resource can have several Services, one for each
+  instance bound to it. Only comments of the ontology change.
+- The README credits the origin of the synchronization layer, `transitional-sync-middleware`.
+
 ## 0.2.6 — 2026-10-24
 
 ### Fixed

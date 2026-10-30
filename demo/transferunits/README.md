@@ -264,4 +264,4 @@ The way back to the PLC returns with workflows: a machine changes only through a
 service, and this demo has none yet.
 
 `CONTEXT.md` in this folder explains the words used here (Factory, Unit index, Launcher, Runner,
-Control station, Panel, Live factory) and points at the decision records behind each choice.
+Control station, Panel, Live factory).

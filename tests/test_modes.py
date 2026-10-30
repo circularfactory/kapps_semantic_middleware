@@ -54,6 +54,6 @@ class TestValidation:
         assert "resource mode requires" in str(from_constant.value)
 
     def test_server_mode_is_still_unimplemented(self):
-        """Reserved, and ruled out of scope for the controller."""
+        """Reserved: constructing it raises."""
         with pytest.raises(NotImplementedError):
             SemanticMiddleware(mode=Mode.SERVER)

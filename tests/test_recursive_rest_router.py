@@ -14,7 +14,7 @@ implementation makes two mistakes that this guard exists to catch:
 
 3. **A write route reaches the device or the graph.** The served data model is read-only: a
    device changes only through a workflow of its service. The framework's generator mounts
-   POST, PUT and DELETE beside every GET, and a parameter route once had a PUT of its own.
+   POST, PUT and DELETE beside every GET, and a parameter route could carry a PUT of its own.
    The tests below run the framework's real generator against a real `DataModel` and find
    only GET, and a write verb answers 405 with nothing consumed and nothing persisted.
 

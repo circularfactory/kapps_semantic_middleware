@@ -11,7 +11,7 @@
 
 svc: rdf:type owl:Ontology ;
     rdfs:label "KAPPS Service Ontology" ;
-    rdfs:comment "Vocabulary for the Semantic Middleware Runtime — defines how a middleware instance wraps a shop-floor resource and exposes its functionality (Workflows, StateProperties) through the knowledge graph so other middleware instances can discover and invoke that functionality via graph queries rather than hardcoded network references." ;
+    rdfs:comment "Vocabulary for the Semantic Middleware Runtime — defines how a Service, hosted by a middleware instance, wraps a shop-floor resource and exposes its functionality (Workflows, StateProperties) through the knowledge graph so other middleware instances can discover and invoke that functionality via graph queries rather than hardcoded network references." ;
     owl:imports <http://w3id.org/circularfactory/Core> .
 
 #################################################################
@@ -20,7 +20,7 @@ svc: rdf:type owl:Ontology ;
 
 svc:Service rdf:type owl:Class ;
     rdfs:label "Service" ;
-    rdfs:comment "A distributed runtime entity wrapped by a single middleware instance (e.g. a door controller, a tool-station controller, a planning service). Typed via a domain-specific subclass of svc:Service that must pre-exist in the ontology. The Service is the graph representation of the middleware; it wraps a Resource but is not itself the Resource." .
+    rdfs:comment "A distributed runtime entity that runs as an addressable unit on the network and wraps one Resource (e.g. a door controller, a tool-station controller, a planning service). A middleware instance hosts it. Typed via a domain-specific subclass of svc:Service that must pre-exist in the ontology. A Service wraps a Resource but is not itself the Resource; a Resource can have several Services, one for each middleware instance bound to it." .
 
 svc:Workflow rdf:type owl:Class ;
     rdfs:label "Workflow" ;
@@ -36,7 +36,7 @@ svc:StateProperty rdf:type owl:Class ;
 
 svc:hasService rdf:type owl:ObjectProperty ;
     rdfs:label "hasService" ;
-    rdfs:comment "Relates a Resource to the Service that wraps it. A Service is the graph representation of a middleware instance wrapping a physical or logical Resource." ;
+    rdfs:comment "Relates a Resource to a Service that wraps it. A Resource can have several Services: one for each middleware instance bound to it." ;
     rdfs:domain cfc:Resource ;
     rdfs:range svc:Service ;
     owl:inverseOf svc:isServiceOf .

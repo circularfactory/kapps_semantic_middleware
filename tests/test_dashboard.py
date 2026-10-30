@@ -427,7 +427,7 @@ def test_spec_parameter_without_a_binding_is_still_shown() -> None:
     assert "are shortened for readability" not in response.text
     assert 'title="http://example.org/LightBarrier1"' in response.text
 
-    # The point of the acceptance criterion: the parameter's pruned metadata is shown, not
+    # The point of this test: the parameter's pruned metadata is shown, not
     # only counted. Asserting the parameter name and the sentence is not enough -- both were
     # present while the disclosure sat below a `continue` and never rendered, so the test
     # agreed with the defect.
@@ -507,15 +507,16 @@ def test_a_tab_name_with_a_space_still_shows_its_panel() -> None:
     """A tab whose title is not a legal identifier still renders a visible panel.
 
     A project's first tab is often named like `Line monitor`, with a space, so this is reached
-    on the first tab a project adds. `html.escape` leaves a space alone, so the id became
-    `tab-Line monitor` and the selector `#tab-Line monitor:checked`, which no browser parses. The rule was dropped and
-    the panel kept `display: none`, leaving a tab strip above nothing.
+    on the first tab a project adds. `html.escape` leaves a space alone, so an escaped id would
+    be `tab-Line monitor` and the selector `#tab-Line monitor:checked`, which no browser parses.
+    The browser would drop the rule. The panel would keep `display: none`, leaving a tab
+    strip above nothing.
     """
     import re as _re
 
     mw = FakeMiddleware()
     registry = enable_dashboard(mw, register_default_boxes=False)
-    for index, tab in enumerate(("Line monitor", "A/B", "Etienne's", "5 GHz")):
+    for index, tab in enumerate(("Line monitor", "A/B", "Operator's", "5 GHz")):
         # A safe box id on purpose: this test is about the tab title, and an unsafe box id
         # is refused at registration by its own rule.
         registry.box(id=f"box-{index}", title=tab, tab=tab)(lambda _mw: "<p>x</p>")
@@ -548,7 +549,7 @@ def test_a_tab_name_with_a_space_still_shows_its_panel() -> None:
     assert ".tab-radio:checked + .tab-label" not in shell, "the dead sibling rule is back"
 
     # The reader still sees the original titles.
-    for tab in ("Line monitor", "A/B", "Etienne&#x27;s", "5 GHz"):
+    for tab in ("Line monitor", "A/B", "Operator&#x27;s", "5 GHz"):
         assert tab in shell
 
 
@@ -1019,7 +1020,7 @@ async def test_an_async_render_that_raises_still_shows_its_error_in_place() -> N
 
 
 # ---------------------------------------------------------------------------
-# The page names its instance (KSM 402)
+# The page names its instance
 # ---------------------------------------------------------------------------
 
 #: The IRI of the resource that the instances below represent.
@@ -1198,7 +1199,7 @@ def test_a_failed_read_names_the_resource_by_its_local_name(
 
 
 # ---------------------------------------------------------------------------
-# The tab that the page opens on (KSM 407)
+# The tab that the page opens on
 # ---------------------------------------------------------------------------
 
 

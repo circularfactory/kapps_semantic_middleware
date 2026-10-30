@@ -3,12 +3,12 @@
 This module turns the middleware internal logging stream into a live feed for browsers.
 It is library-level and mode-agnostic. A controller and a monitor are the same library with
 different configuration. They inherit this feed from the same code with no
-role-specific branching. That is the architectural claim the demo exists to make.
+role-specific branching.
 
 **What it shows:** wiring decisions, message traffic, registrations, heartbeats.
 
-**What it does not show:** resource state. That is the monitor job. Keeping the two apart is
-a decided boundary. Mixing them would conflate the middleware health with the device status. Debugging
+**What it does not show:** resource state. That is the monitor job, and the two stay apart.
+Mixing them would conflate the middleware health with the device status. Debugging
 would become ambiguous.
 
 **Why the stream is polled rather than pushed:** Log records arrive from two places. The event

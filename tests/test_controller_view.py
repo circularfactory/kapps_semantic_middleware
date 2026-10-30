@@ -249,7 +249,7 @@ def _spawn_peer_middleware(unit_index: int, dataset: str) -> subprocess.Popen:
 
     ``dataset`` must be passed explicitly, and must be the one this test seeded. The
     child names its dataset in code and ignores TRIPLESTORE_DATASET, so
-    inheriting the environment is no longer enough to put both ends in the same graph --
+    inheriting the environment is not enough to put both ends in the same graph --
     without this the peer would join the demo's dataset and publish its svc:hasAddress
     where the test is not looking.
     """
@@ -396,8 +396,7 @@ class TestDrivingAView:
         assert after[value_field] == before[value_field] != [77.7]
 
     async def test_holds_no_mqtt_properties_anywhere(self, running_peer_and_controller):
-        """Acceptance criterion 5: "The controller holds no inf:hasMQTT* property
-        anywhere (pruning ticket)." Pruning (via
+        """The controller holds no inf:hasMQTT* property anywhere. Pruning (via
         ``WiringPlan.northbound_fetch_kwargs``) and the REST-only ``_VIEW_REGISTRY`` are
         belt-and-braces -- this asserts the belt-and-braces actually held on a
         real loaded datamodel, fetched from a peer whose seed data genuinely carries

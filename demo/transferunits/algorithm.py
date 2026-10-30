@@ -1,9 +1,8 @@
 """The Control Expert's own algorithm code for the TransferUnit factory demo.
 
 This module is the only place in the demo's **runtime control path** allowed to name
-domain terms like ``tu:TransferUnit``, ``tu:hasConveyorBelt``. The claim is narrower than
-"the only place in this demo", which it used to say and which was never true: ``seed.py``
-names them throughout, as it must -- it stands in for the TransferUnit Expert writing the
+domain terms like ``tu:TransferUnit``, ``tu:hasConveyorBelt``. The claim covers that path,
+not the whole demo: ``seed.py`` names them throughout, as it must -- it stands in for the TransferUnit Expert writing the
 factory into the graph, which is the other half of the two-expert split.
 The line this draws is between the *Control* Expert's code and the generic mechanism it
 runs on. The generic ``Controller`` mechanism

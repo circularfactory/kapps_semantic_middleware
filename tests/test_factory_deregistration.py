@@ -5,8 +5,7 @@ deregistration the single-process demo had documented as dead, and until this fi
 asserted it. The smoke suite stops its children through the launcher and says in a comment
 that this is "so every middleware deregisters", then never asks the graph.
 
-**The acceptance criterion was worded wrongly, and this file asserts the design instead.** It
-said "the graph holds no ``svc:Service`` for any unit". It does hold one, on purpose:
+**The graph still holds a ``svc:Service`` for every unit after a clean stop, on purpose:**
 ``registration.deregister_service`` clears the address and the workflow/state endpoints and
 says in its own docstring that structural triples and rdf:type are preserved, which tells
 availability from existence. A Service that stopped answering has not stopped existing. So
@@ -229,10 +228,9 @@ def test_a_clean_stop_leaves_no_unit_reachable(stopped_factory, store):
 def test_the_service_individual_survives_its_deregistration(stopped_factory, store):
     """Availability is not existence: the Service is still there, it just answers nowhere.
 
-    Guards the correction this file was written to make. The acceptance criterion asked for
-    "no `svc:Service` for any unit", and satisfying that literally would mean deleting the
-    individual -- which `deregister_service` deliberately does not do. If someone later
-    "fixes" the box by deleting Services, this test fails and says why.
+    Removing every `svc:Service` of a stopped unit would mean deleting the individual --
+    which `deregister_service` deliberately does not do. If someone later "fixes" the box by
+    deleting Services, this test fails and says why.
     """
     unit_iri = seed._mint_transfer_unit_iri(1)
     rows = store.query(

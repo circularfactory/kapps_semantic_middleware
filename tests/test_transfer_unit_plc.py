@@ -1,7 +1,6 @@
 """The demo's mock PLC against a real broker.
 
-Drives ``demo.transferunits.plc.transfer_unit.TransferUnit`` -- the factory's PLC, not the
-retired ``examples/mock_transferunit.py`` this file was named after.
+Drives ``demo.transferunits.plc.transfer_unit.TransferUnit``, the factory's PLC.
 
 Live MQTT: a pure-Python ``amqtt`` broker in-process, real sockets, the same ``aiomqtt``
 client the framework connector uses. No store -- this is the device half of scenario 3, and

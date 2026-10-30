@@ -27,7 +27,7 @@ from kapps_triplestore_interface.exceptions import (
 )
 from rdflib.namespace import RDF
 
-from _explicit import explicit_select
+from _explicit import explicit_statements
 from kapps_semantic_middleware import SemanticMiddleware
 from kapps_semantic_middleware.credentials import triplestore_for
 from kapps_semantic_middleware.errors import NotificationUndelivered
@@ -124,15 +124,6 @@ def _middleware(store, resource: IRI = PLANNER) -> SemanticMiddleware:
 
 def _values(db, subject: IRI, predicate: IRI) -> list[str]:
     return sorted(str(t[2]) for t in db.triples_get(sub=subject, pred=predicate))
-
-
-def _explicit_statements(db) -> set:
-    """Every explicit statement of the default graph, to compare before and after."""
-    result = db.query(
-        explicit_select(["?s", "?p", "?o"], "?s ?p ?o"),
-        convert_bindings=True,
-    )
-    return {(str(b["s"]), str(b["p"]), str(b["o"])) for b in result["results"]["bindings"]}
 
 
 def _statements_about(db, iri: IRI) -> list:
@@ -270,13 +261,13 @@ def test_a_creation_alone_commits_at_its_exit(store):
 def test_an_error_in_the_body_of_a_creation_alone_writes_nothing(store):
     _seed(store)
     mw = _middleware(store)
-    before = _explicit_statements(store)
+    before = explicit_statements(store)
     with pytest.raises(RuntimeError, match="camera failed"):
         with mw.create(SNAPSHOT, ClassScope()) as snapshot:
             snapshot.update({DECISION: ["keep"]})
             raise RuntimeError("camera failed")
     assert mw.ogm.commits == []
-    assert _explicit_statements(store) == before
+    assert explicit_statements(store) == before
 
 
 def test_an_iri_that_the_store_already_holds_is_refused(store):
@@ -284,13 +275,13 @@ def test_an_iri_that_the_store_already_holds_is_refused(store):
     mw = _middleware(store)
     with mw.create(SNAPSHOT, ClassScope()) as existing:
         existing.update({DECISION: ["keep"]})
-    before = _explicit_statements(store)
+    before = explicit_statements(store)
 
     with pytest.raises(PreconditionFailedError):
         with mw.create(SNAPSHOT, ClassScope(), instance_iri=str(existing.iri)) as again:
             again.update({DECISION: ["discard"]})
 
-    assert _explicit_statements(store) == before
+    assert explicit_statements(store) == before
     assert _values(store, existing.iri, DECISION) == ["keep"]
 
 
@@ -302,14 +293,14 @@ def test_an_iri_that_the_store_already_holds_is_refused(store):
 def test_a_workpiece_without_a_possessor_raises_at_entry_before_any_write(store):
     _seed(store)
     mw = _middleware(store)
-    before = _explicit_statements(store)
+    before = explicit_statements(store)
     ran = []
     with pytest.raises(ValueError, match="possessor"):
         with mw.create(seed.BOX_CLASS, workpiece(ClassScope(), possessor=None)):
             ran.append(True)
     assert ran == []
     assert mw.ogm.commits == []
-    assert _explicit_statements(store) == before
+    assert explicit_statements(store) == before
 
 
 def test_a_workpiece_whose_possessor_has_no_state_is_created_with_that_state_in_one_commit(
@@ -380,7 +371,7 @@ def test_a_failed_notification_keeps_a_workpiece_created_in_the_request(store):
     # A reachable-looking receiver: its address is a port where nothing listens.
     _register_receiver_at(store, f"http://127.0.0.1:{_free_port()}")
     mw = _middleware(store)
-    before = _explicit_statements(store)
+    before = explicit_statements(store)
 
     with pytest.raises(NotificationUndelivered) as raised:
         with mw.issue_operation(
@@ -404,7 +395,7 @@ def test_a_failed_notification_keeps_a_workpiece_created_in_the_request(store):
     assert _values(store, op.iri, HAS_BOX) == [str(box.iri)]
     assert _values(store, box.iri, CFC.hasPossessedWorkpiece) == [str(state)]
     assert _values(store, PLANNER, CFC.hasPossessor) == [str(state)]
-    assert before < _explicit_statements(store)
+    assert before < explicit_statements(store)
 
 
 # --------------------------------------------------------------------------- #

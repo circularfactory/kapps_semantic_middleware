@@ -102,9 +102,8 @@ def test_every_operation_of_the_store_contract_is_classified():
     classified as a read or a mutation."""
     contract = {name for name in dir(TripleStore) if not name.startswith("_")}
     assert not MUTATIONS & READS
-    # `validate` need not be a member: the pinned release of the interface may still lack it.
     assert contract - MUTATIONS - READS - {QUERY} == set()
-    assert (MUTATIONS | READS | {QUERY}) - contract - {"validate"} == set()
+    assert (MUTATIONS | READS | {QUERY}) - contract == set()
 
 
 def test_the_source_is_found():

@@ -670,7 +670,8 @@ class SemanticMiddleware(Middleware):
     Adds knowledge-graph registration, discovery, and execution. It supports the
     three modes of :class:`~kapps_semantic_middleware.modes.Mode`. Resource mode
     registers the Service/Workflow/Capability instances on startup, and deregisters
-    them on shutdown. It is the only mode with runtime consequence today.
+    them on shutdown. Watchdog mode monitors service liveness and sweeps stale
+    registrations. Server mode is not implemented.
 
     ``mode`` accepts a ``Mode`` constant or the equivalent bare string -- ``Mode`` is a
     ``str`` subclass, so existing ``mode="resource"`` callers are unaffected.
@@ -678,6 +679,43 @@ class SemanticMiddleware(Middleware):
     Operation execution: an Operation resolves via its implemented Capability to the Service
     that realizes it; the dispatcher posts the Operation's IRI to that Service's event trigger,
     and the Service claims the Operation and runs the Workflow in-process.
+
+    Parameters:
+        mode: The operating mode. Accepts a Mode constant or equivalent string.
+        resource_iri: The IRI of the Resource that the instance is bound to (resource mode).
+            An instance in resource mode is bound to one Resource and hosts the Service that
+            wraps it.
+        service_class: The ontology class IRI for the service (resource mode).
+        ogm: The ontology graph manager for knowledge graph operations.
+        host: The HTTP server host address. Default is "127.0.0.1".
+        port: The HTTP server port. Default is 8000.
+        address: The full service address. Defaults to http://{host}:{port}.
+        named_graph: The target named graph in the knowledge graph, a string or an ``IRI``.
+            The constructor converts it to an ``IRI``; a string that is no IRI raises
+            ``InvalidIRIError`` here. None is the default graph.
+        heartbeat_interval: Seconds between heartbeat updates (resource mode).
+        staleness_threshold: Seconds before a service is considered stale: in watchdog
+            mode for the sweep, in resource mode for the startup reconstruction's test of
+            a live sibling Service.
+        sweep_interval: Seconds between staleness sweeps (watchdog mode).
+        class_scope: The consumer's view for parameter recognition and wiring.
+        autoregister_connectors: Enable automatic connector registration. Default is True.
+        connector_sync_direction: The sync direction for connectors. Default is BIDIRECTIONAL.
+            A REST binding only observes, so a settable parameter that binds over REST
+            needs TO_PERSISTENCE: under BIDIRECTIONAL its wiring raises ``ValueError``.
+        connector_registry: The semantic connector registry. Uses default_registry if None.
+        ensure_transport: A callback to start transport brokers before connector creation.
+        activity_feed: Enable the activity feed for observability. Default is False.
+        activity_capacity: Maximum events to retain in the activity feed ring buffer.
+
+    Resource mode requires resource_iri, service_class, and ogm. Watchdog mode requires ogm.
+    The constructor registers startup and shutdown callbacks for service lifecycle management.
+    It also configures liveness monitoring, connector wiring, and optional activity feeds.
+
+    Raises:
+        DeploymentValueError: If ``mode`` is no mode, or the mode lacks an argument that it
+            requires (Repair). It is a ``ValueError``.
+        NotImplementedError: In server mode.
     """
 
     #: What this product calls itself. The base class names the framework it is built on,
@@ -801,48 +839,6 @@ class SemanticMiddleware(Middleware):
         activity_feed: bool = False,
         activity_capacity: int = 200,
     ) -> None:
-        """Initialize the KAPPS Semantic Middleware instance.
-
-        Configure the middleware for one of three modes: RESOURCE, WATCHDOG, or SERVER.
-        Resource mode registers services in the knowledge graph and exposes REST APIs.
-        Watchdog mode monitors service liveness and sweeps stale registrations.
-        Server mode is not yet implemented.
-
-        Parameters:
-            mode: The operating mode. Accepts a Mode constant or equivalent string.
-            resource_iri: The IRI of the resource this middleware represents (resource mode).
-            service_class: The ontology class IRI for the service (resource mode).
-            ogm: The ontology graph manager for knowledge graph operations.
-            host: The HTTP server host address. Default is "127.0.0.1".
-            port: The HTTP server port. Default is 8000.
-            address: The full service address. Defaults to http://{host}:{port}.
-            named_graph: The target named graph in the knowledge graph, a string or an ``IRI``.
-                The constructor converts it to an ``IRI``; a string that is no IRI raises
-                ``InvalidIRIError`` here. None is the default graph.
-            heartbeat_interval: Seconds between heartbeat updates (resource mode).
-            staleness_threshold: Seconds before a service is considered stale: in watchdog
-                mode for the sweep, in resource mode for the startup reconstruction's test of
-                a live sibling Service.
-            sweep_interval: Seconds between staleness sweeps (watchdog mode).
-            class_scope: The consumer's view for parameter recognition and wiring.
-            autoregister_connectors: Enable automatic connector registration. Default is True.
-            connector_sync_direction: The sync direction for connectors. Default is BIDIRECTIONAL.
-                A REST binding only observes, so a settable parameter that binds over REST
-                needs TO_PERSISTENCE: under BIDIRECTIONAL its wiring raises ``ValueError``.
-            connector_registry: The semantic connector registry. Uses default_registry if None.
-            ensure_transport: A callback to start transport brokers before connector creation.
-            activity_feed: Enable the activity feed for observability. Default is False.
-            activity_capacity: Maximum events to retain in the activity feed ring buffer.
-
-        Resource mode requires resource_iri, service_class, and ogm. Watchdog mode requires ogm.
-        The constructor registers startup and shutdown callbacks for service lifecycle management.
-        It also configures liveness monitoring, connector wiring, and optional activity feeds.
-
-        Raises:
-            DeploymentValueError: If ``mode`` is no mode, or the mode lacks an argument that it
-                requires (Repair). It is a ``ValueError``.
-            NotImplementedError: In server mode.
-        """
         super().__init__()
         self._rebrand()
 

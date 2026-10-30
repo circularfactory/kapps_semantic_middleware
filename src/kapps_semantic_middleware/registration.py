@@ -971,7 +971,7 @@ def record_terminal_status(
     """Record terminal status (`done`/`failed`) with execution provenance in ONE commit.
 
     The commit writes :func:`_terminal_status_update`, so status and provenance are written
-    atomically, and on failure the dumped state with them. ``claim_next()`` no longer calls
+    atomically, and on failure the dumped state with them. ``claim_next()`` does not call
     this: it commits the same change through ``mw.commit()``. This writer is kept for existing
     callers.
     """
@@ -1126,10 +1126,10 @@ def services_of_resource(
 ) -> list[IRI]:
     """Every Service bound to a resource, via the instance-owned ``svc:isServiceOf``.
 
-    A Service IRI carries an instance discriminator. It can no longer receive reconstruction from
-    a resource IRI alone. This read replaces that reconstruction. ``svc:isServiceOf`` has always
-    been many-to-one. Consumers must no longer assume the answer has exactly one element. A
-    controller and a read-only monitor on one resource are two Services.
+    A Service IRI carries an instance discriminator, so it cannot be reconstructed from a
+    resource IRI alone; this read finds it instead. ``svc:isServiceOf`` is many-to-one.
+    Consumers must not assume the answer has exactly one element. A controller and a read-only
+    monitor on one resource are two Services.
 
     Args:
         ogm: The OGM instance.
@@ -1196,7 +1196,7 @@ def reachable_service_addresses(ogm: "OGM", resource_iri: IRI) -> list[Tuple[IRI
     The reachability rule of ``services_of_resource(..., reachable_only=True)``: a Service is
     reachable while it carries an ``svc:hasAddress``. The address is read in the same query, so a
     Service cannot lose it between two reads. A resource may have several reachable Services
-    (one per middleware instance); the caller decides what that means.
+    (one for each middleware instance bound to it); the caller decides what that means.
     """
     sparql = f"""
     SELECT DISTINCT ?svc ?addr WHERE {{

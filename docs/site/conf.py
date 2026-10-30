@@ -1,6 +1,6 @@
 """Sphinx configuration for the kapps-semantic-middleware documentation site.
 
-The decisions this file enacts:
+What this file sets up:
 
 - **Sphinx, not MkDocs**, because a real share of this site comes from ``src/``
   (117 of 127 public symbols carry a docstring).
@@ -13,19 +13,11 @@ The decisions this file enacts:
   to the repository root is pointed at the same file in the public repository, at this
   release's tag, because a page on the documentation site has no repository root beside it.
 
-This config is meant to be **vendored** into ``kapps_ogm`` and
-``kapps_triplestore_interface`` with only the ``project``/``release`` block, the reference
-pages and the pages the landing page's toctree lists changed -- the same per-repo rule the
-release data under ``release/`` follows, and for the same reason: the three release at their
-own pace.
+The scenario-notebook block below copies the notebooks of ``examples/`` into the site, and
+raises on a tree that has no ``examples/``.
 
-One exception to that: the scenario-notebook block below is specific
-to this repository, which is the only one of the three that has scenario
-notebooks. A vendored copy drops it, rather than carrying a step that would
-raise on a repository with no ``examples/``.
-
-The footer's copyright text is read from the ``LICENSE`` two directories above this file, so a
-vendored copy needs a ``Copyright (c) <year> <holder>`` line there, or the build raises.
+The footer's copyright text is read from the ``LICENSE`` two directories above this file, so the
+tree needs a ``Copyright (c) <year> <holder>`` line there, or the build raises.
 """
 
 import re
@@ -76,9 +68,8 @@ author = "Etienne Hoffmann"
 def _copyright_from_license(license_path: Path) -> str:
     """The footer's copyright text, read from the copyright lines of the LICENSE.
 
-    ``Copyright (c) 2026 Etienne Hoffmann`` becomes ``2026, Etienne Hoffmann``, the form Sphinx
-    prints. The LICENSE is the only place the holder and year are written; several lines join
-    with ``; ``.
+    ``Copyright (c) <year> <holder>`` becomes ``<year>, <holder>``, the form Sphinx prints. The
+    LICENSE is the only place the holder and year are written; several lines join with ``; ``.
     """
     entries = re.findall(
         r"^Copyright(?: \(c\))? (\S+) (.+?)\s*$",

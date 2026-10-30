@@ -21,8 +21,8 @@ class Mode(str, Enum):
     """A middleware instance mode. Each member below says what it means."""
 
     RESOURCE = "resource"
-    """Wrap one ``resource_iri``. Register a Service. Serve its workflows and parameters.
-    Hold a heartbeat. This is the only mode with runtime consequence today."""
+    """Host the Services of the Resources it is bound to. Register them. Serve their workflows
+    and parameters. Hold a heartbeat."""
 
     SERVER = "server"
     """Reserved. Serve data with no physical resource. Not implemented. Construct one

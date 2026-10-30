@@ -85,10 +85,10 @@ class WiringPlan:
     """The same prune set, broken out per recognized parameter property rather than
     unioned across all of them. ``plan_wiring`` already computes this as a cache
     (``southbound_by_property``, one ontology round trip per distinct property rather
-    than one per binding) and used to discard it once ``southbound_properties`` was
-    built. Kept here instead: a consumer that shows what pruning stripped *per
-    parameter* -- the demo's station board -- needs exactly this breakdown, and recomputing it a second time would cost
-    the same ontology queries this cache exists to avoid paying twice."""
+    than one per binding); the plan keeps it after building ``southbound_properties``.
+    A consumer that shows what pruning stripped *per parameter* -- the demo's station
+    board -- needs exactly this breakdown, and recomputing it would cost the same ontology
+    queries this cache exists to avoid paying twice."""
 
     def northbound_fetch_kwargs(self) -> Dict[str, Any]:
         """The arguments that materialize this resource's northbound view."""
@@ -331,12 +331,13 @@ def _parameter_properties(*, ogm: Any, root_iri: IRI, spec: Any, steps: Tuple[Tu
 def _service_address(*, ogm: Any, resource_iri: IRI) -> Optional[str]:
     """The resource's own ``svc:hasAddress``, one hop out through ``svc:isServiceOf``.
 
-    One query per ``_recognise`` call, not per parameter — a resource has one Service, and
-    every parameter on it shares the same answer. ``None`` when the resource has no Service,
-    or the Service has not (yet) published an address. That is the ordinary state of a
-    freshly-constructing instance recognising its *own* resource: ``plan_wiring`` runs from
-    ``__init__``, and ``_register_service`` is an ``on_start_up`` callback that has not run
-    yet, so there is no address to find and REST recognition finds nothing to bind.
+    One query per ``_recognise`` call, not per parameter — a Resource has one Service for each
+    instance bound to it, and every parameter on it shares the same answer. ``None`` when the
+    resource has no Service, or the Service has not (yet) published an address. That is the
+    ordinary state of a freshly-constructing instance recognising its *own* resource:
+    ``plan_wiring`` runs from ``__init__``, and ``_register_service`` is an ``on_start_up``
+    callback that has not run yet, so there is no address to find and REST recognition finds
+    nothing to bind.
     """
     rows = ogm.db.query(
         _asserted_select(
@@ -439,8 +440,7 @@ def _parameter_metadata(
     undeclared = set()
     for row in rows:
         # `row["p"]` is the property IRI -- always stringified for a plain dict key. `row["v"]`
-        # is left as `convert_bindings=True` produced it: every metadata property here has been
-        # `xsd:string` until now, so this was a no-op, but forcing `str()` on it would turn
+        # is left as `convert_bindings=True` produced it: forcing `str()` on it would turn
         # `inf:hasMQTTBrokerPort`'s `xsd:integer` back into a string (the round trip must hand
         # back 18831, not "18831").
         prop, value = str(row["p"]), row["v"]

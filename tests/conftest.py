@@ -119,7 +119,7 @@ def isolate_connector_sync_manager():
 
     Isolating here rather than in one file because the collision is between *any* two tests
     that build a middleware over the same resource, and the next such pair would rediscover
-    it. The leak itself is a real defect and is filed separately; a middleware that owns its
+    it. The leak itself is a real defect of its own; a middleware that owns its
     whole process, which is what the factory demo runs, never meets it.
     """
     from transitional_sync_middleware.middleware.sync.connector_sync_manager import (

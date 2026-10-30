@@ -29,7 +29,7 @@ from rdflib import Literal, URIRef
 from rdflib.namespace import RDF
 
 from kapps_ogm import OGM, Create, Update
-from _explicit import explicit_ask, explicit_select
+from _explicit import explicit_statements, explicit_ask, explicit_select
 from kapps_semantic_middleware import SemanticMiddleware
 from kapps_semantic_middleware.credentials import triplestore_env_present, triplestore_for
 from kapps_semantic_middleware.errors import HandoverPreconditionError, PossessionSwitchConflict
@@ -157,15 +157,6 @@ class _RacedOGM(OGM):
 
         with patch.object(self.db, "triples_update", side_effect=late_write):
             return super().commit(**kwargs)
-
-
-def _explicit_statements(db) -> set:
-    """Every explicit statement in the store, to compare before and after."""
-    result = db.query(
-        explicit_select(["?s", "?p", "?o"], "?s ?p ?o"),
-        convert_bindings=True,
-    )
-    return {(str(b["s"]), str(b["p"]), str(b["o"])) for b in result["results"]["bindings"]}
 
 
 def _explicit_objects(db, subject: str, predicate: str) -> list[str]:
@@ -299,7 +290,7 @@ def test_a_handover_changes_only_the_workpieces_link_its_update_and_its_operatio
     _another_box(db, seed.HANDOVER_DEST)  # so the counterpart has its state already
     _box_at_the_source_in_its_transport_state(db)
     operation = _running_operation(db)
-    before = _explicit_statements(db)
+    before = explicit_statements(db)
 
     with handover(
         _source_middleware(store),
@@ -311,7 +302,7 @@ def test_a_handover_changes_only_the_workpieces_link_its_update_and_its_operatio
     ):
         pass
 
-    after = _explicit_statements(db)
+    after = explicit_statements(db)
     box = str(seed.HANDOVER_BOX)
     giver_state = f"{seed.HANDOVER_SOURCE}_possession"
     counterpart_state = f"{seed.HANDOVER_DEST}_possession"
@@ -358,7 +349,7 @@ def test_a_workpiece_update_that_names_the_possession_link_is_refused_before_any
     """The handover sets ``cfc:hasPossessedWorkpiece`` itself, so ``workpiece_update`` must not."""
     db = store
     seed.seed_handover(db, OGM(db=db))
-    before = _explicit_statements(db)
+    before = explicit_statements(db)
     body_ran = False
 
     with pytest.raises(ValueError, match="must not set"):
@@ -372,7 +363,7 @@ def test_a_workpiece_update_that_names_the_possession_link_is_refused_before_any
             body_ran = True
 
     assert not body_ran
-    assert _explicit_statements(db) == before
+    assert explicit_statements(db) == before
 
 
 @requires_store
@@ -405,7 +396,7 @@ def test_a_plain_string_for_an_object_property_is_refused_before_anything_is_wri
     db = store
     seed.seed_handover(db, OGM(db=db))
     _box_at_the_source_in_its_transport_state(db)
-    before = _explicit_statements(db)
+    before = explicit_statements(db)
     body_ran = False
 
     with pytest.raises(ValueError, match="expected Node instances"):
@@ -419,7 +410,7 @@ def test_a_plain_string_for_an_object_property_is_refused_before_anything_is_wri
             body_ran = True
 
     assert not body_ran
-    assert _explicit_statements(db) == before
+    assert explicit_statements(db) == before
 
 
 @requires_store
@@ -646,7 +637,7 @@ def test_a_handover_onto_an_occupied_counterpart_is_refused_before_its_body_runs
     seed.seed_handover(db, OGM(db=db))
     _another_box(db, seed.HANDOVER_DEST)
     _box_at_the_source_in_its_transport_state(db)
-    before = _explicit_statements(db)
+    before = explicit_statements(db)
     body_ran = False
 
     # The shape goes in only now, because the seed itself is valid under it. Outside the
@@ -667,7 +658,7 @@ def test_a_handover_onto_an_occupied_counterpart_is_refused_before_its_body_runs
 
     assert not body_ran
     assert str(seed.HANDOVER_DEST) in str(refusal.value)
-    assert _explicit_statements(db) == before
+    assert explicit_statements(db) == before
 
 
 @requires_store
@@ -684,11 +675,11 @@ def test_an_error_in_the_body_undoes_nothing_and_writes_nothing_more(store):
             _source_middleware(store),
             mode=MES.Pass, workpiece=seed.HANDOVER_BOX, counterpart=seed.HANDOVER_DEST
         ):
-            admitted = _explicit_statements(db)
+            admitted = explicit_statements(db)
             raise RuntimeError("boom")
 
     assert find_possession_state(ogm, seed.HANDOVER_BOX, seed.HANDOVER_DEST) is not None
-    assert _explicit_statements(db) == admitted
+    assert explicit_statements(db) == admitted
 
 
 # --------------------------------------------------------------------------- #
@@ -730,7 +721,7 @@ def test_a_handover_admits_its_entry_in_the_commit_of_the_possession_change(stor
     transport = _running_operation(db)
     db.triple_add((_NEXT_CAPABILITY, RDF.type, CFC.Capability))
     ogm = _RecordingOGM(triplestore_for(store.dataset))
-    before = _explicit_statements(db)
+    before = explicit_statements(db)
 
     with handover(_source_middleware(store, ogm),
         mode=MES.Pass,
@@ -738,7 +729,7 @@ def test_a_handover_admits_its_entry_in_the_commit_of_the_possession_change(stor
         counterpart=seed.HANDOVER_DEST,
         entry=[_reassigned(transport)],
     ):
-        admitted = _explicit_statements(db)
+        admitted = explicit_statements(db)
         commits_before_the_body = len(ogm.commits)
 
     assert commits_before_the_body == 1
@@ -756,7 +747,7 @@ def test_a_handover_admits_its_entry_in_the_commit_of_the_possession_change(stor
         str(CFC.hasPossessedWorkpiece),
         f"{seed.HANDOVER_DEST}_possession",
     ) in added
-    assert _explicit_statements(db) == admitted  # the exit wrote nothing more
+    assert explicit_statements(db) == admitted  # the exit wrote nothing more
 
 
 @requires_store
@@ -767,7 +758,7 @@ def test_a_refused_possession_change_writes_no_entry_change(store):
     _another_box(db, seed.HANDOVER_DEST)
     transport = _running_operation(db)
     db.triple_add((_NEXT_CAPABILITY, RDF.type, CFC.Capability))
-    before = _explicit_statements(db)
+    before = explicit_statements(db)
     body_ran = False
 
     # Outside the `raises`: a store that cannot set the shape must fail the test, not pass it.
@@ -786,7 +777,7 @@ def test_a_refused_possession_change_writes_no_entry_change(store):
         restore_shipped_shapes(db)
 
     assert not body_ran
-    assert _explicit_statements(db) == before
+    assert explicit_statements(db) == before
 
 
 @requires_store
@@ -795,7 +786,7 @@ def test_a_refused_entry_change_writes_no_possession_change(store):
     db = store
     seed.seed_handover(db, OGM(db=db))
     transport = _running_operation(db)
-    before = _explicit_statements(db)
+    before = explicit_statements(db)
     body_ran = False
     not_a_reference = Update(
         instance_iri=transport, data={str(CFC.executedOn): [str(seed.HANDOVER_DEST)]}
@@ -812,7 +803,7 @@ def test_a_refused_entry_change_writes_no_possession_change(store):
             body_ran = True
 
     assert not body_ran
-    assert _explicit_statements(db) == before
+    assert explicit_statements(db) == before
     ogm = OGM(db=db)
     assert find_possession_state(ogm, seed.HANDOVER_BOX, seed.HANDOVER_SOURCE) is not None
 

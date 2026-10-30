@@ -45,8 +45,7 @@ SVC_ONTOLOGY = IRI("http://w3id.org/circularfactory/Service")
 MES_ONTOLOGY = IRI("http://w3id.org/circularfactory/MES")
 
 # The three W3C namespaces. Here for the same reason as everything else in this file: the library
-# wants one home for every ontology IRI, and these were previously spelled out at five separate
-# use sites across the library and the demo.
+# wants one home for every ontology IRI.
 RDF_NS = "http://www.w3.org/1999/02/22-rdf-syntax-ns#"
 RDFS_NS = "http://www.w3.org/2000/01/rdf-schema#"
 OWL_NS = "http://www.w3.org/2002/07/owl#"
@@ -141,9 +140,9 @@ class SVC:
 class MES:
     """Terms from this project MES ontology (`mes:`), defined in ontology/mes.ttl.
 
-    Scope is now handover *ability* only. Possession itself is Core material-flow state
+    Scope is handover *ability* only. Possession itself is Core material-flow state
     (``cfc:PossessionState`` / ``cfc:hasPossessor`` / ``cfc:hasPossessedWorkpiece``, see
-    ``class CFC``). This module no longer mints its own possession vocabulary.
+    ``class CFC``). This class mints no possession vocabulary of its own.
     """
 
     # Classes

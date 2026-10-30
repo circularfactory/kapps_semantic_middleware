@@ -384,9 +384,9 @@ class Controller(SemanticMiddleware):
         """Fetch, prune and persist one view hit's northbound datamodel into ``self.units``
         (the Control Expert's step 3).
 
-        Extracted from what used to be ``_load_view_datamodels``'s only loop body:
-        the startup bulk loader below and ``rebuild_view``'s joiner path both need this
-        exact fetch-and-persist step, and a second copy could drift from the first.
+        A method of its own because the startup bulk loader below and ``rebuild_view``'s
+        joiner path both need this exact fetch-and-persist step, and a second copy could
+        drift from the first.
         ``WiringPlan.northbound_fetch_kwargs`` is the same pruned fetch
         ``SemanticMiddleware._load_resource_datamodel`` runs for its own resource (see
         ``kapps_semantic_middleware.projection``): the materialized instance carries no
@@ -401,8 +401,7 @@ class Controller(SemanticMiddleware):
         a transient graph error) is caught and logged rather than left to propagate: an
         uncaught exception here would abort the caller's whole loop, and take down every
         *other* hit's loading with it -- one dead unit must not sink the whole factory's
-        view (the same "fails visibly rather than silently" standard the view mechanism's
-        acceptance criteria hold an already-wired unit to).
+        view (an already-wired unit fails visibly rather than silently, too).
 
         Returns:
             Whether the hit was actually loaded. ``False`` on a fetch failure or an empty

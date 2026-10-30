@@ -428,7 +428,7 @@ class DashboardRegistry:
         return self._boxes.get(box_id)
 
 
-#: The middleware no longer uses this note: an IRI cell shows its local name and keeps the
+#: The middleware does not use this note: an IRI cell shows its local name and keeps the
 #: full IRI on hover, which needs no sentence. It stays importable, with this value, because
 #: a consumer still imports it; a later release removes it.
 SHORTENING_NOTE = (
@@ -521,10 +521,10 @@ def _tab_slugs(tabs: Sequence[str]) -> Dict[str, str]:
 
     A tab name is a title a subproject chooses, so it may hold a space, a slash, a dot or an
     apostrophe. `html.escape` leaves all of them alone, because it escapes text and not an
-    identifier. The result was `id="tab-Line monitor"` and a selector
+    identifier. An escaped name would give `id="tab-Line monitor"` and a selector
     `#tab-Line monitor:checked`, which no browser can parse: the rule is dropped, the panel
-    keeps `display: none`, and the page renders a tab strip above nothing. `Line monitor` is
-    such a tab, so this was reached on the first tab a project adds.
+    keeps `display: none`, and the page renders a tab strip above nothing. A first tab is often
+    named like `Line monitor`.
 
     The visible label keeps the original name. Only the identifier is slugged.
 

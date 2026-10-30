@@ -1,9 +1,9 @@
 """The panel's convergence verdict: `diverged` means stopped converging, not unequal.
 
-The word was redefined that way for the whole demo; the panel kept the older reading
-(`abs(cmd - speed) > 1e-9`) for a while. Under the belt's ramp the two values are unequal
-during every set by design, so the old rule painted a healthy belt as a fault the whole way
-to its setpoint.
+The word means that for the whole demo, the panel included. Under the belt's ramp the two
+values are unequal during every set by design, so reading `diverged` as
+`abs(cmd - speed) > 1e-9` would paint a healthy belt as a fault the whole way to its
+setpoint.
 
 No broker, no graph, no HTTP: `ConvergenceTracker` is a state machine over observations, so
 these run with no fixtures and an injected clock.
@@ -38,7 +38,7 @@ def _tracker(still_seconds: float = 6.0):
 
 class TestARampingBeltIsHealthy:
     def test_a_belt_still_moving_never_reads_diverged(self):
-        """The regression the old reading caused: a belt ramping toward its setpoint is healthy
+        """A belt ramping toward its setpoint is healthy
         however long the ramp takes, because it is still closing the gap."""
         tracker, clock = _tracker(still_seconds=6.0)
 

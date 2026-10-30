@@ -31,7 +31,7 @@ from kapps_triplestore_interface.exceptions import (
 )
 from rdflib.namespace import RDF
 
-from _explicit import explicit_select
+from _explicit import explicit_statements
 from kapps_semantic_middleware import SemanticMiddleware
 from kapps_semantic_middleware.credentials import triplestore_for
 from kapps_semantic_middleware.errors import NotificationUndelivered
@@ -184,15 +184,6 @@ def _values(db, subject: IRI, predicate: IRI) -> list[str]:
     return sorted(str(t[2]) for t in db.triples_get(sub=subject, pred=predicate))
 
 
-def _explicit_statements(db) -> set:
-    """Every explicit statement of the default graph, to compare before and after."""
-    result = db.query(
-        explicit_select(["?s", "?p", "?o"], "?s ?p ?o"),
-        convert_bindings=True,
-    )
-    return {(str(b["s"]), str(b["p"]), str(b["o"])) for b in result["results"]["bindings"]}
-
-
 # --------------------------------------------------------------------------- #
 # issue_operation()
 # --------------------------------------------------------------------------- #
@@ -232,7 +223,7 @@ def test_a_failed_notification_leaves_the_operation_queued_and_raises_notificati
     # A reachable-looking receiver: its address is a port where nothing listens.
     _register_receiver_at(store, f"http://127.0.0.1:{_free_port()}")
     planner = _planner(store)
-    before = _explicit_statements(store)
+    before = explicit_statements(store)
 
     with pytest.raises(NotificationUndelivered) as raised:
         with planner.issue_operation(
@@ -246,9 +237,9 @@ def test_a_failed_notification_leaves_the_operation_queued_and_raises_notificati
     assert _values(store, op.iri, SVC.hasOperationStatus) == [OperationStatus.QUEUED]
     assert _values(store, op.iri, SVC.issuedBy) == [str(seed.PLANNER_RESOURCE)]
     assert _values(store, op.iri, TORQUE_LIMIT) == ["4.2 Nm"]
-    added = _explicit_statements(store) - before
+    added = explicit_statements(store) - before
     assert added and all(subject == str(op.iri) for subject, _, _ in added)
-    assert before <= _explicit_statements(store)
+    assert before <= explicit_statements(store)
 
 
 def test_a_dispatch_that_names_an_existing_operation_is_refused_and_leaves_it_untouched(store):
@@ -264,7 +255,7 @@ def test_a_dispatch_that_names_an_existing_operation_is_refused_and_leaves_it_un
         capability_iri=mint_capability_iri(seed.HELLO_RESOURCE, "hello_world"),
         data={str(TORQUE_LIMIT): ["1.0 Nm"]},
     )
-    before = _explicit_statements(store)
+    before = explicit_statements(store)
 
     with pytest.raises(PreconditionFailedError):
         with _planner(store).issue_operation(
@@ -274,7 +265,7 @@ def test_a_dispatch_that_names_an_existing_operation_is_refused_and_leaves_it_un
         ) as op:
             op.data[str(TORQUE_LIMIT)] = ["4.2 Nm"]
 
-    assert _explicit_statements(store) == before
+    assert explicit_statements(store) == before
 
 
 def _claim_with_commit(mw: SemanticMiddleware, operation: IRI) -> None:

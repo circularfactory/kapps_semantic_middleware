@@ -22,9 +22,9 @@ from kapps_semantic_middleware.errors import DeploymentRuntimeError
 # or .ipynb_checkpoints here.
 #
 # A name may contain a forward slash, and two do. `docker/` is copied out with the scenarios
-# because the scenarios need a triple store and this is how a pip-installing user obtains one --
-# before it was copied, the documented `cd docker && docker compose up -d` named a directory
-# that reached only someone who had cloned the source tree. Forward slashes regardless of
+# because the scenarios need a triple store and this is how a pip-installing user obtains one:
+# the documented `cd docker && docker compose up -d` names this directory. Forward slashes
+# regardless of
 # platform: these are `importlib.resources` traversal keys, not filesystem paths, and the
 # destination side is built with pathlib.
 PAYLOAD_FILES: Final[tuple[str, ...]] = (

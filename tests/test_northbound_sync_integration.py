@@ -10,11 +10,10 @@ background task, killing it. A topic answered exactly once, then went silent for
 
 These tests start a real ``SemanticMiddleware`` server and read values back over its
 recursive REST route, the way an operator's panel or a controller actually would, so they
-exercise the path the bare-connector tests cannot reach. Where the issue's own acceptance
-criteria name "the panel," these drive ``TransferUnit.set_speed`` / ``set_occupied`` directly
--- exactly the calls ``demo/transferunits/plc/panel.py``'s REST handlers make, without the
-HTML/HTTP chrome around them, which the issue's own diagnosis had already ruled out as
-neither the cause nor the fix's location.
+exercise the path the bare-connector tests cannot reach. They drive
+``TransferUnit.set_speed`` / ``set_occupied`` directly -- exactly the calls
+``demo/transferunits/plc/panel.py``'s REST handlers make, without the HTML/HTTP chrome around
+them, which is neither the cause of the bug nor the place of its fix.
 """
 
 from __future__ import annotations
@@ -185,7 +184,7 @@ class TestConsecutiveChangesReachPersistence:
             # One value is what the earlier suite already proved. A second and third are
             # what shipped broken: the first successful update killed the receive task for
             # good. `set_speed` is the same call `demo/transferunits/plc/panel.py`'s `set`
-            # REST handler makes -- "the panel's set" from the issue's acceptance criteria.
+            # REST handler makes.
             for value in (0.0, 1.11, 2.22):
                 await unit.set_speed("left", value)
                 assert await _wait_for_value(url, value), (
@@ -195,12 +194,10 @@ class TestConsecutiveChangesReachPersistence:
         # Every value the belt settled on was reported as news (the log-on-change rule, seen
         # through the whole pipeline rather than at the formatter).
         #
-        # This asserted `len(info_lines) == 3` when it was written, one commit before the
-        # belt ramp landed. A setpoint no longer snaps: `_ramp_loop` walks the belt toward its target
-        # and publishes every step, so three setpoints legitimately produce dozens of
-        # *distinct* values, every one of them genuine news. The count measured the ramp
-        # rate, not the logging -- three setpoints only ever meant three lines while a
-        # setpoint was an instant assignment.
+        # The number of lines is not asserted. A setpoint does not snap: `_ramp_loop` walks
+        # the belt toward its target and publishes every step, so three setpoints
+        # legitimately produce dozens of *distinct* values, every one of them genuine news.
+        # A count would measure the ramp rate, not the logging.
         #
         # The suppression half of log-on-change -- that an unchanged republish drops to DEBUG -- is
         # not asserted here, and deliberately not. `_ramp_loop` publishes only when it
@@ -211,9 +208,8 @@ class TestConsecutiveChangesReachPersistence:
         # `test_semantic_connectors.py::test_a_repeated_inbound_value_drops_to_debug` owns
         # that property directly and deterministically.
         # `args[-1]` rather than a fixed index: the value is the last argument on both the
-        # inbound and the outbound line, and the topic was dropped out of the INFO record, so
-        # what used to sit at index 2 now sits at index 1. Read from the end and this survives
-        # the next such change too.
+        # inbound and the outbound line, and reading from the end survives a change to the
+        # arguments before it.
         logged_values = [
             r.args[-1]
             for r in caplog.records
@@ -250,10 +246,10 @@ class TestConsecutiveChangesReachPersistence:
 class TestReceiveFailureIsVisible:
     """A receive task that dies logs a traceback instead of vanishing.
 
-    The fix in ``persisted_connector.py`` isolates the *specific* failure diagnosed above (a
+    ``persisted_connector.py`` isolates the *specific* failure diagnosed above (a
     persistence-write notification broadcasting the whole model to a sibling connector's
-    formatter), so that path no longer kills a receive task at all. This test proves the
-    other half of the fix -- ``middleware.py``'s ``run_receive`` -- independently, by
+    formatter), so that path does not kill a receive task at all. This test proves the
+    other half -- ``middleware.py``'s ``run_receive`` -- independently, by
     forcing a genuinely different failure (a formatter that raises on its own connector's
     own value, nothing to do with the notify fan-out) and asserting it is logged with a
     traceback rather than disappearing.

@@ -17,20 +17,30 @@ than via hardcoded network references. This context owns the Service/Workflow/Ca
 Operation/Mode registration and execution machinery. It delegates the actual generation and
 parsing of workflow precondition/outcome SHACL shapes to the SHACL Interop context.
 
-Built on `transitional_sync_middleware` (forked by inheritance, being incrementally reimplemented locally),
-`kapps_ogm` (all knowledge graph reads/writes), and `kapps_triplestore_interface` (raw triple store
-access, used directly where `kapps_ogm` has no equivalent yet, e.g. instance discovery).
+Built on `transitional_sync_middleware` (the synchronization layer, whose `Middleware` class
+`SemanticMiddleware` extends), `kapps_ogm` (all knowledge graph reads/writes), and
+`kapps_triplestore_interface` (raw triple store access, used directly where `kapps_ogm` has no
+equivalent yet, e.g. instance discovery).
 
 ## Language
 
 **Service**:
-A distributed runtime entity wrapped by a single middleware instance (e.g. a door
-controller, a tool-station controller, a planning service). Typed via a
-domain-specific subclass of `svc:Service` that must pre-exist in the ontology.
-There is **one Service per middleware instance, not per Resource**: several instances may be bound to
-one Resource, each owning its own Service node, address and heartbeat, all linked by
-`svc:isServiceOf`. Discovery may therefore return several Services for one Resource.
-_Avoid_: Middleware instance (that is the Python object; Service is its graph representation), Resource (Service *wraps* a Resource, it is not one); "the service of a resource" (there may be several).
+A distributed runtime entity that runs as an addressable unit on the network and wraps one
+Resource: a door controller, an anomaly detector, a planner. A middleware instance hosts it. It can
+expose workflows, each of which realizes one capability of its Resource.
+- Its Service node in the knowledge graph is an individual of a domain-specific subclass of
+  `svc:Service`. The node states that the Service exists, where it answers (`svc:hasAddress`), that
+  it is alive (`svc:hasLastHeartbeat`), and which Resource it wraps (`svc:isServiceOf`).
+- A Resource can have several Services: one for each middleware instance bound to it.
+
+_Avoid_: "the service of a resource" (there may be several); Middleware instance (it hosts Services; it is not one).
+
+**Middleware instance**:
+One `SemanticMiddleware` object in a running process. It hosts Services and holds their data model,
+into which its connectors read the device values.
+- In resource mode, it hosts one Service for each Resource it is bound to.
+- In watchdog mode, it hosts no Service; it removes the registrations of Services that stopped
+  sending heartbeats.
 
 **Connector wiring** (of a resource-mode instance):
 A configuration of the one library, not a distinct class. Resource mode is a **library woven into a
@@ -424,8 +434,7 @@ separate success flag. An Operation has exactly one status, written in the commi
 it and replaced atomically. The shapes file `service-shapes.ttl` beside the service ontology
 states the rule for a store that validates SHACL, in the node shape `svc:OperationShape` and its
 property shape `svc:OperationStatusShape`; `seeding.read_service_shapes()` reads it, and
-`seeding.set_service_shapes(store)` sets it on a demonstration or test store (all five are
-interim names).
+`seeding.set_service_shapes(store)` sets it on a demonstration or test store.
 
 **Pull-and-run**:
 The receiver-side transaction context manager by which domain code takes the next `queued`
@@ -435,8 +444,9 @@ provenance — dumping the Resource's datamodel to the graph on failure.
 _Avoid_: Poll, Consume (pull-and-run is the guarded unit of work, not the delivery mechanism).
 
 **Resource**:
-Defined in Core (`cfc:Resource`). The physical or logical thing a Service wraps (a door, a
-transformer cell, a drilling tool). Required at construction time in resource mode.
+Defined in Core (`cfc:Resource`). The physical or logical thing that a Service wraps: a machine, a
+door, a planning system. A middleware instance in resource mode is bound to its Resource at
+construction.
 
 **Workpiece**:
 Defined in Core (`cfc:Workpiece`). A production item that is processed, moved or stored on the
@@ -477,12 +487,12 @@ _Avoid_: transfer, hand-off, possession switch
 
 **Mode**:
 A `SemanticMiddleware` construction-time choice governing what the instance is *for*:
-- `"resource"` — wraps one Resource; the REST surface is the user-registered Workflows/
-  state parameters, the built-in `execute()` event trigger, and a read-only REST API generated
-  from the resource's own datamodel: GET routes only, because a device changes only through a
-  workflow of its service. The
-  transactional context-manager surface (dispatch/`issue_operation`, pull-and-run, handover) and the
-  graph-write helpers stay Python-only, not REST-exposed.
+- `"resource"` — hosts the Services of the Resources it is bound to; the REST surface is the
+  user-registered Workflows/state parameters, the built-in `execute()` event trigger, and a
+  read-only REST API generated from the resource's own datamodel: GET routes only, because a
+  device changes only through a workflow of its service. The transactional context-manager
+  surface (dispatch/`issue_operation`, pull-and-run, handover) and the graph-write helpers stay
+  Python-only, not REST-exposed.
 - `"server"` — wraps no Resource. CRUD/`execute` themselves are the REST surface (e.g. a
   future data-serving "product server"). Not yet implemented, and deliberately still reserved: a
   graph-*consuming* participant (a planner, a mobile robot, a controller) is a resource-mode

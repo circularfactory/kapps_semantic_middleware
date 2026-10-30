@@ -11,7 +11,7 @@ This page covers how to construct a middleware instance, what appears in the gra
 
 The `mode` constructor parameter determines what the instance is for. Only two modes are implemented:
 
-- **`"resource"`** — Wraps one {term}`Resource` (passed as `resource_iri`). The REST surface exposes user-registered Workflows and StateProperties, the built-in `execute()` event trigger, and a read-only API generated from the resource's datamodel: GET routes only, because a device changes only through a workflow of its service. Transactional operations (dispatch, pull-and-run, and the handover of the possession extension `kapps_semantic_middleware.possession`) remain Python-only.
+- **`"resource"`** — Is bound to the {term}`Resource` that `resource_iri` names. The REST surface exposes user-registered Workflows and StateProperties, the built-in `execute()` event trigger, and a read-only API generated from the resource's datamodel: GET routes only, because a device changes only through a workflow of its service. Transactional operations (dispatch, pull-and-run, and the handover of the possession extension `kapps_semantic_middleware.possession`) remain Python-only.
 - **`"watchdog"`** — Wraps no Resource. Exposes little or no REST surface. Runs a background sweep that removes `svc:hasAddress` and `svc:hasEndpoint` triples from Services whose heartbeat has gone stale.
 
 A third mode value, `"server"`, is documented but **not implemented**. It remains reserved for future graph-serving participants. Do not use it.
@@ -36,11 +36,11 @@ mw = SemanticMiddleware(
 
 The hook is called once per distinct `(host, port)` address declared in the graph during construction. The library never starts, probes, or stops a transport itself — it states the need, and the deployment decides how to meet it. No transport implementation ships in this package.
 
-## One Service Per Instance, Not Per Resource
+## One Service per instance and Resource
 
-A common mistake is assuming one Service per Resource. **There is one {term}`Service` per middleware instance.** Multiple instances may wrap the same Resource — for example, a controller and a monitor — each owning its own Service node, address, and heartbeat. All link to the Resource via `svc:isServiceOf`.
+A {term}`Service` is hosted by one middleware instance and wraps one {term}`Resource`. **A Resource can have several Services: one for each middleware instance bound to it.** Several instances may be bound to the same Resource — for example, a controller and a monitor — and each owns its own Service node for it, with its own address and heartbeat. All link to the Resource via `svc:isServiceOf`. The `resource_iri` parameter of the {py:class}`~kapps_semantic_middleware.middleware.SemanticMiddleware` constructor names the Resource that an instance is bound to.
 
-The Service IRI includes a discriminator derived from the instance's normalized address. This ensures stability across restarts of the same deployment while keeping concurrent instances distinct. Discovery queries may return multiple Services for one Resource; consumers select by address, liveness, or advertised capabilities.
+The Service IRI includes a discriminator derived from the instance's normalized address. This ensures stability across restarts of the same deployment while keeping concurrent instances distinct. Discovery queries may return multiple Services for one Resource; consumers select by address, liveness, or advertised capabilities, and do not assume exactly one.
 
 ## Registration on Startup
 

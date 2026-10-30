@@ -128,13 +128,10 @@ GIT_SENSE: dict[str, tuple[str, ...]] = {
     ),
     "pyproject.toml": (
         "and the repository root on the path unchanged",
-        "They used to sit at the repository root",
     ),
     "docs/site/conf.py": (
         "the same file in the public repository",
         "has no repository root beside it",
-        "to this repository, which is the only one",
-        "raise on a repository with no",
         "The public repository, which the README",
         "_REPOSITORY",
     ),

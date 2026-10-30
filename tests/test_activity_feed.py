@@ -4,7 +4,7 @@ This module guards the live activity feed implementation against regressions.
 Regressions would break the browser-readable log stream. The feed is the only
 window into the middleware internal wiring decisions, message traffic,
 registrations, and heartbeats. Resource state belongs to the monitor. Keep
-these apart. This boundary is decided. Mix them and you conflate the middleware
+these apart. Mix them and you conflate the middleware
 health with the device status. Debugging becomes ambiguous.
 
 **Why these tests exist:** The feed thread-safety depends on numbering and
@@ -420,8 +420,7 @@ async def test_the_stream_is_server_sent_events(fake_middleware):
 def test_disabled_allocates_nothing():
     """Build a middleware without activity_feed=True. No activity routes exist.
 
-    This is the acceptance criterion for the off state. activity_feed is None.
-    No route path contains 'activity'.
+    The off state: activity_feed is None. No route path contains 'activity'.
     """
     from kapps_semantic_middleware import SemanticMiddleware, Mode
     

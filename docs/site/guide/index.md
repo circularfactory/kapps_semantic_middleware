@@ -224,11 +224,12 @@ copy.
 the `demo/` directory into the library namespace. `import demo.transferunits` works only in a
 development checkout.
 
-**There is one {term}`Service` per middleware *instance*, not per {term}`Resource`.** Several
-instances may wrap one Resource — a controller and a monitor, say — each owning its own Service
-node, address and {term}`heartbeat <Heartbeat>`, all linked by `svc:isServiceOf`. Discovery may
-therefore return several Services for one Resource; select by address or by advertised capability
-rather than assuming exactly one.
+**A {term}`Resource` can have several {term}`Services <Service>`: one for each middleware instance
+bound to it.** A middleware instance hosts Services, and a Service wraps a Resource. Several
+instances may be bound to one Resource — a controller and a monitor, say — each owning its own
+Service node for it, with its own address and {term}`heartbeat <Heartbeat>`, all linked by
+`svc:isServiceOf`. Discovery may therefore return several Services for one Resource; select by
+address or by advertised capability rather than assuming exactly one.
 
 **Only `resource` and `watchdog` modes are implemented.** `server` is reserved and raises
 `NotImplementedError`. A graph-*consuming* participant — a planner, a controller, a mobile robot —

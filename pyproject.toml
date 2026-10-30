@@ -1,6 +1,6 @@
 [project]
 name = "kapps-semantic-middleware"
-version = "0.2.6"
+version = "0.3.0"
 description = "Semantic middleware for industrial data integration, built on transitional-sync-middleware"
 readme = "README.md"
 license = "MIT"
@@ -20,41 +20,32 @@ maintainers = [
     { name = "Etienne Hoffmann", email = "etienne.hoffmann@kit.edu" },
     { name = "Sören Weindel", email = "soeren.weindel@kit.edu" },
 ]
-# All three siblings are published, so all three are ordinary version pins. They were
-# editable path sources until this release: `[tool.uv.sources]` pointed each
-# at `../<name>`, which uv locks as a *path* with no revision, so `uv.lock` recorded where each
-# sibling was and nothing about what was in it. That is why a fresh machine did not reproduce a
-# working demo, and it is why `siblings.lock.toml` had to exist beside the lockfile.
+# All three siblings are published, so all three are ordinary version pins, and `uv.lock`
+# records the release of each.
 #
 # All three are ranges of the form `~=X.Y.Z`, which admits `>=X.Y.Z, ==X.Y.*`: a patch release of
 # a sibling reaches a fresh install with no human in the loop, and this project's own lock takes
 # it on a deliberate `uv lock --upgrade-package <name>`, while a minor release needs a deliberate
 # bump of the pin here, proven by this project's own test suite before it lands.
 dependencies = [
-    "kapps-ogm~=0.3.2",
-    "kapps-triplestore-interface~=2.2.2",
-    # The range's floor is 0.1.0 and not 0.2.6: this is the fork of `aas-middleware`, published
-    # under its own name with its own numbering, which restarted. The import package renames with
-    # it, to `transitional_sync_middleware`, and that rename happens at *its* release time -- so a
-    # dev checkout of the sibling still says `aas_middleware` while the published wheel does
-    # not. Swapping this pin and sweeping this project's imports had to be one change.
+    "kapps-ogm~=0.4.0",
+    "kapps-triplestore-interface~=2.3.0",
     "transitional-sync-middleware~=0.1.0",
     "httpx>=0.27.0",
     # transitional_sync_middleware keeps aiomqtt in an optional "industrial" extra, but the MQTT
     # semantic connector is a first-class part of this middleware, so it is a plain
-    # dependency here. Declaring it is also what stops a failure the OGM repo once had --
-    # importing a module the manifest never mentions -- from recurring.
+    # dependency here: the manifest names every module the library imports.
     "aiomqtt>=2.1.0",
     # fastapi is imported directly by the library itself -- middleware.py, rest_router.py and
-    # activity.py all `from fastapi import ...`, not just the demo. It only survived until now by
-    # arriving transitively through the sibling, which is not a promise that repo makes, so it
-    # is declared here. The transitive route stays as a backup.
+    # activity.py all `from fastapi import ...`, not just the demo. It also arrives
+    # transitively through the sibling, but that is not a promise that repo makes, so it is
+    # declared here.
     "fastapi>=0.111.0",
 ]
 
 [project.scripts]
 # Installed unconditionally, because a console script cannot be gated on an extra. Without
-# `[examples]` the factory does not exit, and this comment claimed for two releases that it did.
+# `[examples]` the factory does not exit.
 # Measured: uvicorn and rdflib arrive transitively, `amqtt` does not. The unit broker's thread
 # dies on the missing import and writes its traceback, but the launcher echoes only lines that
 # carry an address, so the console never shows it. The launcher seeds, the first middleware
@@ -71,7 +62,7 @@ kapps-examples = "kapps_semantic_middleware.examples_cli:main"
 # (as .py or .ipynb) and the six-process factory demo. A plain `uv add kapps-semantic-middleware`
 # installs the reference implementation alone; `uv add "kapps-semantic-middleware[examples]"` adds
 # what the runnable examples need on top of it. fastapi is NOT here: the library imports it
-# directly, so it moved to the core dependencies above.
+# directly, so it is a core dependency above.
 examples = [
     "uvicorn>=0.41.0",
     # The per-unit broker. Pure Python and run in-process, because mosquitto
@@ -184,18 +175,11 @@ dev-mode-dirs = ["src", "."]
 
 [tool.hatch.build.targets.wheel.force-include]
 # The agent-facing documentation lives at the repo root, so without this it reaches someone
-# browsing GitHub and nobody else. A consuming subproject's agent reads its dependency in
-# site-packages, where it would otherwise find `CONTEXT.md` -- which cites decision records by
-# number throughout -- and none of the pages written to replace them. That is backwards: the
-# citations arrive and their replacements do not.
+# browsing the source online and nobody else. A consuming subproject's agent reads its
+# dependency in site-packages, where these entries put the pages beside `CONTEXT.md`.
 #
-# Costs nothing on balance. These three are 84 KB; the 38 ADRs that stop shipping alongside this
-# are 268 KB, so the wheel gets ~184 KB smaller while gaining the useful half.
-#
-# Deliberately NOT a release-time edit. The release-time edits (`release/edits.toml`) all remove
-# facts that are only true in a dev checkout (sibling path sources, the ADR genre); this one is equally
-# true in both trees. Release-only would also mean the wheel the release cross-check builds and
-# tests is not the wheel that ships.
+# Deliberately NOT a release-time edit: this is equally true in both trees, and a release-only
+# entry would mean the wheel the release cross-check builds and tests is not the wheel that ships.
 "AGENTS.md" = "kapps_semantic_middleware/AGENTS.md"
 "CONTEXT-MAP.md" = "kapps_semantic_middleware/CONTEXT-MAP.md"
 "docs/mechanics" = "kapps_semantic_middleware/docs/mechanics"
@@ -205,28 +189,17 @@ dev-mode-dirs = ["src", "."]
 # mapping above already carries them into the wheel, and `kapps-examples` copies them out with
 # the rest of the payload.
 #
-# They used to sit at the repository root. That put them in the release allowlist -- so they
-# reached anyone browsing the source -- and in neither the wheel nor `PAYLOAD_FILES`, so the
-# one instruction the documentation gives a pip-installing user, `cd docker && docker compose
-# up -d`, named a directory they had no way to obtain. A force-include would have fixed the
-# wheel and left a second divergence behind it: `kapps-examples` reads its payload out of
-# `examples/`, and in a *dev checkout* there is no wheel remapping, so the copy would have
-# worked when installed and failed from a source tree. One location is what makes those agree.
+# One location is what keeps the installed copy and a source tree in agreement:
+# `kapps-examples` reads its payload out of `examples/`, and in a *dev checkout* there is no
+# wheel remapping. A force-include of files kept elsewhere would put them in the wheel and
+# leave them out of a source tree's copy. Inside the payload, the one instruction the
+# documentation gives a pip-installing user, `cd docker && docker compose up -d`, names a
+# directory that user has.
 
-# There is deliberately no `[tool.uv.sources]` here, and this is the release that removed it.
-# Three editable path entries pointed at `../aas_middleware_inf`,
-# `../kapps_ogm` and `../kapps_triplestore_interface`; all three siblings are now published, so
-# the floors above are real pins and `uv.lock` resolves from the index alone.
-#
-# Two things retired with the block, and both were only ever needed because of it:
-# `siblings.lock.toml`, which recorded the commit each sibling had to be on because a path
-# source records no revision, and `scripts/check_siblings.py`, which checked a machine against
-# it. A `uv sync` on a clean checkout now reproduces what CI resolves.
-#
-# The `[tool.uv] override-dependencies` hack went earlier, when the triplestore interface was
-# published under its new name. It existed because
-# kapps_ogm's manifest pinned the triplestore interface to a git URL, which uv saw as
-# conflicting with this project's editable path source for the same package.
+# There is deliberately no `[tool.uv.sources]` here. All three siblings are published, so the
+# floors above are real pins and `uv.lock` resolves from the index alone: a `uv sync` on a
+# clean checkout reproduces what CI resolves. A path source records no revision, so with one
+# `uv.lock` would say where a sibling is and nothing about what is in it.
 #
 # **A path source must not come back for convenience.** The one legitimate need -- patching a
 # sibling while developing against it -- is served by adding an entry locally and not

@@ -1,11 +1,10 @@
 """Every resource-mode middleware an example constructs must also be served.
 
-Both existing scenarios used to construct a middleware for their *client* — scenario 1's
-planner, scenario 2's mobile robot — and never run it. Because `uvicorn` never started them,
-`on_start_up` never fired: no Service individual, no `svc:hasAddress`, no heartbeat, no
-event-trigger route. The instances existed only to hold an `ogm`, which made
-`mode=Mode.RESOURCE` a label with no runtime consequence — and a reader would reasonably
-conclude that is how clients are meant to work.
+A middleware that an example constructs but does not pass to `uvicorn` never starts, so
+`on_start_up` never fires: no Service individual, no `svc:hasAddress`, no heartbeat, no
+event-trigger route. Such an instance only holds an `ogm`, which makes `mode=Mode.RESOURCE` a
+label with no runtime consequence — and a reader would reasonably conclude that is how clients
+are meant to work.
 
 This is a **static** check rather than a runtime one, and deliberately so. A runtime assertion
 inside one scenario proves that scenario; parsing every example proves the pattern cannot come
@@ -24,18 +23,14 @@ import pytest
 
 EXAMPLES = Path(__file__).resolve().parents[1] / "examples"
 
-KNOWN_UNSERVED: dict[str, int] = {
-    # Empty on purpose. The one entry that lived here, `scenario3_transferunit.py`, was retired
-    # with its notebook and `mock_transferunit.py` when the factory demo landed — the
-    # factory design promised that retirement, and `demo/transferunits/` is now the only scenario 3. Its
-    # exemption went with the file, along with the cross-loop deadlock that earned it.
-    #
-    # Keep this dict and the test below even while it is empty. A future example that cannot
-    # serve its middleware gets an entry here with its issue number, not a silent skip.
+KNOWN_UNSERVED: dict[str, str] = {
+    # Empty on purpose. Keep this dict and the test below even while it is empty. A future
+    # example that cannot serve its middleware gets an entry here with the reason, not a silent
+    # skip.
 }
-"""Examples that legitimately do not serve a middleware yet, each with its issue.
+"""Examples that legitimately do not serve a middleware yet, each with the reason.
 
-An exemption is a ticket, not a silence. Listing it here keeps the guard failing for every
+An exemption is named, not silent. Listing it here keeps the guard failing for every
 *other* example while making the debt visible, and the test below asserts each entry is still
 earning its place — an exemption that starts passing has to be removed."""
 
@@ -80,7 +75,7 @@ def _constructed_and_served(tree: ast.AST) -> tuple[set, set]:
 )
 def test_every_constructed_middleware_is_served(script):
     if script.name in KNOWN_UNSERVED:
-        pytest.skip(f"known unserved, tracked as #{KNOWN_UNSERVED[script.name]}")
+        pytest.skip(f"known unserved: {KNOWN_UNSERVED[script.name]}")
 
     tree = ast.parse(script.read_text(encoding="utf-8"))
 
@@ -133,6 +128,5 @@ def test_an_exemption_is_still_earning_its_place(name):
     constructed, served = _constructed_and_served(ast.parse(script.read_text(encoding="utf-8")))
 
     assert constructed - served, (
-        f"{name} now serves every middleware it constructs. Remove it from KNOWN_UNSERVED "
-        f"and close #{KNOWN_UNSERVED[name]}."
+        f"{name} now serves every middleware it constructs. Remove it from KNOWN_UNSERVED."
     )

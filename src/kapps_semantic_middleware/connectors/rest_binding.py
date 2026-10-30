@@ -65,8 +65,8 @@ really does degrade to ``MqttClientConnector = None``.
 
 The guard stays. It is correct in isolation, it is what makes the rule true again the moment
 the eager import upstream goes away, and its error message is reachable and asserted
-(``tests/test_optional_transport_stacks.py``). What is *not* claimed here any more is that
-absence has ever been survivable on this path.
+(``tests/test_optional_transport_stacks.py``). What is *not* claimed here is that absence
+is survivable on this path.
 """
 
 from __future__ import annotations

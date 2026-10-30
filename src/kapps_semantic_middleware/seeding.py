@@ -120,7 +120,7 @@ def _read_mes_ontology() -> str:
 
 
 def read_service_shapes() -> str:
-    """Return the packaged SHACL shapes of the svc: ontology, as Turtle (interim name).
+    """Return the packaged SHACL shapes of the svc: ontology, as Turtle.
 
     One rule today: every Operation has exactly one status, one of the four values of
     ``OperationStatus``. The file ships beside ``service.ttl``. It seeds demonstrations and
@@ -135,7 +135,7 @@ def read_service_shapes() -> str:
 
 
 def set_service_shapes(store: TripleStore) -> bool:
-    """Set the service ontology's shapes as the shapes of the store's dataset (interim name).
+    """Set the service ontology's shapes as the shapes of the store's dataset.
 
     ``shapes_set`` replaces every shape of the dataset and validates the data already there,
     so a seed calls this after it cleared the dataset. On a dataset that does not validate

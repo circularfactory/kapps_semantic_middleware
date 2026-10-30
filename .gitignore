@@ -21,7 +21,7 @@ docs/site/_build/
 docs/site/scenarios/hello-world.ipynb
 docs/site/scenarios/door.ipynb
 
-# Local agent output: the orchestrator's run logs per task, and scratch notes. A build's
-# handoff and briefs under .claude/log/<ticket>/ stay trackable; only runs/ is machine output.
+# Local agent output: the run logs per task, and scratch notes. Everything else under
+# .claude/log/ stays trackable; only runs/ is machine output.
 .claude/log/*/runs/
 .scratch/

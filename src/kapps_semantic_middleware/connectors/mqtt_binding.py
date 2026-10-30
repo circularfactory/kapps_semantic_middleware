@@ -167,14 +167,11 @@ class MQTTParameterFormatter:
         to send" outcome that silently accepting ``None`` would have hidden as a
         network-level failure at the device.
 
-        This used to be the ordinary case rather than the guard it reads as. The
-        fan-out asked *every* write leg on a resource to re-derive its slice
-        whenever *any* field changed, so a parameter nothing had ever set was
-        routinely asked to publish. The fan-out is now scoped to the field that
-        actually moved (``changed``), so a write leg is now only asked when its own
-        parameter was written -- and a write carries the value with it. The guard
-        stays because "asked to publish something never observed" is still a real
-        error state, and one worth naming rather than encoding as ``null``.
+        The fan-out is scoped to the field that actually moved (``changed``), so a
+        write leg is only asked when its own parameter was written -- and a write
+        carries the value with it. The guard is there because "asked to publish
+        something never observed" is a real error state, and one worth naming rather
+        than encoding as ``null``.
         """
 
         value = self._value_of(data)

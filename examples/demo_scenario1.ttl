@@ -41,7 +41,7 @@ ex:DemoResource rdf:type owl:Class ;
 ex:PlannerResource rdf:type owl:Class ;
     rdfs:subClassOf cfc:Resource ;
     rdfs:label "Planner Resource" ;
-    rdfs:comment "The resource wrapped by the second (executing) middleware in scenario 1." .
+    rdfs:comment "The resource that the Service of the second (executing) middleware wraps." .
 
 # --- Service types (one per resource kind) ---
 ex:HelloWorldService rdf:type owl:Class ;

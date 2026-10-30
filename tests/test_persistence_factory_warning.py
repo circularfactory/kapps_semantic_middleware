@@ -1,16 +1,16 @@
 """Offline tests for silencing transitional_sync_middleware's benign persistence-factory warning.
 
-Every middleware start used to log:
+Without a factory pre-registered for ``persist()`` (the base class), every middleware start
+logs:
 
     WARNING:transitional_sync_middleware.middleware.registries:No persistence factory found for
     data_model_name='resource' model_id=None contained_model_id=None field_id=None.
     Using default persistence factory.
 
-``persist()`` (the base class) never had a factory pre-registered for it, so the
-registry's own fallback branch fired on every call: harmless (it constructs the exact
-``PersistenceFactory(ModelConnector)`` the fallback always would), but a warning nobody
-had explained trains people to ignore warnings, and a receive task dying silently is exactly
-the kind of bug that hides behind one. ``SemanticMiddleware._suppress_default_persistence_warning``
+The registry's own fallback branch then fires on every call: harmless (it constructs the exact
+``PersistenceFactory(ModelConnector)`` the fallback always would), but an unexplained warning
+trains people to ignore warnings, and a receive task dying silently is exactly the kind of bug
+that hides behind one. ``SemanticMiddleware._suppress_default_persistence_warning``
 pre-registers that identical fallback so the "not found" branch is never reached.
 
 No store, no network: these tests exercise the persistence registry directly, and the

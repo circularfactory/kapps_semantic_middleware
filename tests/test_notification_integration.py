@@ -26,6 +26,7 @@ import uvicorn
 from rdflib import Literal
 from rdflib.namespace import RDF
 
+from _explicit import explicit_statements
 from kapps_ogm import OGM
 from kapps_semantic_middleware import SemanticMiddleware
 from kapps_semantic_middleware.credentials import triplestore_env_present, triplestore_for
@@ -201,10 +202,7 @@ def test_startup_still_fails_an_orphaned_running_operation_on_a_resource_with_a_
 
 
 def _statement_count(db) -> int:
-    result = db.query(
-        "SELECT (COUNT(*) AS ?n) WHERE { ?s ?p ?o }", convert_bindings=True
-    )
-    return int(result["results"]["bindings"][0]["n"])
+    return len(explicit_statements(db))
 
 
 @requires_store

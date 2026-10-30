@@ -1,7 +1,7 @@
 """The dashboard marks the selected tab, in a browser.
 
 The rule that highlights a label is in the stylesheet, and only a browser can say whether it
-matches: a test of the markup passed while the old rule matched nothing. The instance is served
+matches: a test of the markup can pass while the rule matches nothing. The instance is served
 in this process; the test skips where no browser is installed (see `_browser.py`).
 """
 

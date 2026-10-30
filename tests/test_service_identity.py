@@ -1,10 +1,10 @@
-"""Service identity is per middleware instance. Not per resource.
+"""Every middleware instance bound to a resource owns its own Service node for it.
 
-`mint_service_iri` used to be a pure function of the resource. Two middlewares bound
-to one resource shared a single `svc:Service` node. The second registration overwrote
-the first `svc:hasAddress`. Both heartbeated the same `svc:hasLastHeartbeat`. Either shutdown
-deregistered the survivor. None of it failed loudly. These tests pin the two properties
-that fix it. A discriminator **stable across restarts of the same deployment**.
+Were `mint_service_iri` a pure function of the resource, two middlewares bound to one
+resource would share a single `svc:Service` node. The second registration would overwrite
+the first `svc:hasAddress`. Both would heartbeat the same `svc:hasLastHeartbeat`. Either
+shutdown would deregister the survivor. None of it would fail loudly. These tests pin the two
+properties that prevent it. A discriminator **stable across restarts of the same deployment**.
 **Distinct between concurrent instances**. The discovery helper replaces reconstructing
 a service IRI from a resource IRI.
 
@@ -100,7 +100,7 @@ def _hello_instance(store, port: int) -> SemanticMiddleware:
 
 
 def _two_registered_instances(store) -> tuple[SemanticMiddleware, SemanticMiddleware]:
-    """Two instances on one resource. Both registered. The scenario one-Service-per-instance exists for."""
+    """Two instances on one resource. Both registered, each with its own Service node."""
     seed.seed_scenario1(store)
     mw_a = _hello_instance(store, PORT_A)
     mw_b = _hello_instance(store, PORT_B)

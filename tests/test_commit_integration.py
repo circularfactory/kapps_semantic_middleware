@@ -24,7 +24,7 @@ from kapps_ogm.utils.class_scope import ClassScope
 from kapps_triplestore_interface import IRI
 from kapps_triplestore_interface.exceptions import TripleStoreInterfaceError
 
-from _explicit import explicit_select
+from _explicit import explicit_statements
 from kapps_semantic_middleware import SemanticMiddleware
 from kapps_semantic_middleware.credentials import triplestore_for
 from kapps_semantic_middleware.registration import (
@@ -129,15 +129,6 @@ def _values(db, subject: IRI, predicate: IRI) -> list[str]:
     return sorted(str(t[2]) for t in db.triples_get(sub=subject, pred=predicate))
 
 
-def _explicit_statements(db) -> set:
-    """Every explicit statement of the default graph, to compare before and after."""
-    result = db.query(
-        explicit_select(["?s", "?p", "?o"], "?s ?p ?o"),
-        convert_bindings=True,
-    )
-    return {(str(b["s"]), str(b["p"]), str(b["o"])) for b in result["results"]["bindings"]}
-
-
 def test_a_refused_entry_runs_no_body_and_writes_nothing(store):
     """The store's SHACL engine refuses `running`; the body never starts."""
     op, _ = _seed(store)
@@ -147,7 +138,7 @@ def test_a_refused_entry_runs_no_body_and_writes_nothing(store):
         with_shipped_shapes(_status_shape("queued", "done", "failed")), "text/turtle"
     )
     try:
-        before = _explicit_statements(store)
+        before = explicit_statements(store)
         with pytest.raises(TripleStoreInterfaceError, match="ValidationReport"):
             with mw.commit(
                 op,
@@ -156,7 +147,7 @@ def test_a_refused_entry_runs_no_body_and_writes_nothing(store):
                 error=_status(op, "failed"),
             ):
                 ran.append(True)
-        after = _explicit_statements(store)
+        after = explicit_statements(store)
     finally:
         restore_shipped_shapes(store)
     assert ran == []

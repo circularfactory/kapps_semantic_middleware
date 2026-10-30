@@ -107,7 +107,7 @@ def test_the_logs_module_names_one_write_route_the_level_route() -> None:
     """The Logs tab's level route is the one write route of the page.
 
     It sets a logger's level in the process and writes nothing to the graph or a device.
-    A second write route here would be a write path nobody decided on.
+    A second write route here would be a write path the page does not declare.
     """
     _skip_if_no_src()
     tree = ast.parse(DASHBOARD_LOGS_PATH.read_text(encoding="utf-8"))

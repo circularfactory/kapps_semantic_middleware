@@ -7,12 +7,11 @@ from pathlib import Path
 from kapps_semantic_middleware import examples_cli
 
 TOTAL_EXPECTED_FILES = len(examples_cli.PAYLOAD_FILES) + 1  # the payload plus README.md
-"""Derived, where it used to be the literal 11.
+"""Derived from `PAYLOAD_FILES`, not a literal.
 
 The count is not what these tests are about -- the payload's *contents* are, and the loop below
-asserts every declared name arrives. A hardcoded total only ever fails as arithmetic: when two
-compose files were added to `PAYLOAD_FILES`, this line said 13 != 11, naming neither the feature
-nor the fault.
+asserts every declared name arrives. A hardcoded total fails only as arithmetic when the payload
+grows, naming neither the feature nor the fault.
 """
 
 

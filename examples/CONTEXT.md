@@ -24,8 +24,7 @@ deliberately show *three different* interaction patterns:
   the door directly, at the endpoint it found. The door has no operation queue and executes
   synchronously. Not operation based.
 - **Scenario 3** (a TransferUnit + a mock PLC) — **retired from this directory.** It lives in
-  [`demo/transferunits/`](../demo/transferunits/) as the runnable factory; the factory design
-  promised this move when it landed. Read it there to see the **ontology-driven wiring** pattern:
+  [`demo/transferunits/`](../demo/transferunits/) as the runnable factory. Read it there to see the **ontology-driven wiring** pattern:
   no topic and no broker address appears anywhere in the scenario code, and the middleware builds
   its connectors from what the graph tells it.
 

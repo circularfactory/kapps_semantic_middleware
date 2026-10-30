@@ -92,7 +92,7 @@ def _deprecations(record: list[warnings.WarningMessage]) -> list[str]:
 
 
 def test_a_stray_dataset_variable_is_ignored(store_env, monkeypatch):
-    """The acceptance criterion: a dataset named in the environment does not win.
+    """A dataset named in the environment does not win.
 
     This is the failure the dataset pin exists to prevent, and the one form of it the non-live
     tier can catch.

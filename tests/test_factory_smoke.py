@@ -87,7 +87,7 @@ again."""
 EXPECTED_BROKER_PORTS = {STOPPED_UNIT: 18831, SURVIVING_UNIT: 18832}
 """The claim names two literal numbers: "Two brokers listen, on 18831 and 18832."
 
-Written out rather than read off ``seed.broker_port``, because the decision being pinned is
+Written out rather than read off ``seed.broker_port``, because what is pinned is
 *which* numbers. ``18830 + n`` was chosen over the obvious ``1883 + n`` because 1900 is SSDP/UPnP
 and is live on most Linux desktops, so a large enough factory would collide with it and present
 the collision as a broker fault. A test that recomputed the port from the
@@ -225,7 +225,7 @@ def _traffic_flows(unit_index: int, timeout: float) -> bool:
 
     Subscribes to the topic the graph was seeded with, via the same minter
     (``seed._mqtt_topic``) the seed used, so the test cannot end up quietly subscribed to a
-    topic the scheme no longer produces.
+    topic the scheme does not produce.
 
     This is the only honest reading of "that unit's MQTT traffic is untouched". A listening
     socket says the broker is up; it says nothing about whether the device on the other side
@@ -443,14 +443,12 @@ def factory(store) -> Iterator[FactoryHandle]:
         except (ProcessLookupError, subprocess.TimeoutExpired):
             pass
 
-        # Only then the net -- and unconditionally, which is the correction. This used to be
-        # guarded by `if proc.poll() is None`, so it fired only while the *launcher* was
-        # still alive. Orphans arise in exactly the opposite case: the launcher exits
-        # cleanly and its six children, in their own session, do not. Measured after a run
-        # that skipped the `/api/stop` above -- the launcher was gone, the guard was
-        # therefore false, and three children kept unit 1's broker port bound. That port is
-        # also conftest.py's MQTT_TEST_PORT, so twelve unrelated tests in the *non-live*
-        # tier then failed with "Broker startup failed".
+        # Only then the net -- and unconditionally. A guard such as `if proc.poll() is None`
+        # would fire only while the *launcher* is still alive. Orphans arise in exactly the
+        # opposite case: the launcher exits cleanly and its six children, in their own
+        # session, do not, and they keep unit 1's broker port bound. That port is also
+        # conftest.py's MQTT_TEST_PORT, so unrelated tests in the *non-live* tier would then
+        # fail with "Broker startup failed".
         #
         # Signalling an already-reaped group raises ProcessLookupError, which is the normal
         # path when everything did stop, and is caught.
@@ -624,9 +622,9 @@ class TestTheFeedCarriesRealLines:
         one place, ``MQTTParameterFormatter.deserialize``, which runs only on a message
         arriving *from* the broker, so a matching line is the device's own reading.
 
-        **The topic is deliberately absent from what this matches.** It was moved to DEBUG
+        **The topic is deliberately absent from what this matches.** It is logged at DEBUG
         precisely so it cannot reach this feed, which is served over HTTP -- the projection
-        strips a broker topic from the datamodel, and a log line one URL along was handing it
+        strips a broker topic from the datamodel, and a log line one URL along must not hand it
         back. The label pins which belt, and the marker pins the leg.
 
         `1.75` rather than a parsed float: the ramp snaps exactly onto its target on the last
@@ -773,7 +771,7 @@ class TestStoppingOneUnit:
             lambda: not _listening(seed.MQTT_BROKER_IP, stopped_port),
             STOP_TIMEOUT_SECONDS,
             f"unit {STOPPED_UNIT}'s broker still answers on {stopped_port} after its "
-            "middleware died, so it is not the thread the design says it is",
+            "middleware died, so the broker does not run on the middleware's thread",
         )
 
         surviving_port = seed.broker_port(SURVIVING_UNIT)

@@ -173,8 +173,8 @@ def _get_label(ogm: Any, resource_iri: IRI) -> Optional[str]:
 def _get_class_iri(ogm: Any, resource_iri: IRI) -> Optional[str]:
     """The asserted domain class of a resource, or ``None`` if the graph does not say.
 
-    Delegates to the library's ``class_of``. This used to repeat that query, and its own
-    copy of the meta-type namespace list, here in the demo.
+    Delegates to the library's ``class_of``, so the demo keeps no copy of that query or of
+    the meta-type namespace list.
 
     The one difference is what happens when there is no answer. ``class_of`` raises, because
     a middleware that cannot resolve a ClassSpec cannot start. A board is a screen: an

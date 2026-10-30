@@ -141,8 +141,8 @@ class TestDefaultRegistry:
     ``SemanticConnectorRegistry([MQTTBinding])`` explicitly. It is structurally
     blind to this. This is how it went unnoticed.
 
-    Note the *projection* no longer depends on this being populated. It asks the
-    ontology. An empty registry is now a wiring failure. It is not a leak.
+    Note the *projection* does not depend on this being populated. It asks the
+    ontology. An empty registry is a wiring failure. It is not a leak.
     """
 
     def test_importing_the_package_registers_the_builtin_bindings(self):
@@ -412,12 +412,9 @@ class TestMQTTFormatter:
     def test_an_unobserved_parameter_refuses_to_serialize(self):
         """Scenario 3 is a locator. A parameter has no value until the device publishes.
 
-        Serializing it used to encode as the JSON scalar ``null`` -- not a valid device
-        value, and a receiver expecting a number or boolean chokes on it (the
-        cross-field notify fan-out makes exactly this reachable: any change on a
-        resource asks every write leg on it to re-derive its own slice, including a
-        sibling parameter nothing has ever set). Refusing loudly here, rather than
-        publishing ``null``, is the fix.
+        Serializing it as the JSON scalar ``null`` would not be a valid device value,
+        and a receiver expecting a number or boolean chokes on it. Refusing loudly
+        here, rather than publishing ``null``, keeps that off the wire.
         """
         formatter = self._formatter()
         [node] = formatter.deserialize(None)
@@ -504,8 +501,8 @@ class TestProjection:
         """The regression this whole mechanism prevents.
 
         A belt reachable over MQTT *and* OPC-UA. No OPC-UA binding registered
-        anywhere. The old registry-derived prune set removed the MQTT metadata.
-        It served the OPC-UA endpoint. A set built from registered code knows
+        anywhere. A registry-derived prune set would remove the MQTT metadata
+        and serve the OPC-UA endpoint. A set built from registered code knows
         only the protocols we wrote. Ask the ontology. Find it.
         """
         spec = self._resource_spec(extra=[OPCUA_ENDPOINT])

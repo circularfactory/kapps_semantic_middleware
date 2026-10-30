@@ -7,8 +7,8 @@ first. These five boxes use only the public surface of
 
 The boxes describe the middleware machinery: what it holds, which services it
 exposes, which connectors it wired, and which of its writes the store refused.
-They do not describe resource state. That is the monitor job. Keeping the two
-apart is a decided boundary.
+They do not describe resource state. That is the monitor job, and the two
+stay apart.
 """
 
 from __future__ import annotations
@@ -382,8 +382,8 @@ def register(registry: DashboardRegistry) -> None:
 
         graph_rows: List[Tuple[str, Any]] = [
             ("Dataset", dataset),
-            # `None` here is not missing information. The instance writes to the default
-            # graph, which is what the demo does. An em dash would read as "unknown".
+            # `None` here is not missing information: the instance writes to the default
+            # graph. An em dash would read as "unknown".
             (
                 "Named graph",
                 attr("named_graph")

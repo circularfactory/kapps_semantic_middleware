@@ -138,8 +138,8 @@ class TestRESTBindingBuild:
             )
 
     def test_a_resource_with_no_live_service_binds_nothing_and_says_so(self, caplog):
-        """A generically interface-accessible parameter whose resource never registered --
-        the acceptance criterion this ticket names explicitly."""
+        """A generically interface-accessible parameter whose resource never registered
+        builds no connector."""
         binding = _binding(address=None)
 
         assert list(RESTBinding.build(binding, SyncDirection.TO_PERSISTENCE)) == []

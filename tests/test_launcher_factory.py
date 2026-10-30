@@ -338,8 +338,8 @@ class TestStartSpawnOrder:
 
 class TestStateSnapshot:
     """This class tests Factory.state_snapshot's shape: graph/launcher/controller/unit,
-    where each unit now carries its own broker -- there is no
-    top-level, factory-wide broker entry any more."""
+    where each unit carries its own broker -- there is no
+    top-level, factory-wide broker entry."""
 
     def test_snapshot_groups_children_by_unit(self):
         factory = make_factory()

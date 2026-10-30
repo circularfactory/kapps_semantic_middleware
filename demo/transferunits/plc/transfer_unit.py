@@ -257,10 +257,10 @@ class TransferUnit:
     async def set_speed(self, position: str, value: float) -> None:
         """Set the commanded target for a belt position.
 
-        This is the REST API entry point for the panel. It used to set the actual speed.
-        It published immediately. Now it only sets the target. The belt ramps toward the
-        target. ``_ramp_loop`` is the single place that moves ``self.speeds``. It
-        publishes the result. This write path works exactly as an MQTT setpoint.
+        This is the REST API entry point for the panel. It sets only the target and
+        publishes nothing. The belt ramps toward the target. ``_ramp_loop`` is the single
+        place that moves ``self.speeds``. It publishes the result. This write path works
+        exactly as an MQTT setpoint.
         """
         self.setpoints[position] = value
 
@@ -336,7 +336,7 @@ class TransferUnit:
                 continue
 
             # Record the setpoint. _ramp_loop picks it up on its own tick and moves
-            # self.speeds toward it -- this is no longer an instant assignment.
+            # self.speeds toward it -- this is not an instant assignment.
             self.setpoints[position] = value
             self._setpoints_seen.set()
             logger.info("%s setpoint -> %s", topic, value)

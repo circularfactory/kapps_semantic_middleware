@@ -207,10 +207,10 @@ class BindingDescriptor(Protocol):
     connection_metadata: ClassVar[Tuple[IRI, ...]]
     """The properties this binding reads in order to construct a connector.
 
-    **Not** the projection's source of truth. It once was, and that was wrong. A set built from
-    the registered bindings only knows the protocols this middleware has code for, so a
-    parameter reachable over an unregistered protocol had its endpoint served northbound. The
-    projection asks the *ontology* instead. Cross-check this declaration against
+    **Not** the projection's source of truth. A set built from the registered bindings only
+    knows the protocols this middleware has code for, so a parameter reachable over an
+    unregistered protocol would have its endpoint served northbound. The projection asks the
+    *ontology* instead. Cross-check this declaration against
     it at construction, and report a disagreement. The two should coincide, and where they
     do not, either the contract grew a term this binding ignores or the binding expects one the
     ontology never declares."""

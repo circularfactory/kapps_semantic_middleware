@@ -43,12 +43,9 @@ PRIVATE_HOSTS: tuple[str, ...] = (
 )
 """The private hosts that must appear nowhere in a public tree.
 
-Index 0 is the private Git host -- where this library is developed, and the
-one all three siblings already ban. Index 1 is the institute's GraphDB, added by analogy with
-`kapps_ogm`, where it had actually fired: a changelog entry there quoted the endpoint it was
-measured against. Here it appears once, in a working note that does not ship, so this entry is
-insurance rather than a fix -- but the note is the genre that gets promoted into a released
-document, and the check costs nothing.
+Index 0 is the private Git host, where this library is developed. Index 1 is the
+institute's GraphDB, whose endpoint a working note or a changelog entry about a measurement
+could quote.
 
 `@kit.edu` in an author's e-mail address is deliberately **not** banned. The bare domain is
 public and those addresses are the credit this release is required to carry; only these two
@@ -77,23 +74,15 @@ places rather than one check leaning on the other.
 CITATION: re.Pattern[str] = re.compile("ADR" + r"[-:\s]*" + "[0-9]{4}")
 """A decision record cited by number, in every separator this repository has written it with.
 
-Wider than the `ADR ?[0-9]{4}` a first sweep measured with, because that sweep found five
-citations that regex could not see -- four with the number on the next line of a docstring, one
-joined to its number with hyphens. A gate that stops at the line end fails open on exactly the
-prose that has been reflowed to fit.
-
-The colon was added afterwards, and for this reason: the
-marker comment form, a colon between the word and the number, is a citation like any other,
-the first regex did not match it, so 65 of them survived a sweep whose acceptance criterion read
-"finds nothing". A gate written to the shape of the citations somebody happened to think of is
-a gate with a hole in it. This paragraph cannot show you the form -- check 5 scans this module
+Any run of spaces, line breaks, hyphens and colons may stand between the word and the number:
+a citation with its number on the next line of a reflowed docstring, or joined to it with a
+hyphen or a colon, is a citation like any other, and a gate that stops at the line end fails
+open on exactly that prose. This paragraph cannot show you the form -- check 5 scans this module
 in the public tree, and an example here would be the one citation it finds.
 
-The rule, decided 2026-09-11: all published content may only reference content that is
-publicly available to the community. The records never ship, so a number that names one is a
-reference the reader cannot resolve -- in printed output, a docstring, a comment or a Turtle
-file alike. An earlier decision had let the bare number stand as a provenance marker; this rule
-reversed that, and a sweep removed the 405 the tree carried when the rule was made.
+Published content may reference only content that is publicly available. The records never
+ship, so a number that names one is a reference the reader cannot resolve -- in printed output,
+a docstring, a comment or a Turtle file alike.
 
 Written as `ADR 00nn` wherever this file needs to name the form. A four-digit example in a
 comment here would be the one citation check 5 finds in the public tree.

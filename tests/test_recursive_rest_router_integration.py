@@ -85,10 +85,9 @@ class TestParameterRoutes:
     async def test_the_left_belts_speed_is_addressable(self, scenario3_ogm):
         """The deep path for ConveyorBelt/left/hasConveyorSpeed exists. Serve GET.
 
-        This is the route the whole ticket exists to create. A parameter nests two
-        levels beneath the root instance. Reach through a list of belts. Then the
-        speed property on a specific belt. This path does not exist. The recursive
-        router failed to walk the materialized tree.
+        A parameter nests two levels beneath the root instance: through a list of belts,
+        then the speed property on a specific belt. The recursive router walks the
+        materialized tree to reach it.
         """
         store, ogm = scenario3_ogm
 
