@@ -51,5 +51,6 @@ connectors/rest_binding
 :maxdepth: 1
 
 rest_router
+http_errors
 shacl_interop/shape_from_typehints
 ```

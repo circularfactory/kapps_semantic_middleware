@@ -7,7 +7,8 @@ writer hands to the OGM and check that it names each key of the data. They need 
 The writers that take their scope from the OGM are the ``Update`` and ``Append`` ones: the status
 transitions, the terminal record, the possession handover and the capability link. They pass no
 class scope, so they cannot fall short of one; the last test pins that for the first three, and
-the capability's test for its link, which goes into the commit of the capability's ``Create``.
+the exposure's test for the capability link, which goes into the commit of the ``Create`` of the
+capability and its workflow.
 """
 
 from __future__ import annotations
@@ -22,10 +23,13 @@ from kapps_semantic_middleware import SemanticMiddleware
 from kapps_semantic_middleware.operation import operation
 from kapps_semantic_middleware.possession import possession_change, workpiece
 from kapps_semantic_middleware.registration import (
+    STATE_PROPERTY,
+    WORKFLOW as WORKFLOW_KIND,
+    Exposure,
     _create,
-    _register_capability,
     _operation_status_update,
     _terminal_status_update,
+    _write_exposure,
     create_operation,
 )
 from kapps_semantic_middleware.vocabulary import CFC, SVC
@@ -35,6 +39,7 @@ CLASS = IRI(f"{EX}Thing")
 THING = IRI(f"{EX}thing_1")
 CAPABILITY = IRI(f"{EX}capability")
 WORKFLOW = IRI(f"{EX}workflow")
+STATE = IRI(f"{EX}state")
 OP = IRI(f"{EX}op_1")
 FREE = f"{EX}freeProperty"
 OTHER = f"{EX}otherProperty"
@@ -85,18 +90,25 @@ def test_the_registration_create_names_every_key_of_its_data():
     _assert_names_every_key(call["class_scope"], call["data"])
 
 
-def test_the_capability_create_names_every_key_of_its_data_and_the_link_is_an_append():
+def test_the_exposure_creates_name_every_key_of_their_data_and_the_link_is_an_append():
     ogm = _Recorder()
-    _register_capability(
+    _write_exposure(
         ogm,
         resource_iri=IRI(f"{EX}resource"),
+        service_iri=IRI(f"{EX}service"),
         capability_iri=CAPABILITY,
-        capability_class=CLASS,
-        data={str(SVC.realizedByWorkflow): [{"id": str(WORKFLOW)}]},
+        items=[
+            Exposure(CAPABILITY, CLASS, WORKFLOW_KIND, WORKFLOW, CLASS, "http://x/execute"),
+            Exposure(CAPABILITY, CLASS, STATE_PROPERTY, STATE, CLASS, "http://x/state"),
+        ],
+        stored=set(),
+        named_graph=None,
     )
-    create, link = ogm.changes
-    assert isinstance(create, Create)
-    _assert_names_every_key(create.class_scope, create.data)
+    *creates, link = ogm.changes
+    assert len(creates) == 3
+    for create in creates:
+        assert isinstance(create, Create)
+        _assert_names_every_key(create.class_scope, create.data)
     assert isinstance(link, Append)
 
 

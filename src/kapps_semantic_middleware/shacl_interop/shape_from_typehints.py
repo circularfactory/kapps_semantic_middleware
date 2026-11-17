@@ -1,7 +1,8 @@
-"""Generate SHACL NodeShapes, from the type hints of a Python function.
+"""Draft SHACL NodeShapes from the type hints of a Python function.
 
-This is temporary scaffolding for workflow signature representation. This logic
-properly belongs in kapps_ogm. Delete this logic from here once that support
+This is an authoring aid for ontology authors. Nothing in the middleware calls it: the
+shapes of a Workflow belong to the domain's ontology, and registration does not write them.
+This logic properly belongs in kapps_ogm. Delete this logic from here once that support
 lands.
 
 The shape targets the Workflow *class* (sh:targetClass). It does not target instances. Mint argument
@@ -62,7 +63,10 @@ def build_workflow_shape(
     *,
     shape_iri: str | URIRef | None = None,
 ) -> Graph:
-    """Build a SHACL NodeShape. Describe a Workflow precondition and outcome.
+    """Draft a SHACL NodeShape of a Workflow precondition and outcome.
+
+    An authoring aid for ontology authors, which nothing in the middleware calls. The
+    author reviews the draft and puts the shape into the ontology.
 
     Args:
         func: The Python function. Its type hints define the shape.

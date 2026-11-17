@@ -20,7 +20,11 @@ older type still catches it.
 
 from __future__ import annotations
 
+from datetime import datetime
+from typing import Optional
+
 __all__ = [
+    "CapabilityAlreadyRealizedError",
     "CapabilityNotRealizedError",
     "DeploymentError",
     "DeploymentRuntimeError",
@@ -69,6 +73,47 @@ class DeploymentRuntimeError(DeploymentError, RuntimeError):
     Action: Repair. Install the package again, or report the bug; the same call fails until
     then. It is a ``RuntimeError`` too, as each of these conditions raised before.
     """
+
+
+class CapabilityAlreadyRealizedError(DeploymentError):
+    """A resource-mode instance would realize a Capability that a live Service of another
+    instance already realizes, so it does not start.
+
+    Action: Repair. Stop one of the two instances. If the other one has crashed, start this one
+    again from the time that the message names: from then on its registration counts as stale
+    and this instance takes the Capability over. The instance raises it during its startup, and
+    it leaves no address and no endpoint of its own in the graph. The Capability keeps leading
+    to the other instance.
+
+    Attributes:
+        resource: The IRI of the Resource that provides the Capability.
+        capability: The IRI of the Capability.
+        holder: The IRI of the Service that realizes it now.
+        holder_address: That Service's ``svc:hasAddress``.
+        holder_heartbeat: That Service's last ``svc:hasLastHeartbeat``, or None when the store
+            gives none.
+        stale_from: The time from which this instance counts that Service as stale: its last
+            heartbeat plus this instance's staleness threshold; None without a heartbeat.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        resource: str,
+        capability: str,
+        holder: str,
+        holder_address: str,
+        holder_heartbeat: Optional[datetime],
+        stale_from: Optional[datetime],
+    ) -> None:
+        super().__init__(message)
+        self.resource = resource
+        self.capability = capability
+        self.holder = holder
+        self.holder_address = holder_address
+        self.holder_heartbeat = holder_heartbeat
+        self.stale_from = stale_from
 
 
 class OntologyGroundTruthError(Exception):

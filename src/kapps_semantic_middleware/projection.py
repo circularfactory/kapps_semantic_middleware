@@ -42,7 +42,7 @@ from __future__ import annotations
 
 import copy
 import logging
-from typing import Any, Collection, Dict, Optional, Set
+from typing import Any, Collection, Dict, FrozenSet, Mapping, Optional, Set
 
 from kapps_triplestore_interface import IRI
 
@@ -72,13 +72,18 @@ def southbound_properties(
     parameter_property: Any,
     *,
     interface_root: Any = INF.isInterfaceAccessibleParameter,
+    declared: Collection[str] = (),
 ) -> frozenset:
     """The properties a protocol marker contributes to one parameter's shape.
 
     Empty for a property that is not interface-accessible at all, which is the ordinary answer
-    for a plain object property like ``tu:hasConveyorBelt``.
+    for a plain object property like ``tu:hasConveyorBelt``. ``declared`` holds the interfaces
+    the embedding code declares for the property. Each counts as a marker the
+    ontology does not assert, together with its own superproperties below the root.
     """
     markers = _protocol_markers(ogm, parameter_property, interface_root)
+    for interface in declared:
+        markers |= _declared_markers(ogm, interface, interface_root)
     if not markers:
         return frozenset()
 
@@ -127,22 +132,48 @@ def _protocol_markers(ogm: Any, parameter_property: Any, interface_root: Any) ->
     return {str(row["marker"]) for row in rows}
 
 
+def _declared_markers(ogm: Any, interface: Any, interface_root: Any) -> Set[str]:
+    """A declared interface and its superproperties, strictly below the interface root.
+
+    The same two exclusions as :func:`_protocol_markers`, except that the interface itself is a
+    marker: it stands where the parameter property's superproperty would.
+    """
+    rows = ogm.db.query(
+        f"""
+        SELECT DISTINCT ?marker WHERE {{
+          <{interface}> <{RDFS_SUBPROPERTY_OF}>* ?marker .
+          ?marker <{RDFS_SUBPROPERTY_OF}>+ <{interface_root}> .
+          FILTER(?marker != <{interface_root}>)
+        }}
+        """,
+        convert_bindings=True,
+    )["results"]["bindings"]
+    return {str(row["marker"]) for row in rows}
+
+
 def _declared_by(ogm: Any, markers: Set[str]) -> Set[str]:
     """Every property named by an ``owl:onProperty`` inside these properties' ranges.
 
     Handles both range shapes the OGM itself accepts: an ``owl:intersectionOf`` list of
     restrictions, and a single bare ``owl:Restriction``. Reading only the first would silently
     miss a protocol whose contract happens to have one term — and a missed term is a leak.
+
+    Each branch of the union binds ``?range`` itself. A ``BIND(?range AS ?restriction)`` in a
+    branch of its own sees no ``?range``, by SPARQL's bottom-up scoping, and so matches every
+    restriction in the ontology: an engine that follows the scoping (rdflib) pruned the access
+    mode and every Core property.
     """
     values = " ".join(f"<{m}>" for m in markers)
     rows = ogm.db.query(
         f"""
         SELECT DISTINCT ?p WHERE {{
           VALUES ?marker {{ {values} }}
-          ?marker <{RDFS_RANGE}> ?range .
-          {{ ?range <{OWL_INTERSECTION_OF}>/<{RDF_REST}>*/<{RDF_FIRST}> ?restriction }}
+          {{
+            ?marker <{RDFS_RANGE}> ?range .
+            ?range <{OWL_INTERSECTION_OF}>/<{RDF_REST}>*/<{RDF_FIRST}> ?restriction .
+          }}
           UNION
-          {{ BIND(?range AS ?restriction) }}
+          {{ ?marker <{RDFS_RANGE}> ?restriction . }}
           ?restriction <{OWL_ON_PROPERTY}> ?p .
         }}
         """,
@@ -157,6 +188,7 @@ def prune_southbound(
     ogm: Any,
     interface_root: Any = INF.isInterfaceAccessibleParameter,
     cache: Optional[Dict[str, frozenset]] = None,
+    declared: Optional[Mapping[str, FrozenSet[str]]] = None,
 ) -> Any:
     """Return a copy of ``class_spec`` with each parameter's protocol metadata removed.
 
@@ -176,10 +208,12 @@ def prune_southbound(
     ``cache`` maps property IRI to its southbound set. Pass one in to have it filled and reused
     — every entry is a live SPARQL round trip, and the caller usually needs the same answers
     again for the binding cross-check.
+
+    ``declared`` maps a parameter property to the interfaces the embedding code declares for it.
     """
     cache = {} if cache is None else cache
     removed: Set[str] = set()
-    pruned = _pruned_copy(class_spec, ogm, interface_root, cache, removed)
+    pruned = _pruned_copy(class_spec, ogm, interface_root, cache, removed, declared or {})
     if removed:
         logger.debug(
             "Northbound projection removed %d protocol propert%s: %s",
@@ -196,6 +230,7 @@ def _pruned_copy(
     interface_root: Any,
     cache: Dict[str, frozenset],
     removed: Set[str],
+    declared: Mapping[str, FrozenSet[str]],
 ) -> Any:
     """One spec node, copied with each nested parameter's protocol metadata gone."""
     properties = getattr(class_spec, "properties", None)
@@ -209,9 +244,12 @@ def _pruned_copy(
             key = str(prop_iri)
             if key not in cache:
                 cache[key] = southbound_properties(
-                    ogm, prop_iri, interface_root=interface_root
+                    ogm,
+                    prop_iri,
+                    interface_root=interface_root,
+                    declared=declared.get(key, ()),
                 )
-            nested = _pruned_copy(nested, ogm, interface_root, cache, removed)
+            nested = _pruned_copy(nested, ogm, interface_root, cache, removed, declared)
             nested = _without(nested, cache[key], removed)
             prop_spec = copy.copy(prop_spec)
             prop_spec.nested = nested

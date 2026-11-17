@@ -1,6 +1,6 @@
 # Workflow Registration
 
-This page covers how a resource-mode middleware instance declares the Workflows it exposes through the knowledge graph. It describes the registration decorators, the ontology prerequisites they depend on, and how the middleware materializes Capability instances and SHACL shapes from your code. For calling Workflows — dispatch, event triggers, and operation status — see {doc}`05-operation-coordination`.
+This page covers how a resource-mode middleware instance declares the Workflows it exposes through the knowledge graph. It describes the registration decorators, the ontology prerequisites they depend on, and how the middleware materializes Capability instances from your code. For calling Workflows — dispatch, event triggers, and operation status — see {doc}`05-operation-coordination`.
 
 :::{dropdown} Terms this page assumes
 {term}`Workflow` · {term}`Capability` · {term}`Service` · {term}`Operation` · {term}`Resource` ·
@@ -67,22 +67,22 @@ def get_door_status() -> bool:
 
 It takes `capability_class`, `state_property_class`, and an optional `name`. Like Workflows, the Capability instance is created automatically at registration. The live value is never written to the graph — only the stable `svc:hasEndpoint` triple is written at registration time. Peers read the current value by invoking the endpoint, not by querying the graph.
 
-## Signature-Derived SHACL Shapes
+## Signatures and SHACL Shapes
 
-The middleware generates SHACL shapes describing the Workflow's precondition (arguments) and outcome (return value) from the function's type hints. These shapes are attached to the Workflow *class* (`sh:targetClass`), not to individual Workflow instances. All resource instances sharing the same Workflow class share the same shape.
+The shapes that describe a Workflow's arguments (precondition) and return value (outcome) belong to the domain's ontology. Its authors write them, together with the Workflow class, and the knowledge graph already holds them when the middleware starts. The middleware does not write, change or attach them: registration writes no shape. A shape sits on the Workflow *class* (`sh:targetClass`), so all resource instances of the same Workflow class share it.
 
 ```python
 @mw.workflow(
     capability_class=EX.DoorOpenCapability,
     workflow_class=EX.DoorOpenWorkflow,
 )
-def open_door(direction: str) -> bool:  # Type hints become SHACL shape
+def open_door(direction: str) -> bool:  # The signature is not turned into a shape
     ...
 ```
 
-The precondition shape describes the arguments the underlying Python function requires. The outcome shape describes the return value. Both are derived automatically — you do not author SHACL by hand for workflow signatures.
+The signature of a registered Workflow is visible on the API page (`/docs`) of the running instance. There a reader sees the arguments and the return type of every Workflow the instance serves.
 
-Arguments are supported: `build_workflow_shape` introspects the signature and mints an argument property per parameter (`{workflow_class_iri}#param_{name}`) plus a `#return` property. A function with no arguments produces an empty precondition shape, which is valid. Zero-argument functions are what the test suite exercises most heavily, but that is a statement about coverage rather than a capability limit; the `open_door(direction: str)` example above works. Complex nested types may not yet be fully exercised.
+To draft a shape for a new Workflow class, an ontology author can run `build_workflow_shape` from `kapps_semantic_middleware.shacl_interop` on the function. It introspects the signature and returns a SHACL graph: an argument property per parameter (`{workflow_class_iri}#param_{name}`) plus a `#return` property. A function with no arguments gives an empty precondition shape. The result is a starting point that the author reviews and puts into the ontology. Nothing in the middleware calls the helper.
 
 ## Address and Endpoint
 
@@ -94,6 +94,26 @@ When a resource-mode middleware starts, it writes two kinds of location metadata
 Both are written at registration time. Both are removed when the middleware deregisters (on clean shutdown) or when a watchdog marks the Service stale (on heartbeat failure). Confusing these two is a common mistake: callers resolve a Workflow IRI and read its `svc:hasEndpoint` directly — they do not walk through the Service's `svc:hasAddress` and append a route convention.
 
 Storing the endpoint on the Workflow itself means any caller with just a Workflow IRI can invoke it with one property read. The trade-off is duplication: the same host and port appear in both `svc:hasAddress` and every `svc:hasEndpoint` under that Service.
+
+## Host and address
+
+Three settings decide where a service can be reached, and they are easy to mix up:
+
+- **The server runner's listen host** is where the server listens. You set it where you run the application, for example `uvicorn.run(app, host="0.0.0.0", port=8000)`. `127.0.0.1` accepts connections from this machine only; `0.0.0.0` accepts them on every interface.
+- **The constructor's `host`** is used only to build the default address, `http://<host>:<port>`. It does not make the server listen anywhere.
+- **The constructor's `address`** is what other participants read from the graph. It is the one that has to be reachable from where they run.
+
+The default is local on purpose: `http://127.0.0.1:<port>` is safe to start without thinking about the network, and it works whenever caller and service share a machine. A participant on another machine reads the same address and calls itself. To be reachable from other machines, listen on an interface they can reach and advertise an address on it:
+
+```python
+# Where you run the server: listen on every interface.
+uvicorn.run(app, host="0.0.0.0", port=8000)
+
+# In the middleware: advertise an address of this machine, not a loopback one.
+middleware = SemanticMiddleware(..., address="http://192.168.1.20:8000")
+```
+
+Exposing the service makes its endpoints reachable from the network without authentication, and a firewall, WSL or Docker may need a port forwarded. An instance that advertises a loopback or an unspecified address (`0.0.0.0`) says so on its dashboard, in a box on the System tab that lists the machine's addresses and these settings.
 
 ## Vocabulary Layering
 

@@ -26,6 +26,7 @@ import threading
 import time
 import warnings
 import weakref
+from datetime import datetime, timezone
 from typing import (
     Any,
     Callable,
@@ -39,6 +40,7 @@ from typing import (
     Optional,
     Sequence,
     Tuple,
+    Union,
     get_args,
 )
 
@@ -47,7 +49,7 @@ import httpx
 from fastapi import APIRouter
 from fastapi.responses import Response
 from fastapi.routing import APIRoute
-from kapps_ogm import Update
+from kapps_ogm import Append, Update
 from kapps_ogm.utils.class_scope import ClassScope
 from kapps_triplestore_interface import IRI
 from pydantic import BaseModel
@@ -62,9 +64,16 @@ from kapps_semantic_middleware.connectors.semantic import (
     SemanticConnectorRegistry,
     default_registry,
 )
+from kapps_semantic_middleware.connectors.provisioning import (
+    Provision,
+    check_provisions,
+    declared_interfaces,
+    provision,
+)
 from kapps_semantic_middleware.connectors.wiring import WiringPlan, plan_wiring
 from kapps_semantic_middleware import _deprecation, modes
 from kapps_semantic_middleware.modes import Mode
+from kapps_semantic_middleware.ruleset import check_required_ruleset
 from kapps_semantic_middleware.activity import ActivityFeed, enable_activity_feed
 from kapps_semantic_middleware.observation import (
     ConnectionRecord,
@@ -82,15 +91,21 @@ from kapps_semantic_middleware.commit import (
     _Commit,
     _Creation,
     _nothing_to_join,
-    _property,
+    _as_reference,
     _as_references,
+    _property,
 )
 from kapps_semantic_middleware.operation import (
     _implemented_capabilities,
     _received_scope,
     operation,
 )
-from kapps_semantic_middleware.rest_router import generate_recursive_rest_api
+from kapps_semantic_middleware.http_errors import install_validation_handler
+from kapps_semantic_middleware.rest_router import (
+    _READ_METHODS,
+    _is_read_route,
+    generate_recursive_rest_api,
+)
 from kapps_semantic_middleware.errors import (
     DeploymentRuntimeError,
     DeploymentValueError,
@@ -118,10 +133,13 @@ from kapps_semantic_middleware.registration import (
     mint_service_iri,
     mint_state_property_iri,
     mint_workflow_iri,
+    STATE_PROPERTY,
+    WORKFLOW,
+    Exposure,
+    check_capabilities,
     reachable_service_addresses,
+    register_exposures,
     register_service,
-    register_state_property,
-    register_workflow,
     resolve_dispatch_target,
     update_heartbeat,
     _LIVENESS_STORE_ERRORS,
@@ -135,15 +153,26 @@ logger = logging.getLogger(__name__)
 # sleep, which the rest of the module also uses.
 _heartbeat_wait = asyncio.sleep
 _heartbeat_phase = random.uniform
+
+
+def _registration_now() -> datetime:
+    """The time by which the startup's registration judges a holder's liveness. A test replaces
+    it here, to start an instance at an injected time."""
+    return datetime.now(timezone.utc)
+
+
 # The sweep loop's wait, replaced by a test in the same way.
 _sweep_wait = asyncio.sleep
 # The stop's deregistration: no new attempt starts after the window, and a store error is followed
 # by the pause before the next attempt. Seconds; a test replaces them here. The library's stop
 # budget, after the web server's own graceful shutdown: up to 8 s of deregistration and 1 s of
-# notifications, so a caller's kill timeout must cover its graceful shutdown plus 9 s. Many
-# instances that stop at once queue their deregistrations at a shared store, past 3 s.
+# notifications and up to 1 s of closing the store client, so a caller's kill timeout must cover
+# its graceful shutdown plus 10 s. Many instances that stop at once queue their deregistrations
+# at a shared store, past 3 s.
 _DEREGISTRATION_WINDOW = 8.0
 _DEREGISTRATION_PAUSE = 0.25
+# The close of the store client at the end of the stop: seconds, abandoned after that.
+_CLOSE_WINDOW = 1.0
 
 __all__ = ["SemanticMiddleware", "IssuedOperation", "OperationResolutionError", "Mode"]
 
@@ -193,8 +222,9 @@ class IssuedOperation:
     """The Operation that ``issue_operation()`` issues: its draft in the block, its handle after it.
 
     ``issue_operation()`` makes it; a caller does not. In the block of ``with mw.issue_operation(...) as op:``,
-    ``op.data`` takes the Operation's domain properties, as ``{property IRI: [values]}``, and
-    ``op.update(instance_iri, data)`` changes an existing instance in the same commit.
+    ``op.data`` takes the Operation's domain properties, as ``{property IRI: [values]}``,
+    ``op.update(instance_iri, data)`` changes an existing instance in the same commit, and
+    ``op.append(instance_iri, property_iri, value)`` adds one value to a property of one.
     ``op.iri`` is the Operation's IRI. After the block, the Operation is in the graph, ``queued``.
     ``op.issuer`` is its issuer: the Resource of the middleware that issued it. ``svc:issuedBy``
     records it. Then ``op`` waits for the Operation, in a coroutine::
@@ -222,8 +252,9 @@ class IssuedOperation:
         #: The Operation's domain properties, set in the block of ``issue_operation()``.
         self.data: Dict[str, list] = {}
         self._middleware = middleware
-        # The changes of existing instances, set in the block; and whether the block is open.
-        self._updates: list[Update] = []
+        # The changes of existing instances, set in the block in call order (each an Update or
+        # an Append); and whether the block is open.
+        self._changes: List[Union[Update, Append]] = []
         self._open = True
         # Whether the Operation is in the graph: only then can a wait read its status.
         self._in_graph = False
@@ -252,6 +283,48 @@ class IssuedOperation:
                 ``op.data``), or the values of a property are not a list.
             RuntimeError: If the block of ``issue_operation()`` has ended.
         """
+        self._require_open_block_for(instance_iri, verb="update")
+        changed = _as_references(data)
+        if changed:
+            self._changes.append(Update(instance_iri=IRI(instance_iri), data=changed))
+
+    def append(self, instance_iri: str, property_iri: str, value: Any) -> None:
+        """Add one value to a property of an existing instance, in the commit that creates the
+        Operation.
+
+        Where :meth:`update` replaces the values of a property, ``append`` adds one, as the
+        ``append`` of a :meth:`SemanticMiddleware.commit` transition does: a kapps_ogm
+        ``Append``, which leaves the property's other stored values as they are and reads
+        nothing. Its value is read as in :meth:`update`: a value that is an IRI, such as
+        ``op.iri``, or ``{"id": iri}``, is a reference. Two appends to one property both add
+        their value. It is staged with the updates, in the order of the calls, after ``op.data``
+        and after every creation nested in the block. On an instance that a creation nested in
+        the block makes, the value is added to that creation's ``Create`` (kapps_ogm writes no
+        ``Append`` of an instance its own call creates), after an earlier :meth:`update` of the
+        same property. The store admits or refuses it together with the Operation; an error in
+        the block drops it.
+
+        Raises:
+            ValueError: If ``instance_iri`` is the Operation itself (set its properties in
+                ``op.data``).
+            RuntimeError: If the block of ``issue_operation()`` has ended.
+        """
+        self._require_open_block_for(instance_iri, verb="append")
+        self._changes.append(
+            Append(
+                instance_iri=IRI(instance_iri),
+                property_iri=IRI(property_iri),
+                value=_as_reference(value),
+            )
+        )
+
+    def _require_open_block_for(self, instance_iri: str, *, verb: str) -> None:
+        """Refuse a change of ``instance_iri`` after the block, or of the Operation itself.
+
+        Raises:
+            RuntimeError: If the block of ``issue_operation()`` has ended.
+            ValueError: If ``instance_iri`` is the Operation itself.
+        """
         if not self._open:
             raise RuntimeError(
                 f"the block of issue_operation() for {self.iri} has ended: change "
@@ -259,11 +332,8 @@ class IssuedOperation:
             )
         if IRI(instance_iri) == IRI(self.iri):
             raise ValueError(
-                f"op.update() names the Operation {self.iri} itself: set its properties in op.data"
+                f"op.{verb}() names the Operation {self.iri} itself: set its properties in op.data"
             )
-        changed = _as_references(data)
-        if changed:
-            self._updates.append(Update(instance_iri=IRI(instance_iri), data=changed))
 
     async def claimed(self, timeout: Optional[float] = 30) -> bool:
         """Wait until the Operation is claimed.
@@ -664,6 +734,54 @@ def _describe_routes(routes: Sequence[APIRoute], func: Callable[..., Any]) -> No
         route.description = doc
 
 
+_CONNECTOR_PREFIX = "/connectors/"
+
+
+def _is_connector_write(route: Any) -> bool:
+    """Whether a route sits under ``/connectors/`` and is not a read route."""
+    return str(getattr(route, "path", "")).startswith(
+        _CONNECTOR_PREFIX
+    ) and not _is_read_route(route)
+
+
+def _remove_mounted_connector_writes(app: Any) -> None:
+    """Remove the connector write routes the app already holds; reset the cached schema."""
+    kept = [route for route in app.router.routes if not _is_connector_write(route)]
+    if len(kept) != len(app.router.routes):
+        app.router.routes[:] = kept
+        app.openapi_schema = None
+
+
+def _fence_connector_writes(app: Any) -> None:
+    """Make the app answer no write under ``/connectors/``, for any mount order.
+
+    Two layers, both for routes still to come. ``include_router`` is wrapped so a router's write
+    routes under the prefix never reach the app, also when the framework mounts them at start-up
+    or for a connector added after it. And an HTTP middleware answers 405 to a non-read method
+    under the prefix before routing, so a request never reaches a connector's ``consume``, even
+    for a route added by another path.
+    """
+    include_router = app.include_router
+
+    def include_router_without_connector_writes(router: Any, *args: Any, **kwargs: Any) -> None:
+        router.routes[:] = [route for route in router.routes if not _is_connector_write(route)]
+        include_router(router, *args, **kwargs)
+        app.openapi_schema = None
+
+    app.include_router = include_router_without_connector_writes
+    allowed = ", ".join(sorted(_READ_METHODS))
+
+    @app.middleware("http")
+    async def connector_write_refused(request: Any, call_next: Any) -> Response:
+        """Answer 405 to any non-read method under /connectors/, before any route sees it."""
+        path = request.url.path
+        if (
+            path.startswith(_CONNECTOR_PREFIX) or path == _CONNECTOR_PREFIX.rstrip("/")
+        ) and request.method not in _READ_METHODS:
+            return Response(status_code=405, headers={"Allow": allowed})
+        return await call_next(request)
+
+
 class SemanticMiddleware(Middleware):
     """KAPPS Semantic Middleware extending transitional_sync_middleware.Middleware.
 
@@ -675,6 +793,11 @@ class SemanticMiddleware(Middleware):
 
     ``mode`` accepts a ``Mode`` constant or the equivalent bare string -- ``Mode`` is a
     ``str`` subclass, so existing ``mode="resource"`` callers are unaffected.
+
+    Guideline for reads (should, not must): fetch a data object with :meth:`fetch` when you work
+    with it through the middleware, and ask the graph a question (a list, a filter, a check) with
+    a query through ``ogm.db``, then fetch the one you pick. Reads are not constrained; writes
+    are, and go through the OGM.
 
     Operation execution: an Operation resolves via its implemented Capability to the Service
     that realizes it; the dispatcher posts the Operation's IRI to that Service's event trigger,
@@ -707,14 +830,25 @@ class SemanticMiddleware(Middleware):
         ensure_transport: A callback to start transport brokers before connector creation.
         activity_feed: Enable the activity feed for observability. Default is False.
         activity_capacity: Maximum events to retain in the activity feed ring buffer.
+        provisions: The embedding code's declaration of each parameter's interface and
+            connection metadata (resource mode, with a ``class_scope``). At construction the
+            middleware writes what the stored parameter nodes lack through one OGM commit,
+            before it recognizes and wires them. A monitor
+            (``autoregister_connectors=False``) writes nothing.
 
     Resource mode requires resource_iri, service_class, and ogm. Watchdog mode requires ogm.
     The constructor registers startup and shutdown callbacks for service lifecycle management.
     It also configures liveness monitoring, connector wiring, and optional activity feeds.
+    A clean stop closes the OGM's store client as its last step; the client stays usable, so one
+    passed to several instances works for the others after one of them stops.
 
     Raises:
         DeploymentValueError: If ``mode`` is no mode, or the mode lacks an argument that it
-            requires (Repair). It is a ``ValueError``.
+            requires, or ``provisions`` come without a ``class_scope``, or the installed
+            OGM has no ``Interface``, or two provisions name one parameter, or the
+            ``class_scope`` does not reach a provisioned parameter, or a stored parameter
+            node carries a value that differs from a declaration that is not
+            exclusive (Repair). It is a ``ValueError``.
         NotImplementedError: In server mode.
     """
 
@@ -769,6 +903,28 @@ class SemanticMiddleware(Middleware):
             contact=self.APP_CONTACT,
         )
 
+    def add_connector(self, *args, **kwargs):
+        """Add a connector, and keep the framework's value write off the app.
+
+        The framework mounts ``POST /connectors/{id}/value`` for a connector that can consume,
+        which writes the device with no workflow, no commit and no admission. A device changes
+        only through a workflow of its service. The mount is stripped right after the call.
+        """
+        result = super().add_connector(*args, **kwargs)
+        _remove_mounted_connector_writes(self.app)
+        return result
+
+    def add_synced_connector(self, *args, **kwargs):
+        """Add a synced connector, and keep the framework's value write off the app.
+
+        The framework mounts the connector's routes at start-up, after this call has returned,
+        so the strip here only covers a mount that already happened. The app's fence
+        (see ``_fence_connector_writes``) covers the rest.
+        """
+        result = super().add_synced_connector(*args, **kwargs)
+        _remove_mounted_connector_writes(self.app)
+        return result
+
     @property
     def app(self):
         """The FastAPI app, with its root route renamed and a quiet favicon route added.
@@ -812,6 +968,13 @@ class SemanticMiddleware(Middleware):
                 """Handle GET /favicon.ico requests. Return an empty 204 response."""
                 return Response(status_code=204)
 
+            # A request that fails validation answers 400, not FastAPI's 422, which means
+            # Refused in KSM's map. FastAPI offers this handler for the whole app only, so it
+            # covers the framework's routes too; see `http_errors`.
+            install_validation_handler(app)
+
+            _fence_connector_writes(app)
+
             # The schema is generated lazily and cached. Drop any copy built before the
             # swap, so /docs and /openapi.json describe the routes that actually exist.
             app.openapi_schema = None
@@ -838,6 +1001,7 @@ class SemanticMiddleware(Middleware):
         ensure_transport: Optional[Callable[[str, int], None]] = None,
         activity_feed: bool = False,
         activity_capacity: int = 200,
+        provisions: Sequence[Provision] = (),
     ) -> None:
         super().__init__()
         self._rebrand()
@@ -881,6 +1045,11 @@ class SemanticMiddleware(Middleware):
                 missing = [name for name, value in arguments if value is None]
                 raise DeploymentValueError(f"resource mode requires: {', '.join(missing)}")
 
+            # Before the first read of the ontology and the first write: the wiring below reads
+            # the ontology in this constructor, and a ruleset that is not the required one would
+            # fail there with a message about a symptom.
+            check_required_ruleset(ogm)
+
             # This instance's own identity, which resource mode alone has: the other modes set
             # all three to None. A resource-only path reads them through `_own_iris`.
             self.resource_iri: Optional[IRI] = IRI(resource_iri)
@@ -895,6 +1064,7 @@ class SemanticMiddleware(Middleware):
             self.autoregister_connectors = autoregister_connectors
             self.connector_sync_direction = connector_sync_direction
             self.connector_registry = connector_registry or default_registry
+            self.provisions: Tuple[Provision, ...] = tuple(provisions)
             # The transport seam a binding calls before building its first connector for a
             # declared address. None means exactly today's behaviour: the library
             # never starts, probes, or stops a broker on its own.
@@ -943,9 +1113,19 @@ class SemanticMiddleware(Middleware):
             # The handle of each Operation that this instance issued, while its caller keeps it,
             # so a notification of the Operation wakes its waits.
             self._issued_handles: weakref.WeakValueDictionary = weakref.WeakValueDictionary()
+            # What the instance exposes (each `@workflow` and `@state`), registered in one
+            # startup step directly after the Service (`_register_exposures`).
+            self._exposures: List[Exposure] = []
+            # The holders that the check before the Service's registration read, by Capability.
+            self._holders: Optional[dict] = None
             self._register_event_trigger()
 
+            # The registration: the check of every Capability's holder and the Service, then
+            # everything the instance exposes, in one step, before the datamodel is loaded,
+            # before the queue is reconstructed and before the heartbeat starts. So an instance
+            # that is refused takes up no Operation and leaves no heartbeat loop running.
             self.add_callback("on_start_up", self._register_service)
+            self.add_callback("on_start_up", self._register_exposures)
             # The stop: the heartbeat first, so no beat races the deregistration, then the
             # deregistration. The issuers' notifications stop after it, further below.
             if heartbeat_interval and heartbeat_interval > 0:
@@ -965,8 +1145,17 @@ class SemanticMiddleware(Middleware):
             if heartbeat_interval and heartbeat_interval > 0:
                 self.add_callback("on_start_up", self._start_heartbeat)
 
+            # The provisioning write below targets it, so it is converted before the wiring.
+            self.named_graph: Optional[IRI] = (
+                IRI(named_graph) if named_graph is not None else None
+            )
             if class_scope is not None:
                 self._wire_semantic_connectors()
+            elif self.provisions:
+                raise DeploymentValueError(
+                    "provisions require a class_scope: the declared parameters are provisioned "
+                    "and wired under the consumer's view, and without one nothing would be."
+                )
 
         elif mode == Mode.WATCHDOG:
             if ogm is None:
@@ -986,13 +1175,16 @@ class SemanticMiddleware(Middleware):
         # The named graph enters KSM here and is an `IRI` from here on, as every helper it
         # reaches takes it: a string that is no IRI is refused now, not at the first write. It
         # comes after the checks of the mode's arguments, so a missing argument is still the
-        # first error, and nothing above reads it.
-        self.named_graph: Optional[IRI] = IRI(named_graph) if named_graph is not None else None
+        # first error. Resource mode converts it earlier, before its connector wiring, which
+        # provisions into it; the conversion is the same.
+        self.named_graph = IRI(named_graph) if named_graph is not None else None
 
         # The background worker that sends the notifications of issuers, and its stop, after
         # the deregistration so that a stop does not wait for it first.
         self._notifier = _Notifier(f"issuer-notifications {self.resource_iri or self.mode}")
         self.add_callback("on_shutdown", self._stop_notifications)
+        # The last step of the stop, after every write of it: the close of the OGM's store client.
+        self.add_callback("on_shutdown", self._close_store_client)
 
         # Opt-in, and deliberately *outside* the mode branches. A controller and a
         # monitor this library configures them differently, so they inherit the feed
@@ -1006,8 +1198,30 @@ class SemanticMiddleware(Middleware):
             self.activity_feed = enable_activity_feed(self, capacity=activity_capacity)
 
     async def _register_service(self) -> None:
-        """Register the Service instance in the knowledge graph on startup."""
+        """Register the Service instance in the knowledge graph on startup.
+
+        Before the first write, it reads the holder of every Capability that the instance will
+        register, and refuses the start, with nothing written, when a live Service of another
+        instance realizes one of them.
+
+        Raises:
+            CapabilityAlreadyRealizedError: If a live Service of another instance realizes a
+                Capability of this instance.
+        """
         own = self._own_iris("the Service's registration is only valid in resource mode")
+        self._holders = None
+        if self._exposures:
+            self._holders = await anyio.to_thread.run_sync(
+                functools.partial(
+                    check_capabilities,
+                    self.ogm,
+                    resource_iri=own.resource,
+                    service_iri=own.service,
+                    exposures=list(self._exposures),
+                    staleness_threshold=self.staleness_threshold,
+                    now=_registration_now(),
+                )
+            )
         await anyio.to_thread.run_sync(
             functools.partial(
                 register_service,
@@ -1016,6 +1230,34 @@ class SemanticMiddleware(Middleware):
                 service_iri=own.service,
                 service_class=own.service_class,
                 address=self.address,
+                named_graph=self.named_graph,
+            )
+        )
+
+    async def _register_exposures(self) -> None:
+        """Register every Workflow, StateProperty and Capability of the instance, in one step.
+
+        A refusal deregisters the Service that :meth:`_register_service` wrote, and raises: the
+        startup ends, and the stop's callbacks do not run.
+
+        Raises:
+            CapabilityAlreadyRealizedError: If a live Service of another instance realizes a
+                Capability of this instance.
+        """
+        own = self._own_iris("the registration of workflows is only valid in resource mode")
+        if not self._exposures:
+            return
+        holders, self._holders = self._holders, None
+        await anyio.to_thread.run_sync(
+            functools.partial(
+                register_exposures,
+                self.ogm,
+                resource_iri=own.resource,
+                service_iri=own.service,
+                exposures=list(self._exposures),
+                staleness_threshold=self.staleness_threshold,
+                holders=holders,
+                now=_registration_now,
                 named_graph=self.named_graph,
             )
         )
@@ -1197,6 +1439,29 @@ class SemanticMiddleware(Middleware):
             logger.error("The watchdog's sweep loop ended", exc_info=True)
             raise
 
+    async def _close_store_client(self) -> None:
+        """Close the store client of the OGM, the last step of the stop. Never raises.
+
+        The interface's ``close()`` removes the write receipts that the client still holds, in one
+        request, and releases its connection pools. The client stays usable afterwards: a later
+        request opens a new pool. A failing close, or one that takes over a second, is logged as
+        one WARNING and the stop ends; a close still running then is abandoned in a daemon thread.
+        """
+        client = getattr(self.ogm, "db", None)
+        close = getattr(client, "close", None)
+        if not callable(close):
+            return
+        try:
+            await asyncio.wait_for(_in_daemon_thread(close), timeout=_CLOSE_WINDOW)
+        except Exception as error:
+            logger.warning(
+                "The store client (%s) of %s did not close: %r; its write receipts may stay in "
+                "the store",
+                type(client).__name__,
+                self.resource_iri or self.mode,
+                error,
+            )
+
     async def _stop_sweep(self) -> None:
         """Cancel the sweep loop on shutdown."""
         if self._sweep_task is not None:
@@ -1256,8 +1521,10 @@ class SemanticMiddleware(Middleware):
 
         and the same with ``with`` in code that runs in a worker thread, such as a callback, a
         notification handler or a script. ``entry``, ``exit`` and ``error`` are lists of
-        kapps_ogm ``Create`` and ``Update`` changes. Each is written as one ``OGM.commit``, so
-        each may span several instances. Nothing here is specific to a vocabulary: any
+        kapps_ogm ``Create``, ``Update`` and ``Append`` changes. A ``Create`` or an ``Update``
+        sets a property: it replaces the property's values. An ``Append`` adds one value to a
+        property of a stored instance and replaces none. Each list is written as one
+        ``OGM.commit``, so each may span several instances. Nothing here is specific to a vocabulary: any
         datamodel and any state transition fit.
 
         - **Entry.** The entry transition is committed. If the store refuses it, its error is
@@ -1270,15 +1537,21 @@ class SemanticMiddleware(Middleware):
           A body that blocks its thread (``time.sleep``, a blocking driver call) must run in a
           worker thread, with the synchronous ``with`` inside that thread, as callbacks and
           notification handlers run. **Only** ``transition.update(instance, {property:
-          [values]})`` **changes the graph**, at the clean exit. A change made to
+          [values]})`` **and** ``transition.append(instance, property, value)`` **change the
+          graph**, at the clean exit: ``update`` replaces the values of a property, ``append``
+          adds one and reads nothing. A change made to
           ``transition.node`` or to its ``.instance`` is not committed, and an assignment to an
           attribute that the transition does not have raises ``AttributeError``.
         - **Clean exit.** The body's changes and the exit transition are committed as one
           ``OGM.commit``. Changes to one instance that a change names merge into one change,
-          because kapps_ogm refuses two changes that write one instance. **A body that sets a
-          property that the exit transition also sets, on the same instance, wins:** its value
-          is committed and the exit transition is skipped as a whole. So a body that sets the
-          status itself keeps it. The merge does not reach a named instance that a change only
+          because kapps_ogm refuses two changes that write one instance. An ``Append`` is
+          never merged: it stays in its place, and kapps_ogm refuses one beside a ``Create`` or
+          an ``Update`` of its instance. **A body that sets a property that the exit transition
+          also sets, on the same instance, wins:** its value is committed and the exit
+          transition is skipped as a whole. So a body that sets the status itself keeps it. An
+          ``Append`` writes its property as a change that sets it does, except beside another
+          ``Append``: two values added to one property are both written, and the exit
+          transition's other changes with them. The merge does not reach a named instance that a change only
           nests with properties: when two changes both write one, kapps_ogm raises
           ``ValueError`` at the exit, which commits the error transition and then raises.
         - **Error in the body.** The body's changes are dropped, the error transition is
@@ -1541,6 +1814,12 @@ class SemanticMiddleware(Middleware):
         blocks while it reads, so asynchronous code calls it in a worker thread, as the
         asynchronous form of :meth:`commit` does.
 
+        Guideline (should, not must): fetch an object with this method when you work with it
+        through the middleware, that is when you change it, append to it, connect connectors to
+        it or commit it. For a question (a list, a filter, a check) query through ``ogm.db``
+        first, then fetch the one object you pick. A direct read is allowed: reads are not
+        constrained, writes are.
+
         Returns:
             The kapps_ogm ``Node`` of the instance.
 
@@ -1611,7 +1890,8 @@ class SemanticMiddleware(Middleware):
             The decorator creates IRIs for the Workflow and Capability instances.
             It builds the REST endpoint URL from the service address and function name.
             The wrapped function becomes a REST endpoint via the base class decorator.
-            Registration occurs during the on_start_up callback phase.
+            The startup registers it with everything else that the instance exposes, in one
+            step directly after the Service (``_register_exposures``).
             """
             before = len(self.app.routes)
             wrapped = base_decorator(func)
@@ -1627,29 +1907,16 @@ class SemanticMiddleware(Middleware):
             self._workflow_functions[capability_iri] = func
             self._workflow_iris[capability_iri] = workflow_iri
 
-            async def register_workflow_callback() -> None:
-                """Register the Workflow and Capability instances in the knowledge graph.
-
-                This callback runs during startup after the Service registration completes.
-                It creates the Workflow, Capability, and their class associations in the graph.
-                The endpoint URL links the Workflow to its REST handler.
-                """
-                await anyio.to_thread.run_sync(
-                    functools.partial(
-                        register_workflow,
-                        self.ogm,
-                        resource_iri=own.resource,
-                        service_iri=own.service,
-                        workflow_iri=workflow_iri,
-                        workflow_class=workflow_class_iri,
-                        capability_iri=capability_iri,
-                        capability_class=capability_class_iri,
-                        endpoint=endpoint,
-                        named_graph=self.named_graph,
-                    )
+            self._exposures.append(
+                Exposure(
+                    capability_iri,
+                    capability_class_iri,
+                    WORKFLOW,
+                    workflow_iri,
+                    workflow_class_iri,
+                    endpoint,
                 )
-
-            self.add_callback("on_start_up", register_workflow_callback)
+            )
             return wrapped
 
         return decorator
@@ -1694,7 +1961,8 @@ class SemanticMiddleware(Middleware):
             The decorator creates IRIs for the StateProperty and Capability instances.
             It builds a GET endpoint at /state/{name} that invokes the decorated getter.
             The endpoint returns the current value without writing to the knowledge graph.
-            Registration of the endpoint metadata occurs during the on_start_up callback.
+            The startup registers the endpoint metadata with everything else that the instance
+            exposes, in one step directly after the Service (``_register_exposures``).
             """
             state_name = name or func.__name__
             state_property_iri = mint_state_property_iri(own.service, state_name)
@@ -1721,29 +1989,16 @@ class SemanticMiddleware(Middleware):
             # The route says what the getter does, not what this handler does.
             _describe_routes(_routes_since(self.app, before), func)
 
-            async def register_state_property_callback() -> None:
-                """Register the StateProperty and Capability instances in the knowledge graph.
-
-                This callback runs during startup after the Service registration completes.
-                It creates the StateProperty, Capability, and their class associations in the graph.
-                The endpoint URL links the StateProperty to its REST handler.
-                """
-                await anyio.to_thread.run_sync(
-                    functools.partial(
-                        register_state_property,
-                        self.ogm,
-                        resource_iri=own.resource,
-                        service_iri=own.service,
-                        state_property_iri=state_property_iri,
-                        state_property_class=state_property_class_iri,
-                        capability_iri=capability_iri,
-                        capability_class=capability_class_iri,
-                        endpoint=endpoint,
-                        named_graph=self.named_graph,
-                    )
+            self._exposures.append(
+                Exposure(
+                    capability_iri,
+                    capability_class_iri,
+                    STATE_PROPERTY,
+                    state_property_iri,
+                    state_property_class_iri,
+                    endpoint,
                 )
-
-            self.add_callback("on_start_up", register_state_property_callback)
+            )
             return func
 
         return decorator
@@ -2125,6 +2380,7 @@ class SemanticMiddleware(Middleware):
             with mw.issue_operation(capability_class=cap, operation_class=op_cls) as op:
                 op.data[str(EX.hasPart)] = [{"id": str(part)}]  # its domain fields, if any
                 op.update(part, {str(EX.hasOperation): [op.iri]})  # an existing instance
+                op.append(other_part, str(EX.hasOperation), op.iri)  # one more value
             if await op.claimed(timeout=30):
                 status = await op.ended()  # "done" or "failed"
 
@@ -2140,14 +2396,16 @@ class SemanticMiddleware(Middleware):
         - **The block.** It sets the Operation's domain properties in ``op.data``, as
           ``{property IRI: [values]}``, and may read ``op.iri``. With
           ``op.update(instance_iri, data)`` it changes an existing instance in the Operation's
-          commit, such as a back-link to the Operation (see :meth:`IssuedOperation.update`). An
+          commit, such as a back-link to the Operation (see :meth:`IssuedOperation.update`).
+          ``update`` replaces the values of a property; ``op.append(instance_iri, property_iri,
+          value)`` adds one, without reading the others (see :meth:`IssuedOperation.append`). An
           error in the block writes nothing.
         - **Create.** At the end of the block, one :meth:`create` of the Operation writes it,
           under the operation scope. It writes the type, the ``cfc:implementsCapability`` link
           to the Capability that discovery found, the status ``queued`` and ``op.data``. It also
           writes ``svc:issuedBy``, the issuer: this middleware's Resource, ``op.issuer``. The
-          same commit holds the updates of ``op.update()``, staged after the creations nested in
-          the block. The store admits all of it or none of it. A refusal is raised, and nobody is
+          same commit holds the updates of ``op.update()`` and the appends of ``op.append()``,
+          staged in the order of the calls, after the creations nested in the block. The store admits all of it or none of it. A refusal is raised, and nobody is
           notified. An ``operation_iri`` that the store already holds is refused with
           ``PreconditionFailedError``, and that Operation is not touched. If ``op.data`` sets
           ``svc:issuedBy``, ``ValueError`` is raised before anything is written.
@@ -2166,7 +2424,7 @@ class SemanticMiddleware(Middleware):
         The Operation commits on its own, also inside the block of another :meth:`commit` or
         :meth:`create`, because the receiver reads it after the notification. A :meth:`create`
         nested in this block joins the Operation's commit, and so do the updates of
-        ``op.update()``: they never join the outer commit.
+        ``op.update()`` and the appends of ``op.append()``: they never join the outer commit.
 
         This is the in-process caller face — not REST-exposed.
         """
@@ -2204,10 +2462,14 @@ class SemanticMiddleware(Middleware):
             created.update({str(SVC.hasOperationStatus): [OperationStatus.QUEUED]})
             created.update(issued.data)
             created.update({str(SVC.issuedBy): [{"id": str(own.resource)}]})
-            # Staged last, after the creations nested in the block: an update of an instance
-            # created there folds into its Create, and the update's value wins.
-            for change in issued._updates:
-                created._stage(change)
+            # Staged last, after the creations nested in the block, in the order of the calls: an
+            # update of an instance created there folds into its Create, and the update's value
+            # wins; an append to one adds its value there.
+            for change in issued._changes:
+                if isinstance(change, Append):
+                    created._stage_append(change)
+                else:
+                    created._stage(change)
 
         # The Operation is in the graph: its handle can wait, and only now is the receiver
         # notified, through the delivery of notify().
@@ -2586,6 +2848,16 @@ class SemanticMiddleware(Middleware):
         # Failing construction is the honest outcome. A warning here would produce exactly
         # the silent half-alive resource the binding design is written to avoid.
         resource_iri = self._own_iris("connector wiring is only valid in resource mode").resource
+        # Provisioning is the other branch of recognition's decision: where a
+        # node lacks its metadata, the declaration supplies it, written before recognition reads
+        # the graph. A monitor writes nothing, but still recognizes with the declared interfaces,
+        # so its projection hides what a declared interface makes southbound. A declaration that
+        # the middleware cannot honour fails here, for a monitor too, before anything is written.
+        check_provisions(
+            self.ogm, self.provisions, resource_iri=resource_iri, class_scope=self.class_scope
+        )
+        if self.autoregister_connectors and self.provisions:
+            provision(self.ogm, self.provisions, named_graph=self.named_graph)
         self._wiring = plan_wiring(
             ogm=self.ogm,
             resource_iri=resource_iri,
@@ -2594,6 +2866,7 @@ class SemanticMiddleware(Middleware):
             sync_direction=self.connector_sync_direction,
             autoregister=self.autoregister_connectors,
             ensure_transport=self.ensure_transport,
+            interfaces=declared_interfaces(self.provisions),
         )
 
         for binding, registration in self._wiring.registrations:

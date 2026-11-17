@@ -20,7 +20,7 @@ assume their terms and do not re-define them.
 |---|---|
 | [`CONTEXT-MAP.md`](CONTEXT-MAP.md) | The five contexts, how they depend on each other, and the three-module ontology layering |
 | [`src/kapps_semantic_middleware/CONTEXT.md`](src/kapps_semantic_middleware/CONTEXT.md) | The core vocabulary: Service, Workflow, Parameter, ClassScope, Projection, Binding descriptor, Operation, Mode |
-| [`src/kapps_semantic_middleware/shacl_interop/CONTEXT.md`](src/kapps_semantic_middleware/shacl_interop/CONTEXT.md) | Precondition and outcome shapes derived from a function's type hints |
+| [`src/kapps_semantic_middleware/shacl_interop/CONTEXT.md`](src/kapps_semantic_middleware/shacl_interop/CONTEXT.md) | An authoring aid that drafts a Workflow's precondition and outcome shapes from a function's type hints; the shapes themselves belong to the ontology |
 | [`examples/CONTEXT.md`](examples/CONTEXT.md) | The self-contained scenario notebooks |
 | [`demo/transferunits/CONTEXT.md`](demo/transferunits/CONTEXT.md) | The runnable multi-process factory demonstration |
 
@@ -30,7 +30,7 @@ without forward references.
 | Page | Covers |
 |---|---|
 | [`docs/mechanics/01-instantiation-and-lifecycle.md`](docs/mechanics/01-instantiation-and-lifecycle.md) | Constructing an instance, choosing a mode, what appears in the graph at startup, heartbeat, deregistration |
-| [`docs/mechanics/02-workflow-registration.md`](docs/mechanics/02-workflow-registration.md) | Declaring what a Service exposes, the ontology prerequisites, signature-derived shapes, address vs. endpoint |
+| [`docs/mechanics/02-workflow-registration.md`](docs/mechanics/02-workflow-registration.md) | Declaring what a Service exposes, the ontology prerequisites, signatures and shapes, address vs. endpoint |
 | [`docs/mechanics/03-state-and-parameters.md`](docs/mechanics/03-state-and-parameters.md) | Modelling resource state as Parameters, committed value vs. locator, where a parameter's shape comes from |
 | [`docs/mechanics/04-connector-binding.md`](docs/mechanics/04-connector-binding.md) | The recognition chain, adding a protocol the library does not ship, connector wiring, transports |
 | [`docs/mechanics/05-operation-coordination.md`](docs/mechanics/05-operation-coordination.md) | Dispatch, the issuer and the Issued Operation, the event trigger, notifications and the intake, pull-and-run, the status lifecycle, handover, recovery |
@@ -78,7 +78,7 @@ its three dependencies, by that dependency's own path. Use this table rather tha
 | `PredefinedScope`, `ScopeChanges` (the hook through which a domain module brings its rules to `mw.create()`, and what its `changes()` returns) | `kapps_semantic_middleware.commit` |
 | `SVC`, `OperationStatus` (the service vocabulary, and an Operation's status values) | `kapps_semantic_middleware.vocabulary` |
 | `MES` (the handover abilities, such as `MES.Pass`, that `possession.handover()` takes as its `mode`) | `kapps_semantic_middleware.vocabulary` |
-| `HandoverPreconditionError`, `PossessionSwitchConflict`, `OperationQueueEmpty`, `OperationResolutionError`, `OntologyGroundTruthError`, `NotificationUndelivered`; the types that tell the action: `OperationReceiverUnavailableError` and `NotificationReceiverUnavailableError` (Retry), `DeploymentError` with `DeploymentValueError` and `DeploymentRuntimeError`, `CapabilityNotRealizedError` and `NotificationReceiverAmbiguousError` (Repair) | `kapps_semantic_middleware.errors` |
+| `HandoverPreconditionError`, `PossessionSwitchConflict`, `OperationQueueEmpty`, `OperationResolutionError`, `OntologyGroundTruthError`, `NotificationUndelivered`; the types that tell the action: `OperationReceiverUnavailableError` and `NotificationReceiverUnavailableError` (Retry), `DeploymentError` with `DeploymentValueError` and `DeploymentRuntimeError`, `CapabilityNotRealizedError`, `NotificationReceiverAmbiguousError` and `CapabilityAlreadyRealizedError` (Repair) | `kapps_semantic_middleware.errors` |
 | `ShaclValidationError` (the store refused a write by SHACL validation; `.report` is its validation report, verbatim), `TripleStoreResponseError` (any other error answer of the store; `ShaclValidationError` subclasses it), `PreconditionFailedError` (the store found the precondition of a write false and wrote nothing: a `Create` of an instance that it holds, or a value that a change replaces and that another write changed after the read), `TripleStoreInterfaceError` (any error of the interface) | `kapps_triplestore_interface.exceptions` |
 | `AnonymousNodeFetchError`, `AmbiguousNodeAlignmentError`, `UnresolvableNodeAddressError` (each a `ValueError`) | `kapps_ogm.utils.errors` |
 | `RequestException` (the store cannot be reached; `requests` is the store's HTTP client, reached through `kapps_triplestore_interface`, and not one of the three dependencies) | `requests.exceptions` |
@@ -119,10 +119,12 @@ part listed with `cfc:` no longer has any.
 |---|---|---|
 | `kapps_semantic_middleware` | generic | |
 | `kapps_semantic_middleware._deprecation` | generic | |
+| `kapps_semantic_middleware._reachability` | generic | |
 | `kapps_semantic_middleware.activity` | generic | |
 | `kapps_semantic_middleware.commit` | generic | |
 | `kapps_semantic_middleware.connectors` | generic | |
 | `kapps_semantic_middleware.connectors.mqtt_binding` | generic | |
+| `kapps_semantic_middleware.connectors.provisioning` | generic | |
 | `kapps_semantic_middleware.connectors.rest_binding` | generic | |
 | `kapps_semantic_middleware.connectors.semantic` | generic | |
 | `kapps_semantic_middleware.connectors.wiring` | generic | |
@@ -132,17 +134,19 @@ part listed with `cfc:` no longer has any.
 | `kapps_semantic_middleware.dashboard_logs` | generic | |
 | `kapps_semantic_middleware.errors` | generic | |
 | `kapps_semantic_middleware.examples_cli` | generic | |
+| `kapps_semantic_middleware.http_errors` | generic | |
 | `kapps_semantic_middleware.modes` | generic | |
 | `kapps_semantic_middleware.observation` | generic | |
 | `kapps_semantic_middleware.projection` | generic | |
 | `kapps_semantic_middleware.rest_router` | generic | |
+| `kapps_semantic_middleware.ruleset` | generic | |
 | `kapps_semantic_middleware.shacl_interop` | generic | |
 | `kapps_semantic_middleware.shacl_interop.shape_from_typehints` | generic | |
 | `kapps_semantic_middleware.validation_report` | generic | |
 | `kapps_semantic_middleware.possession` | cfc-specific | Possession, an extension built on the generic core: one possession state per Resource, the `handover()` with its preconditions and its change of possession, the `workpiece` scope, and the possession helpers that a seed uses |
 | `kapps_semantic_middleware.operation` | cfc-specific | The Operation: its link to the Capability that it implements, the `operation` scope, and the scope and the Capabilities of a received Operation |
 | `kapps_semantic_middleware.middleware` | generic, with cfc-specific parts | `SemanticMiddleware.handover`, `SemanticMiddleware.issue_operation`, `SemanticMiddleware._read_received`: the deprecated alias of the possession extension's handover, which calls it, the Operation of a request, created under the operation scope, and the intake's read of a received Operation with the Capabilities it implements |
-| `kapps_semantic_middleware.registration` | generic, with cfc-specific parts | `register_workflow`, `register_state_property`, `_register_capability`, `create_operation`, `_resolve_claim`, `find_resource_operations`, `find_stranded_operations`: the Capability links of registration and dispatch (the resource's link is one OGM append, in the commit that writes the Capability) |
+| `kapps_semantic_middleware.registration` | generic, with cfc-specific parts | `_assert_classes`, `_write_exposure`, `create_operation`, `_resolve_claim`, `find_resource_operations`, `find_stranded_operations`, `find_unserved_resources`: the Capability links of registration and dispatch (the resource's link is one OGM append, in the commit that writes the Capability with its Workflow or StateProperty) |
 | `kapps_semantic_middleware.seeding` | generic, with cfc-specific parts | `CORE_GRAPH`: the graph into which the shared ontologies load Core |
 | `kapps_semantic_middleware.vocabulary` | generic, with cfc-specific parts | `CORE_NS`, `CORE_ONTOLOGY`, `CFC`: the one home of every IRI holds Core's terms too |
 
@@ -239,10 +243,22 @@ all pre-exist. Startup fails immediately, naming the missing class.
 
 **All knowledge-graph writes go through the OGM.** Raw SPARQL `UPDATE` or direct
 `kapps_triplestore_interface` mutation calls bypass the validated write path: they skip the OGM's checks and its atomicity, so a property
-replacement is not one update. The store still validates every update against its shapes. Reads may use the access module directly; only writes are constrained. The resource's
+replacement is not one update. The store still validates every update against its shapes. The resource's
 link to each Capability it provides is one `Append` in an OGM commit, which keeps the other links,
 so instances that register on one resource at the same moment keep every link. Only seeding, which
 provisions a dataset before any service runs, writes to the store directly.
+
+For code that uses the middleware:
+
+**Guideline for reads (should, not must).** A participant should fetch a data object with
+`mw.fetch()` when it works with that object through the middleware: when it changes it, appends
+to it, connects connectors to it, or commits it. A participant should ask the graph a question
+(a list, a filter, a check, a label) with a query through the access module (`ogm.db`), or with
+the triple store interface's functions that wrap one. The usual flow is a query for the
+candidates, then a fetch of the one it picks. Where this does not fit a case, a direct read is
+allowed: reads are not constrained. Writes are: every write goes through the OGM, in
+`mw.create()` or `mw.commit()`. KSM's own registration, discovery and queue code asks its questions of the graph through
+the access module, which fits the guideline.
 
 **`@mw.workflow` and `@mw.state` are resource-mode only.** Each raises `RuntimeError` when called
 on an instance in any other mode, and `ValueError` when a required class IRI is missing.

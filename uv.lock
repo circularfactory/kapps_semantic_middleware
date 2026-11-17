@@ -1597,21 +1597,21 @@ wheels = [
 
 [[package]]
 name = "kapps-ogm"
-version = "0.4.0"
+version = "0.4.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "kapps-triplestore-interface" },
     { name = "pydantic" },
     { name = "rdflib" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/c0/97/947c52a60518217ea725ae318c0b272a25cc9d0b4736947de3ae7f67ead1/kapps_ogm-0.4.0.tar.gz", hash = "sha256:74b1ac5f32893b27b6e21430139d32e462b1bf3359fc6c68f38453fca1e105b1", size = 233230, upload-time = "2026-10-30T04:39:14.269Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/ef/48/35196bac18a0190fbac22cb4304a91652bc4a8693955834e82cf993a18ac/kapps_ogm-0.4.1.tar.gz", hash = "sha256:5ea0a147b32fd0e959ca3b955cff053ee1cecbf6d8e89bc81f032992cd4b25e4", size = 310954, upload-time = "2026-11-17T10:33:52.087Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/5f/28/ad938c2c121101f67c0f7ac19fea29c3ab1689b6e6732e62a6d56c1cc314/kapps_ogm-0.4.0-py3-none-any.whl", hash = "sha256:26d0d1115e6a0bd1469472f025070fe0e96e44d9d2098ae28d31d862dba749d8", size = 75748, upload-time = "2026-10-30T04:39:12.975Z" },
+    { url = "https://files.pythonhosted.org/packages/bd/b2/7ba2edf17d098a4a3981f3475ad2feeda5e0f6b503445cebff38c835246e/kapps_ogm-0.4.1-py3-none-any.whl", hash = "sha256:6e1b0085c1f5190442f61794cd2ad9537ceb9df6cc1a85904158eaf8a197499b", size = 106199, upload-time = "2026-11-17T10:33:50.577Z" },
 ]
 
 [[package]]
 name = "kapps-semantic-middleware"
-version = "0.3.0"
+version = "0.4.0"
 source = { editable = "." }
 dependencies = [
     { name = "aiomqtt" },
@@ -1657,8 +1657,8 @@ requires-dist = [
     { name = "httpx", specifier = ">=0.27.0" },
     { name = "jupyter", marker = "extra == 'notebooks'", specifier = ">=1.1.1" },
     { name = "jupytext", marker = "extra == 'notebooks'", specifier = ">=1.16.0" },
-    { name = "kapps-ogm", specifier = "~=0.4.0" },
-    { name = "kapps-triplestore-interface", specifier = "~=2.3.0" },
+    { name = "kapps-ogm", specifier = "~=0.4.1" },
+    { name = "kapps-triplestore-interface", specifier = "~=2.4.0" },
     { name = "nbconvert", marker = "extra == 'notebooks'", specifier = ">=7.16.0" },
     { name = "rdflib", marker = "extra == 'examples'", specifier = ">=7.1.3" },
     { name = "transitional-sync-middleware", specifier = "~=0.1.0" },
@@ -1683,7 +1683,7 @@ dev = [
 
 [[package]]
 name = "kapps-triplestore-interface"
-version = "2.3.0"
+version = "2.4.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "pydantic" },
@@ -1693,9 +1693,9 @@ dependencies = [
     { name = "requests" },
     { name = "urllib3" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/33/6c/2f43b354316000ebae9258a82be3e50c93d79a4a470846416527c5caad4c/kapps_triplestore_interface-2.3.0.tar.gz", hash = "sha256:2bda39f9e55a1c0605fc70be366b2f070e261ef0ae0ba63c35912cd6bd69682b", size = 186418, upload-time = "2026-10-30T04:24:56.889Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/ee/24/f912fff4478f116c9645061bb907769bf791f94fee48b84ea3cf6e21dba8/kapps_triplestore_interface-2.4.0.tar.gz", hash = "sha256:d030afb605fc282cc5647c5906302e316851fdf5fdba979903b5e2a90d4824ad", size = 240938, upload-time = "2026-11-17T08:43:43.32Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/e6/c2/55f9991e98cab70cd536bcb5fd936fe774efa2566685575125a356ddad8d/kapps_triplestore_interface-2.3.0-py3-none-any.whl", hash = "sha256:b0e13c1d2f852901a313819fdb1f6241e3e63628b2a69c602c2a2aa2f50b52b2", size = 66579, upload-time = "2026-10-30T04:24:55.588Z" },
+    { url = "https://files.pythonhosted.org/packages/cb/17/f14d019777869c71e77051ed72215fd4bc880a9613510b075169a27e2c70/kapps_triplestore_interface-2.4.0-py3-none-any.whl", hash = "sha256:8eedc5041278d13fa931272de43ff31354c4ac9ffa1ad146f812631b8d80eaab", size = 96486, upload-time = "2026-11-17T08:43:41.837Z" },
 ]
 
 [[package]]

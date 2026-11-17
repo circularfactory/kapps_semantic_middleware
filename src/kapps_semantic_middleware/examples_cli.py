@@ -55,6 +55,7 @@ The scenarios need a reachable triple store. If you do not already have one:
 ```bash
 cd docker
 docker compose up -d
+cd ..
 ```
 
 That serves GraphDB on http://localhost:7200 and creates the ``kapps-demo``
@@ -96,9 +97,20 @@ disposable.
 
 Two ways, same result:
 
-1. As a script: ``python scenario1_hello_world.py`` (or ``scenario2_door.py``).
+1. As a script, with the interpreter of the environment you installed into (no activation
+   needed, so it also works where script execution is disabled):
+
+   ```bash
+   ../.venv/bin/python scenario1_hello_world.py           # Linux, macOS
+   ..\\.venv\\Scripts\\python.exe scenario1_hello_world.py   # Windows (PowerShell)
+   ```
+
+   Use ``scenario2_door.py`` for scenario 2. These paths assume the environment is
+   ``.venv`` one level above this folder; if it is elsewhere, use the interpreter that the
+   ``Next steps`` printed by ``kapps-examples`` name, which is always the one that ran it.
 2. In Jupyter: open ``scenario1_hello_world.ipynb`` in Jupyter or JupyterLab.
-   Jupyter comes from the notebooks extra: ``pip install "kapps-semantic-middleware[notebooks]"``.
+   Jupyter comes from the notebooks extra: ``../.venv/bin/python -m pip install "kapps-semantic-middleware[notebooks]"`` (Windows:
+   ``..\\.venv\\Scripts\\python.exe -m pip install ...``).
 
 ## Run the factory
 
@@ -106,11 +118,41 @@ The TransferUnit factory is not a file in this folder. It runs as an installed
 command:
 
 ```bash
-kapps-transferunit-factory --units 2 --force
+../.venv/bin/kapps-transferunit-factory --units 2 --force
+```
+
+On Windows:
+
+```powershell
+..\\.venv\\Scripts\\kapps-transferunit-factory.exe --units 2 --force
 ```
 
 It serves a live status page on http://127.0.0.1:8080/.
 """
+
+
+def _quote(path: str) -> str:
+    """Quote a path that holds a space. A quoted ``.exe`` path gets PowerShell's ``&``, which a
+    quoted command needs there."""
+    if " " not in path:
+        return path
+    return f'& "{path}"' if path.lower().endswith(".exe") else f'"{path}"'
+
+
+def _interpreter() -> str:
+    """The interpreter that runs this command, quoted when its path holds a space.
+
+    It is the one that holds the package, so a hint that names it cannot send the reader to
+    another Python (on Windows the first ``python`` on PATH is often another one).
+    """
+    return _quote(sys.executable or "python")
+
+
+def _factory_command() -> str:
+    """The factory's console script in the directory of the running interpreter."""
+    exe = Path(sys.executable or "python")
+    name = "kapps-transferunit-factory" + (".exe" if exe.suffix.lower() == ".exe" else "")
+    return _quote(str(exe.with_name(name)))
 
 
 def _locate_examples_root() -> Traversable:
@@ -204,10 +246,10 @@ def main(argv: list[str] | None = None) -> int:
     print(f"  cd {dest}")
     print("  # point TRIPLESTORE_* at a reachable triple store -- see the repo README,")
     print(_START_THE_LOCAL_STORE)
-    print("  python scenario1_hello_world.py        # or scenario2_door.py")
+    print(f"  {_interpreter()} scenario1_hello_world.py        # or scenario2_door.py")
     print("  # or open scenario1_hello_world.ipynb in Jupyter (needs the [notebooks] extra)")
     print("  # the factory is a separate command, not a file here:")
-    print("  kapps-transferunit-factory --units 2 --force   # serves http://127.0.0.1:8080/")
+    print(f"  {_factory_command()} --units 2 --force   # serves http://127.0.0.1:8080/")
 
     return 0
 

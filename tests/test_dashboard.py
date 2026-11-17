@@ -830,8 +830,9 @@ def test_a_box_form_posts_a_json_body_to_its_own_workflow() -> None:
 
     # What the extension turns the form into: a JSON body, accepted by the route.
     assert client.post(target, json={"count": 3}).json() == {"spawned": 3}
-    # What the form would send without it, refused by the same route.
-    assert client.post(target, data={"count": 3}).status_code == 422
+    # What the form would send without it, refused by the same route. The dashboard installs
+    # the middleware's validation handler on the app, so the refusal is a 400.
+    assert client.post(target, data={"count": 3}).status_code == 400
 
 
 def test_only_the_selected_tab_is_shown() -> None:

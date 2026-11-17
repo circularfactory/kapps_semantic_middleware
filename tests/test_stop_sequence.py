@@ -2,8 +2,8 @@
 
 The framework runs the stop steps one after the other, with no guard around a step. So a step that
 raises skips every later one, and the process still exits. The stop therefore stops the heartbeat
-first, then deregisters, then stops the issuers' notifications, and none of the three raises. The
-deregistration is tried again on a store error for a short window. A store call that hangs is
+first, then deregisters, then stops the issuers' notifications, then closes the store client, and
+none of the four raises. The deregistration is tried again on a store error for a short window. A store call that hangs is
 abandoned at the end of its window, in a daemon thread that does not hold the process's exit.
 
 The tests run the registered stop steps in order, the way the framework runs them, over a stand-in
@@ -222,6 +222,7 @@ def test_the_heartbeat_stops_before_the_deregistration_and_the_notifications_aft
         "_stop_heartbeat",
         "_deregister_service",
         "_stop_notifications",
+        "_close_store_client",
     ]
     # The steps ran in that order, not only were registered in it.
     assert store.heartbeat_done_at_first_attempt is True
@@ -278,7 +279,8 @@ def test_a_deregistration_attempt_that_hangs_is_abandoned_at_the_end_of_the_wind
 
     assert store.address
     assert len(_errors_naming(caplog, mw.service_iri)) == 1
-    assert run.steps[-1] == "_stop_notifications" and run.notifications_stopped
+    assert run.steps[-2:] == ["_stop_notifications", "_close_store_client"]
+    assert run.notifications_stopped
     assert run.took["_deregister_service"] < WINDOW + PAUSE + SLACK
 
 
@@ -346,6 +348,7 @@ def test_a_heartbeat_loop_that_ended_with_an_error_does_not_keep_the_stop_from_d
         "_stop_heartbeat",
         "_deregister_service",
         "_stop_notifications",
+        "_close_store_client",
     ]
     assert not store.address and not store.endpoint
     assert run.notifications_stopped

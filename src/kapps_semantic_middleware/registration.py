@@ -8,13 +8,14 @@ this.
 Only one direction of each inverse relation receives materialization. The direction belongs to
 the newly-created instance (e.g. a workflow ``svc:isWorkflowOf``, a capability
 ``svc:realizedByWorkflow``). The container-side inverses (``svc:hasWorkflow`` etc.) are
-OWL-inferable. They receive no write. Each registration is a clean single-instance ``OGM.create``
-rather than a read-modify-write append onto a growing multi-valued property. Queries in this
+OWL-inferable. They receive no write. Each registered individual is written as a whole, a
+``Create`` or an ``Update`` of the properties it owns, rather than a read-modify-write append onto
+a growing multi-valued property of its container. Queries in this
 module therefore use the materialized (instance-owned) direction. The one exception is the
 resource's ``cfc:hasCapability``, which Core gives the resource: it is written through
-``OGM.commit`` as an ``Append``, which adds the link and removes none, in the same commit as the
-Capability it links, so no commit holds a Capability without its resource (see
-``_register_capability``).
+``OGM.commit`` as an ``Append``, which adds the link and removes none. A Workflow or StateProperty
+with its endpoint, its Capability, and the resource's link arrive in one commit, so no reader sees
+one of them without the others (see ``_write_exposure``).
 """
 
 from __future__ import annotations
@@ -42,6 +43,7 @@ from kapps_semantic_middleware.errors import (  # noqa: F401 - their earlier hom
     OperationResolutionError,
 )
 from kapps_semantic_middleware.errors import (
+    CapabilityAlreadyRealizedError,
     CapabilityNotRealizedError,
     DeploymentValueError,
     OperationReceiverUnavailableError,
@@ -240,7 +242,7 @@ def _create_or_adopt(
     triples and ``rdf:type``. So a returning instance finds its individuals in place, and the OGM
     refuses to create them again. Such an individual is adopted: ``data`` is set on it through
     ``OGM.commit``. An unchanged individual gives an empty diff, and nothing is written. A
-    structural link that changed is replaced.
+    structural link that changed is set to the new value.
 
     Only for the deterministic registration IRIs. An Operation IRI is fresh for each dispatch,
     so an Operation that already exists is an error, and ``_create`` raises it.
@@ -303,53 +305,6 @@ def register_service(
     )
 
 
-def _register_capability(
-    ogm: "OGM",
-    *,
-    resource_iri: IRI,
-    capability_iri: IRI,
-    capability_class: IRI,
-    data: dict,
-    named_graph: Optional[IRI] = None,
-) -> None:
-    """Write a Capability and the link from the resource that provides it, in one OGM commit.
-
-    A Capability does not exist without its resource, so no commit holds one without the
-    resource's ``cfc:hasCapability`` link to it. The commit carries a ``Create`` of the Capability
-    with ``data``, its own link to its Workflow or StateProperty, and one ``Append`` of the
-    resource's link. When the store refuses the create because it holds the Capability already,
-    left by an earlier run, the Capability is adopted: a second commit carries an ``Update`` with
-    ``data`` and the same ``Append``. Each commit is admitted or refused as a whole.
-
-    The link is a multi-valued property of the resource, declared in Core (domain
-    ``cfc:Resource``, range ``cfc:Capability``). The ``Append`` adds it and removes none, so a
-    sibling instance's concurrent registration on the same resource keeps its link. The OGM reads
-    the resource's class to check the property, and none of the property's stored values: the
-    property has no maximum. A link the resource already has changes nothing. The resource must be
-    in the store already. ``named_graph`` is the graph the commit writes to.
-
-    Raises:
-        OGMNotFoundError: If the store does not hold the resource (from ``kapps_ogm.utils.errors``).
-            Nothing is written.
-        TripleStoreResponseError: If the store refuses the commit, a SHACL refusal included. It
-            propagates unchanged, and nothing of the commit is written.
-    """
-    link = Append(instance_iri=resource_iri, property_iri=CFC.hasCapability, value=capability_iri)
-    create = Create(
-        class_iri=capability_class,
-        data=data,
-        instance_iri=capability_iri,
-        class_scope=_scope_naming(None, data),
-    )
-    try:
-        ogm.commit(changes=[create, link], named_graph=named_graph)
-    except PreconditionFailedError:
-        ogm.commit(
-            changes=[Update(instance_iri=capability_iri, data=data), link],
-            named_graph=named_graph,
-        )
-
-
 def register_workflow(
     ogm: "OGM",
     *,
@@ -362,32 +317,25 @@ def register_workflow(
     endpoint: str,
     named_graph: Optional[IRI] = None,
 ) -> None:
-    """Register a Workflow instance, its Capability instance, and their links.
+    """Register a Workflow instance, its Capability instance, and their links, in one commit.
 
     The Workflow owns ``svc:isWorkflowOf`` (-> service) and ``svc:hasEndpoint``. The Capability
     owns ``svc:realizedByWorkflow`` (-> workflow). The resource links to the Capability it
-    *provides* (``cfc:hasCapability``, Resource -> Capability). The resource *provides* the
-    Capability. Raises OntologyGroundTruthError if the classes are not the required subclasses.
-    """
-    assert_class_registered(ogm, workflow_class, SVC.Workflow, named_graph)
-    assert_class_registered(ogm, capability_class, CFC.Capability, named_graph)
+    *provides* (``cfc:hasCapability``, Resource -> Capability). The Workflow with its link and its
+    endpoint, the Capability with its link, and the resource's link arrive in one ``OGM.commit``
+    (:func:`_write_exposure`), so no reader sees the Workflow without its Capability. Raises
+    OntologyGroundTruthError if the classes are not the required subclasses; nothing is written
+    then.
 
-    _create_or_adopt(
-        ogm, workflow_class, workflow_iri, {str(SVC.isWorkflowOf): [_ref(service_iri)]}, named_graph
+    This writer reads no holder of the Capability: when the Capability is there, its link is set
+    to this Workflow, whichever instance it led to. A starting instance registers through
+    :func:`register_exposures` instead, which refuses a Capability that another live instance
+    realizes.
+    """
+    item = Exposure(
+        capability_iri, capability_class, WORKFLOW, workflow_iri, workflow_class, endpoint
     )
-    _set(ogm, workflow_iri, {str(SVC.hasEndpoint): [str(endpoint)]}, named_graph)
-    # The resource *provides* the Capability (cfc:hasCapability, Resource -> Capability), and the
-    # link goes into the Capability's own commit. It lets a restarting resource (or the watchdog)
-    # find its own Operations by ontology traversal rather than by match of IRI names, and it
-    # persists across a restart.
-    _register_capability(
-        ogm,
-        resource_iri=resource_iri,
-        capability_iri=capability_iri,
-        capability_class=capability_class,
-        data={str(SVC.realizedByWorkflow): [_ref(workflow_iri)]},
-        named_graph=named_graph,
-    )
+    _register_unchecked(ogm, resource_iri, service_iri, item, named_graph)
 
 
 def register_state_property(
@@ -402,34 +350,495 @@ def register_state_property(
     endpoint: str,
     named_graph: Optional[IRI] = None,
 ) -> None:
-    """Register a StateProperty instance, its Capability instance, and their links.
+    """Register a StateProperty instance, its Capability instance, and their links, in one commit.
 
     The StateProperty owns ``svc:isStatePropertyOf`` (-> service) and ``svc:hasEndpoint``. The
     Capability owns ``svc:providedByStateProperty`` (-> state property). The resource links to
-    the Capability it *provides* (``cfc:hasCapability``). Only the stable endpoint receives
-    write. The live value receives no persist.
-    """
-    assert_class_registered(ogm, state_property_class, SVC.StateProperty, named_graph)
-    assert_class_registered(ogm, capability_class, CFC.Capability, named_graph)
+    the Capability it *provides* (``cfc:hasCapability``). All of them arrive in one
+    ``OGM.commit``, as in :func:`register_workflow`. Only the stable endpoint receives write. The
+    live value receives no persist.
 
-    _create_or_adopt(
-        ogm,
-        state_property_class,
+    Like :func:`register_workflow`, this writer reads no holder of the Capability; a starting
+    instance registers through :func:`register_exposures`.
+    """
+    item = Exposure(
+        capability_iri,
+        capability_class,
+        STATE_PROPERTY,
         state_property_iri,
-        {str(SVC.isStatePropertyOf): [_ref(service_iri)]},
-        named_graph,
+        state_property_class,
+        endpoint,
     )
-    _set(ogm, state_property_iri, {str(SVC.hasEndpoint): [str(endpoint)]}, named_graph)
-    # The resource provides this Capability too (cfc:hasCapability), linked in the Capability's
-    # own commit. See register_workflow.
-    _register_capability(
-        ogm,
-        resource_iri=resource_iri,
-        capability_iri=capability_iri,
-        capability_class=capability_class,
-        data={str(SVC.providedByStateProperty): [_ref(state_property_iri)]},
-        named_graph=named_graph,
+    _register_unchecked(ogm, resource_iri, service_iri, item, named_graph)
+
+
+def _register_unchecked(
+    ogm: "OGM",
+    resource_iri: IRI,
+    service_iri: IRI,
+    item: "Exposure",
+    named_graph: Optional[IRI],
+) -> None:
+    """Write one exposure in one commit, with no read of the Capability's holder.
+
+    A ``PreconditionFailedError`` (an individual that another write created or changed after the
+    read) leads to one read again and one more commit; a second one propagates unchanged. Any
+    other refusal of the store propagates at once, and nothing of the commit is written.
+    """
+    _assert_classes(ogm, [item], named_graph)
+    iris = [item.iri, item.capability]
+    for attempt in (1, 2):
+        try:
+            _write_exposure(
+                ogm,
+                resource_iri=resource_iri,
+                service_iri=service_iri,
+                capability_iri=item.capability,
+                items=[item],
+                stored=_stored(ogm, iris, named_graph),
+                named_graph=named_graph,
+            )
+        except PreconditionFailedError:
+            if attempt == 2:
+                raise
+            continue
+        return
+
+
+# --------------------------------------------------------------------------- #
+# The startup's registration of what an instance exposes: one Capability, one live realizer.
+# --------------------------------------------------------------------------- #
+
+
+WORKFLOW = "workflow"
+STATE_PROPERTY = "state"
+
+
+class _Kind(NamedTuple):
+    """What a kind of exposure is in the service ontology."""
+
+    #: The class that its class must be or specialize.
+    base: IRI
+    #: Its own link to its Service.
+    owner: IRI
+    #: The Capability's link to it.
+    link: IRI
+
+
+_KINDS = {
+    WORKFLOW: _Kind(SVC.Workflow, SVC.isWorkflowOf, SVC.realizedByWorkflow),
+    STATE_PROPERTY: _Kind(SVC.StateProperty, SVC.isStatePropertyOf, SVC.providedByStateProperty),
+}
+
+
+class Exposure(NamedTuple):
+    """One Workflow or StateProperty that an instance exposes, and the Capability it realizes."""
+
+    #: The Capability's IRI (:func:`mint_capability_iri`).
+    capability: IRI
+    #: The Capability's class.
+    capability_class: IRI
+    #: :data:`WORKFLOW` or :data:`STATE_PROPERTY`.
+    kind: str
+    #: The IRI of the Workflow or the StateProperty.
+    iri: IRI
+    #: Its class.
+    class_iri: IRI
+    #: Its endpoint.
+    endpoint: str
+
+
+class _Holder(NamedTuple):
+    """A Service that a Capability leads to now, through a Workflow or a StateProperty."""
+
+    service: IRI
+    address: Optional[str]
+    #: Its last ``svc:hasLastHeartbeat``, as the store gives it, or None.
+    heartbeat: Optional[datetime]
+    live: bool
+    #: The Capability's links through which it leads to this Service.
+    links: frozenset[IRI]
+
+
+def _cutoff(now: datetime, max_age_seconds: float) -> str:
+    """The oldest heartbeat that is live at ``now``, as a SPARQL ``xsd:dateTime`` literal."""
+    return (
+        f'"{(now - timedelta(seconds=max_age_seconds)).isoformat()}"'
+        "^^<http://www.w3.org/2001/XMLSchema#dateTime>"
     )
+
+
+def _holders(
+    ogm: "OGM",
+    capability_iri: IRI,
+    staleness_threshold: float,
+    now: datetime,
+) -> list[_Holder]:
+    """The Services that ``capability_iri`` leads to now, each with its liveness, in one read.
+
+    A holder is the Service of a Workflow that realizes the Capability (``svc:realizedByWorkflow``)
+    or of a StateProperty that provides it (``svc:providedByStateProperty``). Live is the rule of
+    the watchdog's sweep and of the startup reconstruction: an ``svc:hasAddress`` and an
+    ``svc:hasLastHeartbeat`` no older than ``staleness_threshold`` before ``now``.
+    """
+    branches = "\n        UNION\n        ".join(
+        f"{{ <{capability_iri}> <{kind.link}> ?item . ?item <{kind.owner}> ?svc . "
+        f"BIND(<{kind.link}> AS ?link) }}"
+        for kind in _KINDS.values()
+    )
+    sparql = f"""
+    SELECT ?svc ?link ?addr ?hb ?live WHERE {{
+        {branches}
+        OPTIONAL {{ ?svc <{SVC.hasAddress}> ?addr . }}
+        OPTIONAL {{ ?svc <{SVC.hasLastHeartbeat}> ?hb . }}
+        BIND(BOUND(?addr) && BOUND(?hb) && ?hb >= {_cutoff(now, staleness_threshold)} AS ?live)
+    }}
+    """
+    found: dict[IRI, _Holder] = {}
+    for row in _bindings(ogm.db.query(sparql, convert_bindings=True)):
+        service = IRI(str(row["svc"]))
+        address = row.get("addr")
+        heartbeat = row.get("hb")
+        holder = _Holder(
+            service,
+            str(address) if address is not None else None,
+            heartbeat if isinstance(heartbeat, datetime) else None,
+            row.get("live") is True,
+            frozenset({IRI(str(row["link"]))}),
+        )
+        earlier = found.get(service)
+        if earlier is not None:
+            # Several rows of one Service (two links, or two heartbeats): a live row wins, and
+            # the links add up.
+            best = holder if holder.live and not earlier.live else earlier
+            holder = best._replace(links=earlier.links | holder.links)
+        found[service] = holder
+    return list(found.values())
+
+
+def _live_other(holders: Sequence[_Holder], own_service: IRI) -> Optional[_Holder]:
+    """The first live holder that is not ``own_service``, or None."""
+    return next((h for h in holders if h.live and h.service != own_service), None)
+
+
+def _refusal(
+    *,
+    resource_iri: IRI,
+    capability_iri: IRI,
+    holder: _Holder,
+    staleness_threshold: float,
+) -> CapabilityAlreadyRealizedError:
+    """The refusal: ``holder``, a live Service of another instance, realizes the Capability."""
+    heartbeat = holder.heartbeat
+    stale_from = (
+        heartbeat + timedelta(seconds=staleness_threshold) if heartbeat is not None else None
+    )
+
+    def shown(value: Optional[datetime]) -> str:
+        return value.isoformat() if value is not None else "unknown"
+
+    message = (
+        f"This instance does not start: the Capability {capability_iri} of the Resource "
+        f"{resource_iri} is already realized by the live instance at {holder.address} "
+        f"(Service {holder.service}), whose last heartbeat is {shown(heartbeat)}. One Capability "
+        "has at most one live realizer. This instance counts that registration as stale from "
+        f"{shown(stale_from)} (its last heartbeat plus this instance's staleness threshold of "
+        f"{staleness_threshold:g} s). Either stop one of the two instances; or, if the instance "
+        f"at {holder.address} has crashed, start this one again after {shown(stale_from)}, and "
+        "it takes the Capability over."
+    )
+    return CapabilityAlreadyRealizedError(
+        message,
+        resource=str(resource_iri),
+        capability=str(capability_iri),
+        holder=str(holder.service),
+        holder_address=str(holder.address),
+        holder_heartbeat=heartbeat,
+        stale_from=stale_from,
+    )
+
+
+def _grouped(exposures: Sequence[Exposure]) -> list[tuple[IRI, list[Exposure]]]:
+    """``exposures`` by Capability, in one fixed order: by Capability IRI, then kind, then IRI.
+
+    Two instances that start together contest their shared Capabilities in this order, so one
+    cannot win the first while the other wins the second.
+    """
+    groups: dict[IRI, list[Exposure]] = {}
+    for exposure in sorted(exposures, key=lambda e: (str(e.capability), e.kind, str(e.iri))):
+        groups.setdefault(exposure.capability, []).append(exposure)
+    return list(groups.items())
+
+
+def check_capabilities(
+    ogm: "OGM",
+    *,
+    resource_iri: IRI,
+    service_iri: IRI,
+    exposures: Sequence[Exposure],
+    staleness_threshold: float,
+    now: Optional[datetime] = None,
+) -> dict[IRI, list[_Holder]]:
+    """Read the holder of each Capability that ``exposures`` realize, before the first write.
+
+    Returns each Capability's holders, which :func:`register_exposures` takes as its first
+    decision. Nothing is written.
+
+    Raises:
+        CapabilityAlreadyRealizedError: If a live Service other than ``service_iri`` realizes
+            one of them.
+    """
+    if now is None:
+        now = datetime.now(timezone.utc)
+    read: dict[IRI, list[_Holder]] = {}
+    for capability, _ in _grouped(exposures):
+        holders = _holders(ogm, capability, staleness_threshold, now)
+        other = _live_other(holders, service_iri)
+        if other is not None:
+            raise _refusal(
+                resource_iri=resource_iri,
+                capability_iri=capability,
+                holder=other,
+                staleness_threshold=staleness_threshold,
+            )
+        read[capability] = holders
+    return read
+
+
+def register_exposures(
+    ogm: "OGM",
+    *,
+    resource_iri: IRI,
+    service_iri: IRI,
+    exposures: Sequence[Exposure],
+    staleness_threshold: float,
+    holders: Optional[dict[IRI, list[_Holder]]] = None,
+    now: Optional[Callable[[], datetime]] = None,
+    named_graph: Optional[IRI] = None,
+) -> None:
+    """Register what an instance exposes, so that one Capability has at most one live realizer.
+
+    The startup calls it once, directly after :func:`register_service`. It checks the classes of
+    every exposure first, and then takes the Capabilities in one fixed order (:func:`_grouped`).
+    Each Capability arrives in one commit with the instance's own Workflows and StateProperties
+    of it (:func:`_write_exposure`): each of them with its link to the Service and its endpoint,
+    the Capability with its links to them, and the resource's ``cfc:hasCapability`` link. So no
+    reader sees a Workflow or StateProperty of this instance without its Capability. Whether
+    the commit is written at all is decided by this table of the Capability's holder:
+
+    - none: it is written;
+    - this instance's own Service, or a Service that is not live: it is written, with an
+      ``Update`` of the Capability (a take-back, or a take-over, which logs one WARNING that names
+      the Services it took over from);
+    - another live Service: a refusal.
+
+    Each individual of the commit is a ``Create`` if the store holds no statement about it, and an
+    ``Update`` otherwise, read before the commit. So a restart, and a start that finds only part
+    of an exposure from an earlier run, complete each exposure in one commit as well.
+
+    ``holders`` is :func:`check_capabilities`'s read; without it, each holder is read here first.
+    After an ``Update`` of a Capability, the holder is read once more: a take-over of another
+    instance that landed after it leaves this instance refusing itself. When the store refuses a
+    commit with ``PreconditionFailedError``, the holder and the individuals are read again and the
+    table decides once more; a second refusal is not a race, and propagates.
+
+    Each refusal after the first write deregisters this instance's own Service the way a clean
+    stop does (:func:`deregister_service`, endpoints first, address last) and then raises.
+
+    Raises:
+        OntologyGroundTruthError: If a class is not the required subclass. No exposure is
+            written.
+        CapabilityAlreadyRealizedError: If a live Service of another instance realizes one of
+            the Capabilities.
+        PreconditionFailedError: The second refusal of one Capability's commit, unchanged.
+    """
+    clock = now if now is not None else (lambda: datetime.now(timezone.utc))
+    _assert_classes(ogm, exposures, named_graph)
+    try:
+        for capability, items in _grouped(exposures):
+            known = holders.get(capability) if holders is not None else None
+            if known is None:
+                known = _holders(ogm, capability, staleness_threshold, clock())
+            _claim_capability(
+                ogm,
+                resource_iri=resource_iri,
+                service_iri=service_iri,
+                capability_iri=capability,
+                items=items,
+                holders=known,
+                staleness_threshold=staleness_threshold,
+                clock=clock,
+                named_graph=named_graph,
+            )
+    except (CapabilityAlreadyRealizedError, PreconditionFailedError):
+        try:
+            deregister_service(ogm, service_iri, named_graph=named_graph)
+        except Exception:
+            logger.error(
+                "The refused instance %s did not finish deregistering; its address stays until "
+                "a watchdog sweeps it",
+                service_iri,
+                exc_info=True,
+            )
+        raise
+
+
+def _assert_classes(
+    ogm: "OGM", exposures: Sequence[Exposure], named_graph: Optional[IRI]
+) -> None:
+    """Check the class of each Workflow or StateProperty and of its Capability."""
+    for item in exposures:
+        assert_class_registered(ogm, item.class_iri, _KINDS[item.kind].base, named_graph)
+        assert_class_registered(ogm, item.capability_class, CFC.Capability, named_graph)
+
+
+def _stored(ogm: "OGM", iris: Sequence[IRI], named_graph: Optional[IRI]) -> set[IRI]:
+    """The IRIs of ``iris`` about which the store holds an explicit statement.
+
+    This is the rule of the store's refusal of a ``Create``: an IRI with any statement about it
+    is not new. One with statements and no class gets an ``Update``, which the OGM refuses with
+    ``OGMNotFoundError``: broken data in the store, which a repair of the store fixes.
+    """
+    return {
+        iri
+        for iri in iris
+        if ogm.db.triples_get(sub=iri, include_implicit=False, named_graph=named_graph)
+    }
+
+
+def _write_exposure(
+    ogm: "OGM",
+    *,
+    resource_iri: IRI,
+    service_iri: IRI,
+    capability_iri: IRI,
+    items: Sequence[Exposure],
+    stored: set[IRI],
+    named_graph: Optional[IRI],
+) -> None:
+    """Write ``items`` and their Capability in one ``OGM.commit``.
+
+    The commit carries, for each Workflow or StateProperty of ``items``, its link to the Service
+    and its endpoint; the Capability with its links to them; and one ``Append`` of the resource's
+    ``cfc:hasCapability`` link. An individual in ``stored`` gets an ``Update`` of these
+    properties, any other a ``Create``. The store admits the commit or refuses it as a whole, so
+    no reader sees one of them without the others.
+
+    The resource's link is a multi-valued property, declared in Core (domain ``cfc:Resource``,
+    range ``cfc:Capability``). The ``Append`` adds it and removes none, so a sibling instance's
+    concurrent registration on the same resource keeps its link. The OGM reads the resource's
+    class to check the property, and none of the property's stored values: the property has no
+    maximum. The resource must be in the store already.
+
+    Raises:
+        OGMNotFoundError: If the store does not hold the resource (from ``kapps_ogm.utils.errors``).
+            Nothing is written.
+        PreconditionFailedError: If the store holds an individual to create, or another write
+            changed one to update after the read. Nothing is written.
+        TripleStoreResponseError: If the store refuses the commit, a SHACL refusal included. It
+            propagates unchanged, and nothing of the commit is written.
+    """
+
+    def change(class_iri: IRI, iri: IRI, data: dict) -> Any:
+        if iri in stored:
+            return Update(instance_iri=iri, data=data)
+        return Create(
+            class_iri=class_iri,
+            data=data,
+            instance_iri=iri,
+            class_scope=_scope_naming(None, data),
+        )
+
+    changes = []
+    for item in items:
+        data = {
+            str(_KINDS[item.kind].owner): [_ref(service_iri)],
+            str(SVC.hasEndpoint): [str(item.endpoint)],
+        }
+        changes.append(change(item.class_iri, item.iri, data))
+    changes.append(change(items[0].capability_class, capability_iri, _link_data(items)))
+    changes.append(
+        Append(instance_iri=resource_iri, property_iri=CFC.hasCapability, value=capability_iri)
+    )
+    ogm.commit(changes=changes, named_graph=named_graph)
+
+
+def _link_data(items: Sequence[Exposure]) -> dict:
+    """The Capability's own links to the Workflows and StateProperties in ``items``."""
+    data: dict = {}
+    for item in items:
+        data.setdefault(str(_KINDS[item.kind].link), []).append(_ref(item.iri))
+    return data
+
+
+def _claim_capability(
+    ogm: "OGM",
+    *,
+    resource_iri: IRI,
+    service_iri: IRI,
+    capability_iri: IRI,
+    items: Sequence[Exposure],
+    holders: list[_Holder],
+    staleness_threshold: float,
+    clock: Callable[[], datetime],
+    named_graph: Optional[IRI],
+) -> None:
+    """Write one Capability with its exposures by the table of :func:`register_exposures`."""
+
+    def refuse_if_held(read: list[_Holder]) -> None:
+        other = _live_other(read, service_iri)
+        if other is not None:
+            raise _refusal(
+                resource_iri=resource_iri,
+                capability_iri=capability_iri,
+                holder=other,
+                staleness_threshold=staleness_threshold,
+            )
+
+    refuse_if_held(holders)
+    iris = [capability_iri, *(item.iri for item in items)]
+    stored = _stored(ogm, iris, named_graph)
+    for attempt in (1, 2):
+        try:
+            _write_exposure(
+                ogm,
+                resource_iri=resource_iri,
+                service_iri=service_iri,
+                capability_iri=capability_iri,
+                items=items,
+                stored=stored,
+                named_graph=named_graph,
+            )
+        except PreconditionFailedError:
+            if attempt == 2:
+                raise
+            # Another write created or changed one of the individuals after the read: read the
+            # holder and the individuals again, and decide once more.
+            holders = _holders(ogm, capability_iri, staleness_threshold, clock())
+            refuse_if_held(holders)
+            stored = _stored(ogm, iris, named_graph)
+            continue
+        break
+    if capability_iri not in stored:
+        return
+    # The OGM checks an Update against its own read inside the commit only, so a take-over by
+    # another instance can land right before or after it. The read after the commit sees it.
+    refuse_if_held(_holders(ogm, capability_iri, staleness_threshold, clock()))
+    # Only a Service whose link this write replaced was taken over from. A stale link of the
+    # other kind stays in place, as it was, and is no take-over.
+    written = {IRI(link) for link in _link_data(items)}
+    previous = sorted(
+        str(h.service) for h in holders if h.service != service_iri and h.links & written
+    )
+    if previous:
+        logger.warning(
+            "The Capability %s of the Resource %s was realized by %s, which is not live; this "
+            "instance (%s) takes it over",
+            capability_iri,
+            resource_iri,
+            ", ".join(previous),
+            service_iri,
+        )
 
 
 # --------------------------------------------------------------------------- #
@@ -558,6 +967,13 @@ def sweep_stale_services(
     stale Service is deregistered either way. The startup reconstruction of a queue
     (``SemanticMiddleware._reconstruct_queue``) decides its running Operations with the same
     predicate.
+
+    A second pass follows the first, for a Resource whose Services all stopped cleanly (they
+    removed their address, so the first pass never finds them): when the newest heartbeat of the
+    Resource's Services is older than ``max_age_seconds``, its ``queued`` and ``running``
+    Operations are failed as well (:func:`find_unserved_resources`). A Service that restarts
+    within the threshold re-registers with a fresh heartbeat, so its queue survives; a Resource
+    with a live Service is left to the first pass.
     """
     return _sweep_stale_services(ogm, max_age_seconds, now=now, named_graph=named_graph)
 
@@ -640,7 +1056,98 @@ def _sweep_stale_services(
             )
             continue
         swept.append(service_iri)
+    _fail_unserved_resources(ogm, max_age_seconds, now=now, named_graph=named_graph, failed=failed)
     return swept
+
+
+def find_unserved_resources(
+    ogm: "OGM",
+    max_age_seconds: float,
+    *,
+    now: Optional[datetime] = None,
+    named_graph: Optional[IRI] = None,
+) -> list[IRI]:
+    """Find the Resources that no Service serves any more, and that still hold unfinished work (a read).
+
+    A Resource qualifies when it has a Service individual (``svc:isServiceOf``) with a heartbeat,
+    none of its Services has a heartbeat within ``max_age_seconds`` before ``now`` (so none is
+    live, and a cleanly stopped Service that left its address and endpoints is not mistaken for
+    a restart), and at least one of its Operations is ``queued`` or ``running``. The newest
+    heartbeat of the Resource counts. A Resource that never had a Service individual does not
+    qualify.
+    """
+    if now is None:
+        now = datetime.now(timezone.utc)
+    sparql = f"""
+    SELECT DISTINCT ?r WHERE {{
+        ?svc <{SVC.isServiceOf}> ?r .
+        ?svc <{SVC.hasLastHeartbeat}> ?anyhb .
+        FILTER NOT EXISTS {{
+            ?sibling <{SVC.isServiceOf}> ?r .
+            ?sibling <{SVC.hasLastHeartbeat}> ?freshhb .
+            FILTER(?freshhb >= {_cutoff(now, max_age_seconds)})
+        }}
+        ?op <{CFC.implementsCapability}> ?cap .
+        ?r <{CFC.hasCapability}> ?cap .
+        ?op <{SVC.hasOperationStatus}> ?st .
+        FILTER(?st IN ("{OperationStatus.QUEUED}", "{OperationStatus.RUNNING}"))
+    }}
+    """
+    return [IRI(str(b["r"])) for b in _bindings(ogm.db.query(sparql, convert_bindings=True))]
+
+
+def _fail_unserved_resources(
+    ogm: "OGM",
+    max_age_seconds: float,
+    *,
+    now: datetime,
+    named_graph: Optional[IRI],
+    failed: Callable[[IRI], None],
+) -> None:
+    """The second pass of the sweep: fail the unfinished Operations of each unserved Resource.
+
+    The first pass starts from Services that still have an address. A Service that stopped
+    cleanly removed it, so its Resource is found here instead (:func:`find_unserved_resources`).
+    A store error is logged as one warning that names the Resource, and the pass goes on with the
+    next; the next sweep tries the Resource again.
+    """
+    try:
+        resources = find_unserved_resources(
+            ogm, max_age_seconds, now=now, named_graph=named_graph
+        )
+    except _LIVENESS_STORE_ERRORS as error:
+        logger.warning(
+            "The sweep did not read the Resources that no Service serves any more; the next "
+            "sweep tries again: %r",
+            error,
+        )
+        return
+    for resource_iri in resources:
+        try:
+            stranded = find_stranded_operations(
+                ogm,
+                resource_iri,
+                [OperationStatus.QUEUED, OperationStatus.RUNNING],
+                max_age_seconds,
+                now=now,
+                named_graph=named_graph,
+            )
+            for op_iri in stranded:
+                mark_operation_failed(
+                    ogm,
+                    op_iri,
+                    "stranded operation swept by watchdog: no live service of the resource "
+                    "will finish it",
+                    named_graph=named_graph,
+                )
+                failed(op_iri)
+        except _LIVENESS_STORE_ERRORS as error:
+            logger.warning(
+                "The sweep did not fail the Operations of the Resource %s, which no Service "
+                "serves any more; the next sweep tries again: %r",
+                resource_iri,
+                error,
+            )
 
 
 # --------------------------------------------------------------------------- #
@@ -689,7 +1196,7 @@ def create_operation(
     store's refusal ``PreconditionFailedError`` is raised, and nothing is written. The
     Resource->Capability ``cfc:hasCapability`` link written at *registration* is a separate,
     multi-valued property of the resource, written through the OGM as an ``Append`` in the
-    Capability's own commit by ``_register_capability``.
+    commit of the Capability and its Workflow by ``_write_exposure``.
     """
     create_data: dict = {
         **_implements(IRI(capability_iri)),
@@ -1076,10 +1583,7 @@ def find_stranded_operations(
     """
     if now is None:
         now = datetime.now(timezone.utc)
-    cutoff = (
-        f'"{(now - timedelta(seconds=max_age_seconds)).isoformat()}"'
-        "^^<http://www.w3.org/2001/XMLSchema#dateTime>"
-    )
+    cutoff = _cutoff(now, max_age_seconds)
     status_filter = ", ".join(f'"{s}"' for s in statuses)
 
     def live(service: str) -> str:

@@ -31,6 +31,7 @@ HANDOVER = [
 # The errors that were born here: each tells one action, except the two older types that the
 # action types split.
 BORN_HERE = [
+    "CapabilityAlreadyRealizedError",
     "CapabilityNotRealizedError",
     "DeploymentError",
     "DeploymentRuntimeError",

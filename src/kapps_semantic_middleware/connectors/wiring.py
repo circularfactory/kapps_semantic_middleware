@@ -24,7 +24,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, FrozenSet, List, Mapping, Optional, Sequence, Tuple
 
 from transitional_sync_middleware.middleware.sync.synced_connector import SyncDirection
 from kapps_triplestore_interface import IRI, SPARQLQuery
@@ -109,6 +109,7 @@ def plan_wiring(
     sync_direction: SyncDirection = SyncDirection.BIDIRECTIONAL,
     autoregister: bool = True,
     ensure_transport: Optional[Callable[[str, int], None]] = None,
+    interfaces: Sequence[Any] = (),
 ) -> WiringPlan:
     """Resolve a resource's parameters and decide what to connect.
 
@@ -122,9 +123,22 @@ def plan_wiring(
     binding built below -- a binding descriptor calls it unconditionally and the wrapper
     absorbs the dedup, so no descriptor has to track addresses it has already seen across
     calls it cannot see each other from.
+
+    ``interfaces`` are the embedding code's declared interfaces (``kapps_ogm.Interface``). A
+    declared interface counts as an ``rdfs:subPropertyOf`` marker of its parameter property
+    for all three uses: the spec's shape, the descriptor a parameter binds to, and the
+    projection's prune set. Without the last one, a parameter whose interface only a
+    declaration gives would serve its broker address northbound.
     """
     resource_class = resource_class or class_of(ogm, resource_iri)
-    full_spec = ogm.get_class_spec(class_iri=resource_class, class_scope=class_scope)
+    declared = _declared_by_property(interfaces)
+    # Only with declarations: a start without provisions calls get_class_spec as it did
+    # before provisioning existed, and a kapps-ogm before 0.4.0 takes no `interfaces`.
+    full_spec = ogm.get_class_spec(
+        class_iri=resource_class,
+        class_scope=class_scope,
+        **({"interfaces": list(interfaces)} if interfaces else {}),
+    )
 
     # The projection asks the *ontology* what is protocol metadata, not the registry. A
     # registry-derived set only knows the protocols this middleware has code for, and a
@@ -136,7 +150,9 @@ def plan_wiring(
     # this runs against refuses distinct/group-by queries under memory pressure. Redundant
     # queries are not merely slow. They raise the chance of a spurious startup failure.
     southbound_by_property: Dict[str, frozenset] = {}
-    northbound_spec = prune_southbound(full_spec, ogm=ogm, cache=southbound_by_property)
+    northbound_spec = prune_southbound(
+        full_spec, ogm=ogm, cache=southbound_by_property, declared=declared
+    )
 
     bindings = _recognise(
         ogm=ogm,
@@ -144,6 +160,7 @@ def plan_wiring(
         resource_class=resource_class,
         spec=full_spec,
         registry=registry,
+        declared=declared,
     )
 
     southbound = frozenset(
@@ -190,6 +207,14 @@ def plan_wiring(
     )
 
 
+def _declared_by_property(interfaces: Sequence[Any]) -> Mapping[str, FrozenSet[str]]:
+    """The declared interface IRIs of each parameter property, keyed by string form."""
+    declared: Dict[str, set] = {}
+    for interface in interfaces:
+        declared.setdefault(str(interface.property_iri), set()).add(str(interface.interface_iri))
+    return {prop: frozenset(ifaces) for prop, ifaces in declared.items()}
+
+
 def _dedupe_by_address(
     ensure_transport: Optional[Callable[[str, int], None]],
 ) -> Optional[Callable[[str, int], None]]:
@@ -223,6 +248,7 @@ def _recognise(
     resource_class: IRI,
     spec: Any,
     registry: SemanticConnectorRegistry,
+    declared: Mapping[str, FrozenSet[str]],
 ) -> List[ParameterBinding]:
     """Walk a resource's spec and the graph, and pair each parameter with its descriptor.
 
@@ -255,7 +281,12 @@ def _recognise(
     for holder_iri, prop_iri, prop_spec, steps in _parameter_properties(
         ogm=ogm, root_iri=resource_iri, spec=spec
     ):
-        descriptor = _descriptor_for(ogm=ogm, prop_iri=prop_iri, registry=registry)
+        descriptor = _descriptor_for(
+            ogm=ogm,
+            prop_iri=prop_iri,
+            registry=registry,
+            declared=declared.get(str(prop_iri), frozenset()),
+        )
         if descriptor is None:
             # Unrecognised complex content is plain data: shown, readable, nothing wired.
             # Not an error. The graph may well hold structure this middleware
@@ -319,7 +350,7 @@ def _parameter_properties(*, ogm: Any, root_iri: IRI, spec: Any, steps: Tuple[Tu
         if nested is None:
             continue
 
-        for component_iri in _linked_individuals(ogm, root_iri, prop_iri):
+        for component_iri in linked_individuals(ogm, root_iri, prop_iri):
             yield from _parameter_properties(
                 ogm=ogm,
                 root_iri=component_iri,
@@ -349,7 +380,7 @@ def _service_address(*, ogm: Any, resource_iri: IRI) -> Optional[str]:
     return str(rows[0]["addr"]) if rows else None
 
 
-def _linked_individuals(ogm: Any, subject: IRI, prop_iri: IRI) -> List[IRI]:
+def linked_individuals(ogm: Any, subject: IRI, prop_iri: IRI) -> List[IRI]:
     """This function returns the individuals a resource references through one object property."""
     rows = ogm.db.query(
         _asserted_select(
@@ -360,18 +391,26 @@ def _linked_individuals(ogm: Any, subject: IRI, prop_iri: IRI) -> List[IRI]:
     return [IRI(str(row["o"])) for row in rows]
 
 
-def _descriptor_for(*, ogm: Any, prop_iri: IRI, registry: SemanticConnectorRegistry):
+def _descriptor_for(
+    *,
+    ogm: Any,
+    prop_iri: IRI,
+    registry: SemanticConnectorRegistry,
+    declared: FrozenSet[str] = frozenset(),
+):
     """This function returns the registered descriptor whose interface property this property specializes.
 
     Resolution walks ``rdfs:subPropertyOf*``, so ``tu:hasConveyorSpeed`` matches the binding
-    registered for ``inf:isInterfaceAccessibleMQTTParameter``. The most specific registered
-    match wins. A protocol marker is a subproperty of the generic one, and binding to the
-    generic one would leave the middleware without a protocol to speak.
+    registered for ``inf:isInterfaceAccessibleMQTTParameter``. A ``declared`` interface counts
+    as a marker the ontology does not assert: the walk starts from it too. The most specific
+    registered match wins. A protocol marker is a subproperty of the generic one, and binding
+    to the generic one would leave the middleware without a protocol to speak.
     """
+    starts = [prop_iri, *(IRI(interface) for interface in sorted(declared))]
     matches = [
         descriptor
         for descriptor in registry
-        if _is_subproperty_of(ogm, prop_iri, descriptor.interface_property)
+        if any(_is_subproperty_of(ogm, start, descriptor.interface_property) for start in starts)
     ]
     if not matches:
         return None

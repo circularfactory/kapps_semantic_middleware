@@ -34,7 +34,7 @@ from typing import Iterator
 import httpx
 import pytest
 import uvicorn
-from kapps_ogm import Create, Node, Update
+from kapps_ogm import Append, Create, Node, Update
 from kapps_triplestore_interface import IRI
 from kapps_triplestore_interface.exceptions import ShaclValidationError
 
@@ -126,6 +126,8 @@ class _OGM:
             changes = [Update(instance_iri=instance_iri, data=data)]
         changes = list(changes)
         for change in changes:
+            if isinstance(change, Append):  # adds a value; no status or issuer is appended here
+                continue
             iri = IRI(change.instance_iri)
             data = {str(key): values for key, values in change.data.items()}
             if str(SVC.hasOperationStatus) in data:
@@ -513,6 +515,106 @@ def test_an_update_after_the_block_raises():
     assert len(_commits(graph)) == 1
 
 
+def test_an_append_lands_as_one_append_in_the_commit_that_creates_the_operation():
+    graph = _Graph()
+    _target(graph)
+    with pytest.raises(NotificationUndelivered):
+        with _middleware(PLANNER, graph).issue_operation(
+            capability_class=CAPABILITY_CLASS, operation_class=OPERATION_CLASS
+        ) as op:
+            op.append(str(PART), str(HAS_OPERATION), op.iri)
+
+    # One read (discovery) and one commit: the part's other links are not read.
+    assert _kinds(graph) == ["read", "commit"]
+    creation, append = graph.log[1][1]
+    assert isinstance(creation, Create) and creation.instance_iri == op.iri
+    assert append == Append(
+        instance_iri=PART, property_iri=HAS_OPERATION, value={"id": str(op.iri)}
+    )
+
+
+def test_updates_and_appends_are_staged_in_the_order_of_the_calls():
+    graph = _Graph()
+    _target(graph)
+    other = IRI(f"{EX}part_2")
+    with pytest.raises(NotificationUndelivered):
+        with _middleware(PLANNER, graph).issue_operation(
+            capability_class=CAPABILITY_CLASS, operation_class=OPERATION_CLASS
+        ) as op:
+            op.append(other, HAS_OPERATION, {"id": str(op.iri)})
+            op.update(PART, {str(TORQUE): ["1 Nm"]})
+            op.append(other, HAS_OPERATION, "a second value")
+
+    (commit,) = _commits(graph)
+    assert [type(change) for change in commit] == [Create, Append, Update, Append]
+    assert [change.instance_iri for change in commit[1:]] == [other, PART, other]
+
+
+def test_an_append_to_an_instance_created_in_the_block_adds_its_value_to_the_create():
+    graph = _Graph()
+    _target(graph)
+    planner = _middleware(PLANNER, graph)
+    with pytest.raises(NotificationUndelivered):
+        with planner.issue_operation(
+            capability_class=CAPABILITY_CLASS, operation_class=OPERATION_CLASS
+        ) as op:
+            op.append(PART, HAS_OPERATION, op.iri)  # before the creation, staged after it
+            with planner.create(PART_CLASS, {}, instance_iri=str(PART)) as part:
+                part.update({str(HAS_OPERATION): [{"id": f"{EX}earlier"}]})
+
+    (commit,) = _commits(graph)
+    assert [type(change) for change in commit] == [Create, Create]
+    folded = commit[1]
+    assert folded.instance_iri == PART
+    assert _data(folded) == {
+        str(HAS_OPERATION): [{"id": f"{EX}earlier"}, {"id": str(op.iri)}],
+    }
+    assert HAS_OPERATION in set(folded.class_scope)
+
+
+def test_an_append_after_an_update_of_a_created_instance_keeps_both_values():
+    graph = _Graph()
+    _target(graph)
+    planner = _middleware(PLANNER, graph)
+    with pytest.raises(NotificationUndelivered):
+        with planner.issue_operation(
+            capability_class=CAPABILITY_CLASS, operation_class=OPERATION_CLASS
+        ) as op:
+            with planner.create(PART_CLASS, {}, instance_iri=str(PART)):
+                pass
+            op.update(PART, {str(TORQUE): ["1 Nm"]})
+            op.append(PART, TORQUE, "2 Nm")
+
+    (commit,) = _commits(graph)
+    assert [type(change) for change in commit] == [Create, Create]
+    assert _data(commit[1]) == {str(TORQUE): ["1 Nm", "2 Nm"]}
+    assert TORQUE in set(commit[1].class_scope)
+
+
+def test_an_append_to_the_operation_itself_raises():
+    graph = _Graph()
+    _target(graph)
+    with pytest.raises(ValueError, match="op.data"):
+        with _middleware(PLANNER, graph).issue_operation(
+            capability_class=CAPABILITY_CLASS, operation_class=OPERATION_CLASS
+        ) as op:
+            op.append(op.iri, TORQUE, "1 Nm")
+    assert _kinds(graph) == ["read"]
+
+
+def test_an_append_after_the_block_raises():
+    graph = _Graph()
+    _target(graph)
+    with pytest.raises(NotificationUndelivered):
+        with _middleware(PLANNER, graph).issue_operation(
+            capability_class=CAPABILITY_CLASS, operation_class=OPERATION_CLASS
+        ) as op:
+            pass
+    with pytest.raises(RuntimeError, match="block"):
+        op.append(PART, HAS_OPERATION, op.iri)
+    assert len(_commits(graph)) == 1
+
+
 def test_a_refused_commit_writes_nothing_and_notifies_nobody():
     graph = _Graph()
     notified: list = []
@@ -664,7 +766,8 @@ def test_a_commit_that_sets_the_status_the_operation_already_has_notifies_its_is
 
 
 def test_a_handover_that_completes_an_operation_notifies_its_issuer():
-    """``handover(operation=...)`` makes the Operation ``done`` in its entry commit."""
+    """``handover(operation=...)`` commits ``running`` at its entry and ``done`` after the move;
+    the issuer hears both, in that order."""
     graph = _Graph()
     notified: list = []
     box, state = IRI(f"{EX}box"), IRI(f"{EX}next_possession")
@@ -689,7 +792,42 @@ def test_a_handover_that_completes_an_operation_notifies_its_issuer():
             mode=MES.Pass, workpiece=box, counterpart=next_module, operation=OPERATION
         ):
             assert driller._flush_notifications(timeout=5)
-            assert notified == [(OPERATION, "done")]
+            assert notified == [(OPERATION, "running")]
+        assert driller._flush_notifications(timeout=5)
+        assert notified == [(OPERATION, "running"), (OPERATION, "done")]
+
+
+def test_a_handover_whose_body_raises_notifies_its_issuer_of_failed_and_raises_the_error_itself():
+    graph = _Graph()
+    notified: list = []
+    box, state = IRI(f"{EX}box"), IRI(f"{EX}next_possession")
+    next_module, own_state = IRI(f"{EX}next_module"), IRI(f"{EX}driller_possession")
+
+    def rows(sparql: str, answer=graph._rows) -> list[dict]:
+        if str(CFC.hasPossessedWorkpiece) in sparql:
+            return [{"ps": own_state}]
+        if str(MES.complements) in sparql:
+            return [{"a": MES.Retrieve}]
+        if str(CFC.hasPossessor) in sparql:
+            return [{"state": state}]
+        return answer(sparql)
+
+    graph._rows = rows  # type: ignore[method-assign]
+    boom = RuntimeError("the gripper jammed")
+    with _trigger(graph, notified) as address:
+        _issued(graph, address)
+        graph.status[OPERATION] = OperationStatus.RUNNING
+        driller = _middleware(DRILLER, graph)
+        with pytest.raises(RuntimeError) as raised:
+            with handover(
+                driller, mode=MES.Pass, workpiece=box, counterpart=next_module, operation=OPERATION
+            ):
+                assert driller._flush_notifications(timeout=5)
+                assert notified == [(OPERATION, "running")]
+                raise boom
+        assert raised.value is boom
+        assert driller._flush_notifications(timeout=5)
+        assert notified == [(OPERATION, "running"), (OPERATION, "failed")]
 
 
 def test_the_crash_recovery_at_startup_notifies_the_issuer_of_each_orphan():
@@ -923,6 +1061,8 @@ def test_the_watchdog_notifies_the_issuer_of_an_operation_that_it_fails():
     stale = IRI(f"{EX}driller_service")
 
     def rows(sparql: str, answer=graph._rows) -> list[dict]:
+        if "SELECT DISTINCT ?r WHERE" in sparql:  # the second pass: no Resource without a Service
+            return []
         if str(CFC.hasCapability) in sparql:  # the Resource's stranded Operations
             return [{"op": OPERATION}]
         if str(SVC.hasLastHeartbeat) in sparql:  # the stale Services

@@ -17,9 +17,11 @@ core knows Core's Capability, Resource and Operation (registration writes ``cfc:
 but it knows no possession term, so it stays portable to a domain that models possession another
 way.
 """
+
 from __future__ import annotations
 
 import contextlib
+import threading
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Iterator, List, Mapping, Optional, Sequence
 
@@ -343,6 +345,36 @@ def switch_possession(
 # --------------------------------------------------------------------------- #
 
 
+#: One lock per workpiece IRI, with the number of handovers that hold or wait on it. An entry is
+#: dropped when that number reaches zero, so the table holds only workpieces in handover now.
+_workpiece_locks: dict[IRI, "_WorkpieceLock"] = {}
+_workpiece_locks_guard = threading.Lock()
+
+
+@dataclass
+class _WorkpieceLock:
+    """The lock of one workpiece and the number of handovers that hold or wait on it."""
+
+    lock: Any  # a `threading.RLock`; reentrant, see `handover`
+    users: int = 0
+
+
+@contextlib.contextmanager
+def _workpiece_guard(workpiece_iri: IRI) -> Iterator[None]:
+    """Hold the process-wide lock of one workpiece; handovers of other workpieces do not wait."""
+    with _workpiece_locks_guard:
+        slot = _workpiece_locks.setdefault(workpiece_iri, _WorkpieceLock(threading.RLock()))
+        slot.users += 1
+    try:
+        with slot.lock:
+            yield
+    finally:
+        with _workpiece_locks_guard:
+            slot.users -= 1
+            if slot.users == 0:
+                del _workpiece_locks[workpiece_iri]
+
+
 @contextlib.contextmanager
 def handover(
     mw: "SemanticMiddleware",
@@ -393,7 +425,7 @@ def handover(
     workpiece's `cfc:hasPossessedWorkpiece` points at the counterpart's one possession state;
     `workpiece_update` sets more properties of the workpiece that must change together with
     its possessor, such as its transport state; `operation`, the Operation that this
-    handover completes, becomes `done`; and `entry`, the caller's own kapps_ogm changes, is
+    handover completes, becomes `running`; and `entry`, the caller's own kapps_ogm changes, is
     written too. When the counterpart has no state yet, the same commit creates
     `<counterpart>_possession` and links the counterpart to it. Nothing writes the
     `cfc:hasPossessor` link of the giver, or of a counterpart that has a state.
@@ -401,11 +433,19 @@ def handover(
     If the store refuses the commit, its error is raised (a SHACL refusal is
     `ShaclValidationError`, with the store's validation report as its `report`, and
     ``mw.refused_writes`` records it with the verb ``handover``), nothing is written, neither the
-    possession change nor a change of `entry`, and the body does not run. The body is the move:
-    the physical transport, and any coordination with the counterpart, for example through an
-    ``mw.issue_operation(...)``. A clean exit writes nothing more, so a ``mw.create()`` in the
-    body commits on its own. An error in the body is raised as it is and undoes nothing: the
-    possession has already changed, so the caller records what really happened.
+    possession change nor a change of `entry` nor a status of `operation`, and the body does not
+    run. The body is the move: the physical transport, and any coordination with the counterpart,
+    for example through an ``mw.issue_operation(...)``. A ``mw.create()`` in the body commits on
+    its own.
+
+    With ``operation``, the handover writes three states of it, in the order of decision and outcome (a decision
+    is committed before the act, the outcome after the act ends). The entry commits `running`. A
+    clean exit commits `done`, in its own commit, so the issuer hears `done` only after the move.
+    An error in the body commits `failed`, with the exception's message as
+    `svc:hasExecutionResult`, in its own commit, and the error is raised as it is. The
+    possession change is not undone: the possession has already changed, so the caller records
+    what really happened. The issuer of `operation` is notified after each admitted transition.
+    Without ``operation``, a handover writes one commit at entry and nothing at exit.
 
     Core says that a resource and a workpiece each have exactly one possession state. That is
     OWL: it licenses inferences and refuses no write. What refuses a handover at commit is the
@@ -424,9 +464,17 @@ def handover(
     Both pass the preconditions before either commits. Inside its commit, kapps_ogm compares
     the workpiece with a fresh read of it. If the other handover's commit landed between that
     read and this commit's write, the store refuses this commit and writes nothing of it, and
-    the handover raises `PossessionSwitchConflict` before the body runs. Known limit: if the
-    other handover's commit landed before that read, this commit overwrites its possession
-    change, both succeed, and both bodies run.
+    the handover raises `PossessionSwitchConflict` before the body runs.
+
+    Handovers of one workpiece in one process are serialised: a lock per workpiece IRI is held
+    from the read of the preconditions until the entry's commit has been admitted or refused,
+    and released before the body. The lock is reentrant: a handover of the workpiece that starts on
+    the same thread inside the first one's commit does not wait on itself. A second handover of the workpiece waits, then reads the
+    preconditions after the first one's commit; the giver no longer possesses the workpiece, so
+    it raises `HandoverPreconditionError`, writes nothing and runs no body. Known limit: this
+    holds for handovers in one process only. If the other handover is in another process and
+    its commit landed before that read, this commit overwrites its possession change, both
+    succeed, and both bodies run.
 
     Args:
         mw: The resource-mode middleware whose Resource gives the workpiece away.
@@ -440,10 +488,13 @@ def handover(
             object. Any other value goes to the OGM as it is: a plain `str` is a literal,
             which the OGM refuses for an object property with `ValueError`, before any write.
         operation: The Operation that this handover completes. Its `svc:hasOperationStatus`
-            becomes `done` in the same commit.
-        entry: More kapps_ogm `Create` and `Update` changes, built by the caller, that the
-            store admits or refuses in the same commit as the possession change, before the
-            body. A change of the workpiece or of `operation` belongs in `workpiece_update` or
+            becomes `running` in the entry commit, `done` in its own commit after a clean body,
+            and `failed` (with the exception's message as its result) in its own commit when
+            the body raises.
+        entry: More kapps_ogm `Create`, `Update` and `Append` changes, built by the caller,
+            that the store admits or refuses in the same commit as the possession change,
+            before the body. An `Append` adds one value to a property of a stored instance and
+            replaces none. A change of the workpiece or of `operation` belongs in `workpiece_update` or
             is made by `operation`: kapps_ogm refuses two changes of one instance in one
             commit, with `ValueError`.
 
@@ -476,55 +527,87 @@ def handover(
     counterpart_iri = IRI(counterpart)
     mode_ability_iri = IRI(mode)
 
-    _check_handover_preconditions(ogm, giver_iri, workpiece_iri, counterpart_iri, mode_ability_iri)
-
-    # What the commit carries beside the possession change: the Operation that the handover
-    # completes, and the caller's own changes.
-    alongside: List[Change] = []
-    if operation is not None:
-        done = {str(SVC.hasOperationStatus): [OperationStatus.DONE]}
-        alongside.append(Update(instance_iri=IRI(operation), data=done))
-    alongside.extend(entry or ())
-
-    # The entry commits the possession change; the body is the move; the exit writes nothing.
-    change = possession_change(
-        ogm,
-        workpiece_iri=workpiece_iri,
-        possessor_iri=counterpart_iri,
-        workpiece_update=workpiece_update,
-    )
     with contextlib.ExitStack() as admitted:
-        try:
-            admitted.enter_context(
-                mw.commit(entry=[*change.changes, *alongside], verb="handover")
-            )
-        except PreconditionFailedError as refusal:
-            # The store wrote nothing of the entry. When the entry creates the counterpart's
-            # state, another write may have created that state after it was read: then the
-            # preconditions are checked again, and the entry is committed once more with
-            # that state. Any other refusal is a conflict.
-            again = None
-            if change.creates_state:
-                again = possession_change(
-                    ogm,
-                    workpiece_iri=workpiece_iri,
-                    possessor_iri=counterpart_iri,
-                    workpiece_update=workpiece_update,
-                )
-            if again is None or again.creates_state:
-                raise _switch_conflict(workpiece_iri) from refusal
+        # The lock covers the read of the preconditions, the possession change and the entry's
+        # commit with its retry; it is released before the body, so the move holds nothing.
+        with _workpiece_guard(workpiece_iri):
             _check_handover_preconditions(
                 ogm, giver_iri, workpiece_iri, counterpart_iri, mode_ability_iri
             )
+
+            # What the entry commit carries beside the possession change: the Operation that the handover
+            # completes (as `running`), and the caller's own changes.
+            alongside: List[Change] = []
+            exit_changes: List[Change] = []
+
+            def on_error(exc: BaseException) -> List[Change]:
+                if operation is None:
+                    return []
+                return [_operation_status(IRI(operation), OperationStatus.FAILED, result=str(exc))]
+
+            if operation is not None:
+                operation_iri = IRI(operation)
+                alongside.append(_operation_status(operation_iri, OperationStatus.RUNNING))
+                exit_changes = [_operation_status(operation_iri, OperationStatus.DONE)]
+            alongside.extend(entry or ())
+
+            # The entry commits the possession change (and `running`); the body is the move; the exit
+            # commits `done`, an error `failed`. Without an Operation, the exit and the error write nothing.
+            change = possession_change(
+                ogm,
+                workpiece_iri=workpiece_iri,
+                possessor_iri=counterpart_iri,
+                workpiece_update=workpiece_update,
+            )
             try:
                 admitted.enter_context(
-                    mw.commit(entry=[*again.changes, *alongside], verb="handover")
+                    mw.commit(
+                        entry=[*change.changes, *alongside],
+                        verb="handover",
+                        exit=exit_changes,
+                        error=on_error,
+                    )
                 )
-            except PreconditionFailedError as second_refusal:
-                raise _switch_conflict(workpiece_iri) from second_refusal
+            except PreconditionFailedError as refusal:
+                # The store wrote nothing of the entry. When the entry creates the counterpart's
+                # state, another write may have created that state after it was read: then the
+                # preconditions are checked again, and the entry is committed once more with
+                # that state. Any other refusal is a conflict.
+                again = None
+                if change.creates_state:
+                    again = possession_change(
+                        ogm,
+                        workpiece_iri=workpiece_iri,
+                        possessor_iri=counterpart_iri,
+                        workpiece_update=workpiece_update,
+                    )
+                if again is None or again.creates_state:
+                    raise _switch_conflict(workpiece_iri) from refusal
+                _check_handover_preconditions(
+                    ogm, giver_iri, workpiece_iri, counterpart_iri, mode_ability_iri
+                )
+                try:
+                    admitted.enter_context(
+                        mw.commit(
+                            entry=[*again.changes, *alongside],
+                            verb="handover",
+                            exit=exit_changes,
+                            error=on_error,
+                        )
+                    )
+                except PreconditionFailedError as second_refusal:
+                    raise _switch_conflict(workpiece_iri) from second_refusal
         # The commit has happened, so a creation in the body commits on its own.
         admitted.enter_context(_nothing_to_join())
         yield
+
+
+def _operation_status(operation_iri: IRI, status: str, *, result: Optional[str] = None) -> Update:
+    """The ``Update`` of a handover's Operation: its status and, for ``failed``, its result."""
+    data: dict = {str(SVC.hasOperationStatus): [status]}
+    if result is not None:
+        data[str(SVC.hasExecutionResult)] = [result]
+    return Update(instance_iri=operation_iri, data=data)
 
 
 def _check_handover_preconditions(

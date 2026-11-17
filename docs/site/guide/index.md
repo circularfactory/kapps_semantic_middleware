@@ -24,7 +24,7 @@ Written in construction order; a reader can go start to finish without forward r
 | Page | Covers |
 |---|---|
 | {doc}`01-instantiation-and-lifecycle` | Constructing an instance, choosing a mode, what appears in the graph at startup, heartbeat, deregistration |
-| {doc}`02-workflow-registration` | Declaring what a Service exposes, the ontology prerequisites, signature-derived shapes, address vs. endpoint |
+| {doc}`02-workflow-registration` | Declaring what a Service exposes, the ontology prerequisites, signatures and shapes, address vs. endpoint |
 | {doc}`03-state-and-parameters` | Modelling resource state as Parameters, committed value vs. locator, where a parameter's shape comes from |
 | {doc}`04-connector-binding` | The recognition chain, adding a protocol the library does not ship, connector wiring, transports |
 | {doc}`05-operation-coordination` | Dispatch, the issuer and the Issued Operation, the event trigger, notifications and the intake, pull-and-run, the status lifecycle, handover, recovery |
@@ -74,7 +74,7 @@ its three dependencies, by that dependency's own path. Use this table rather tha
 | `PredefinedScope`, `ScopeChanges` (the hook through which a domain module brings its rules to `mw.create()`, and what its `changes()` returns) | `kapps_semantic_middleware.commit` |
 | `SVC`, `OperationStatus` (the service vocabulary, and an Operation's status values) | `kapps_semantic_middleware.vocabulary` |
 | `MES` (the handover abilities, such as `MES.Pass`, that `possession.handover()` takes as its `mode`) | `kapps_semantic_middleware.vocabulary` |
-| `HandoverPreconditionError`, `PossessionSwitchConflict`, `OperationQueueEmpty`, `OperationResolutionError`, `OntologyGroundTruthError`, `NotificationUndelivered`; the types that tell the action: `OperationReceiverUnavailableError` and `NotificationReceiverUnavailableError` (Retry), `DeploymentError` with `DeploymentValueError` and `DeploymentRuntimeError`, `CapabilityNotRealizedError` and `NotificationReceiverAmbiguousError` (Repair) | `kapps_semantic_middleware.errors` |
+| `HandoverPreconditionError`, `PossessionSwitchConflict`, `OperationQueueEmpty`, `OperationResolutionError`, `OntologyGroundTruthError`, `NotificationUndelivered`; the types that tell the action: `OperationReceiverUnavailableError` and `NotificationReceiverUnavailableError` (Retry), `DeploymentError` with `DeploymentValueError` and `DeploymentRuntimeError`, `CapabilityNotRealizedError`, `NotificationReceiverAmbiguousError` and `CapabilityAlreadyRealizedError` (Repair) | `kapps_semantic_middleware.errors` |
 | `TripleStoreInterfaceError`, `TripleStoreResponseError` (a refusal by the store, SHACL included) | `kapps_triplestore_interface.exceptions` |
 | `AnonymousNodeFetchError`, `AmbiguousNodeAlignmentError`, `UnresolvableNodeAddressError` (each a `ValueError`) | `kapps_ogm.utils.errors` |
 | `RequestException` (the store cannot be reached; `requests` is the store's HTTP client, reached through `kapps_triplestore_interface`, and not one of the three dependencies) | `requests.exceptions` |
@@ -132,7 +132,7 @@ part listed with `cfc:` no longer has any.
 | `kapps_semantic_middleware.possession` | cfc-specific | Possession, an extension built on the generic core: one possession state per Resource, the `handover()` with its preconditions and its change of possession, the `workpiece` scope, and the possession helpers that a seed uses |
 | `kapps_semantic_middleware.operation` | cfc-specific | The Operation: its link to the Capability that it implements, the `operation` scope, and the scope and the Capabilities of a received Operation |
 | `kapps_semantic_middleware.middleware` | generic, with cfc-specific parts | `SemanticMiddleware.handover`, `SemanticMiddleware.issue_operation`, `SemanticMiddleware._read_received`: the deprecated alias of the possession extension's handover, which calls it, the Operation of a request, created under the operation scope, and the intake's read of a received Operation with the Capabilities it implements |
-| `kapps_semantic_middleware.registration` | generic, with cfc-specific parts | `register_workflow`, `register_state_property`, `_register_capability`, `create_operation`, `_resolve_claim`, `find_resource_operations`, `find_stranded_operations`: the Capability links of registration and dispatch (the resource's link is one OGM append, in the commit that writes the Capability) |
+| `kapps_semantic_middleware.registration` | generic, with cfc-specific parts | `_assert_classes`, `_write_exposure`, `create_operation`, `_resolve_claim`, `find_resource_operations`, `find_stranded_operations`, `find_unserved_resources`: the Capability links of registration and dispatch (the resource's link is one OGM append, in the commit that writes the Capability with its Workflow or StateProperty) |
 | `kapps_semantic_middleware.seeding` | generic, with cfc-specific parts | `CORE_GRAPH`: the graph into which the shared ontologies load Core |
 | `kapps_semantic_middleware.vocabulary` | generic, with cfc-specific parts | `CORE_NS`, `CORE_ONTOLOGY`, `CFC`: the one home of every IRI holds Core's terms too |
 
@@ -206,7 +206,7 @@ realizes, must all pre-exist. Startup fails immediately, naming the missing clas
 **All knowledge-graph writes go through the OGM.** Raw SPARQL `UPDATE` or direct
 `kapps_triplestore_interface` mutation calls bypass the validated write path, so the written node passes no
 shape check and a property replacement loses its atomicity — the intermediate state fails
-validation. Reads may use the access module directly; only writes are constrained. The resource's
+validation. How a participant should read is a guideline, on {doc}`07-writing-to-the-graph-and-to-devices`. The resource's
 link to each Capability it provides is one `Append` in an OGM commit, which keeps the other links,
 so instances that register on one resource at the same moment keep every link. Only seeding, which
 provisions a dataset before any service runs, writes to the store directly.

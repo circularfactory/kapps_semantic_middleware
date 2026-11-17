@@ -3,7 +3,8 @@
 This page tells a consumer of the KAPPS stack what to do when it catches an error. It covers the
 three layers: `kapps-triplestore-interface` (the interface), `kapps-ogm` (the OGM) and
 `kapps-semantic-middleware` (the middleware). It describes the error types of interface 2.3, OGM
-0.4 and middleware 0.3, and the changes that the next releases plan.
+0.4 and middleware 0.3, the HTTP statuses of middleware 0.3.1, and the changes that
+the next releases plan.
 
 ## The rule
 
@@ -96,11 +97,11 @@ flowchart LR
   K2["PossessionSwitchConflict"]
   K3["OperationQueueEmpty"]
   K4["OperationReceiverUnavailableError<br/>(an OperationResolutionError)<br/>NotificationReceiverUnavailableError<br/>(a NotificationUndelivered)"]
-  K5["DeploymentError:<br/>DeploymentValueError · DeploymentRuntimeError<br/>CapabilityNotRealizedError<br/>NotificationReceiverAmbiguousError"]
+  K5["DeploymentError:<br/>DeploymentValueError · DeploymentRuntimeError<br/>CapabilityNotRealizedError<br/>NotificationReceiverAmbiguousError<br/>CapabilityAlreadyRealizedError"]
   K6["TimeoutError"]
   K7["OntologyGroundTruthError · ProjectionError<br/>ImportError · NotImplementedError"]
   K8["ValueError · RuntimeError<br/>AttributeError"]
-  K9["REST routes:<br/>HTTP 500 for every error"]
+  K9["its own REST routes:<br/>500 · 503 · 409 or 404 · 422 · 400<br/>body: error, detail, report"]
   RE(["Repair<br/>operator"])
   RT(["Retry<br/>nobody"])
   RF(["Refresh<br/>consumer at run time"])
@@ -115,10 +116,10 @@ flowchart LR
   K6 --> RT
   K7 --> RE
   K8 -.-> FX & RF & RT
-  K9 -.-> RE & RT & RF & NO & FX
+  K9 --> RE & RT & RF & NO & FX
 
   classDef gap stroke-dasharray: 5 5
-  class K8,K9 gap
+  class K8 gap
 ```
 
 The same map as a table:
@@ -142,12 +143,54 @@ The same map as a table:
 | middleware | `HandoverPreconditionError`, raised by the possession extension's `handover(mw, ...)` | Refused |
 | middleware | `PossessionSwitchConflict`, raised by the possession extension's `handover(mw, ...)` and `switch_possession`; `OperationQueueEmpty` | Refresh |
 | middleware | `OperationReceiverUnavailableError`, a subtype of `OperationResolutionError`: a Workflow realizes the Capability, but no Service of it is live now. `NotificationReceiverUnavailableError`, a subtype of `NotificationUndelivered`: the resource has no live Service, or it did not take the notification. | Retry |
-| middleware | `DeploymentError`, the base of the middleware's own Repair types: `DeploymentValueError`, also a `ValueError` (a store variable that is not set, an unknown mode or a mode without the arguments that it requires, a Resource with more than one possession state, an instance with no asserted domain type); `DeploymentRuntimeError`, also a `RuntimeError` (the bundled examples cannot be found, an Operation reached the intake of an instance without a notification handler); `CapabilityNotRealizedError`, also an `OperationResolutionError` (no Workflow realizes the Capability); `NotificationReceiverAmbiguousError`, also a `NotificationUndelivered` (the resource has more than one live Service) | Repair |
+| middleware | `DeploymentError`, the base of the middleware's own Repair types: `DeploymentValueError`, also a `ValueError` (a store variable that is not set, an unknown mode or a mode without the arguments that it requires, a Resource with more than one possession state, an instance with no asserted domain type); `DeploymentRuntimeError`, also a `RuntimeError` (the bundled examples cannot be found, an Operation reached the intake of an instance without a notification handler); `CapabilityNotRealizedError`, also an `OperationResolutionError` (no Workflow realizes the Capability); `NotificationReceiverAmbiguousError`, also a `NotificationUndelivered` (the resource has more than one live Service); `CapabilityAlreadyRealizedError` (at startup: a live Service of another instance realizes a Capability that this instance would realize; stop one of the two, or start this one again once the other's registration is stale) | Repair |
 | middleware | `TimeoutError` of a wait for an Operation | Retry |
 | middleware | `OntologyGroundTruthError`, `ProjectionError`, `ImportError` of an optional extra, `NotImplementedError` of a mode | Repair |
 | middleware | `ValueError` "REST wiring is read-only: drive a peer through its workflows": at construction, a settable parameter binds over REST under driving wiring (`BIDIRECTIONAL`); also when a write reaches the REST parameter connector. Wire it `TO_PERSISTENCE`, and drive the peer through its workflows. | Fix the call |
 | middleware | `ValueError`, `RuntimeError`, `AttributeError` | mostly Fix the call (gap 4) |
-| middleware | an error answer of its REST routes | always 500 (gap 7) |
+| middleware | an error answer of its own REST routes: 500, 503, 409 or 404, 422, 400 (see {ref}`middleware-http-statuses`) | the action of its status |
+
+(middleware-http-statuses)=
+## The middleware's HTTP statuses
+
+The middleware's own routes, the parameter routes and the dashboard routes, answer a typed error
+with the status of its action:
+
+| Action | Status | Error types |
+|---|---|---|
+| Repair | 500 | `OGMOntologyError`, `DeploymentError` and its subtypes, `AuthenticationError`, `TripleStoreAccessError` |
+| Retry | 503 | `TripleStoreUnavailableError`, `OperationReceiverUnavailableError`, `NotificationReceiverUnavailableError` |
+| Refresh | 409, or 404 when the addressed instance does not exist | `PreconditionFailedError` (409), `OGMNotFoundError` and its subtypes (404) |
+| Refused | 422 | `ShaclValidationError`, `OGMDataError` and its subtypes |
+| Fix the call | 400 | a request that fails validation, `OGMUsageError` and its subtype |
+
+The body of every error answer has three fields: `error`, the type name; `detail`, the original
+message; and `report`, the raw store report of a `ShaclValidationError`, byte for byte, or `null`.
+For example, a SHACL refusal of the store answers:
+
+```http
+HTTP/1.1 422 Unprocessable Entity
+Content-Type: application/json
+
+{"error": "ShaclValidationError", "detail": "<the message>", "report": "<the store's report>"}
+```
+
+- A bare built-in, such as a `ValueError`, and any type that the table does not name answer 500,
+  because the type does not tell the action.
+- A request that fails validation answers 400, not FastAPI's 422, because 422 means Refused here.
+  Its `error` is `RequestValidationError`, and its `detail` is FastAPI's list of errors. This
+  holds for every route of the instance, the framework's included.
+- The middleware's own HTTP errors, such as an unknown dashboard box (404), a parameter route whose
+  owner is absent from the tree (500) or a wrong log level (400), have the status's reason phrase
+  as `error`, for example `Not Found`.
+- No answer carries a `Retry-After` header.
+- The dashboard's own form gets 200 with a fragment that shows a refusal, because htmx does not
+  swap a 4xx answer into the page.
+
+The routes that the framework generates do not follow this map. Its read routes on the datamodel
+answer 400 with a message of their own, and its workflow routes answer 409 for any `RuntimeError`
+and a plain 500 for any other error.
+The served datamodel mounts no write route, so a write verb on it answers 405.
 
 (error-map-gaps)=
 ## Gaps: where the type does not tell the action
@@ -181,11 +224,29 @@ The same map as a table:
    `NotificationReceiverUnavailableError` (Retry) when the resource is not live or did not take
    the notification, and `NotificationReceiverAmbiguousError` (Repair) when the resource has more
    than one live Service. Both are subtypes of `NotificationUndelivered`.
-7. **The middleware's REST routes** answer 500 for every error, with the message as the detail. A
-   remote consumer cannot tell the action.
+7. **The middleware's REST routes** (closed in middleware 0.3.1). Its own routes, the
+   parameter routes and the dashboard routes, answer a typed error with the status of its action,
+   and every error answer has the same three-field body (see {ref}`middleware-http-statuses`).
+   Before, they answered 500 for every error, and a remote consumer could not tell the action.
 8. **The middleware's `PossessionSwitchConflict`** replaces the interface's
    `PreconditionFailedError`, which is its cause, and it is not a subclass of it. A consumer that
    catches `PreconditionFailedError` misses a handover conflict.
+9. **A dataset whose ruleset is not the required one** (closed in middleware 0.3.1). KAPPS
+   supports only `rdfsplus-optimized`. When the deployment sets `TRIPLESTORE_REQUIRED_RULESET`, a
+   resource-mode instance asks the store for the dataset's ruleset as it starts. If the store names
+   another ruleset, for example `owl2-rl` or `owl-max`, the start raises `DeploymentRuntimeError`
+   (Repair) with one line, which it also logs once:
+
+   ```text
+   dataset `<id>` runs ruleset `<name>`; this deployment requires `<required>`
+   ```
+
+   Use a dataset with the required ruleset. If the store does not say, the start goes on and logs
+   that the ruleset is unknown. Unset, the variable means that the ruleset is not checked: then, on
+   another ruleset, the OGM still refuses with `OGMOntologyError` (Repair), and its message names a
+   property with a named and an anonymous range, not the ruleset. On a dataset that already has
+   `rdfsplus-optimized`, that same message has another cause: a property with two declared ranges,
+   such as `cfc:hasOrigin`. Then the ruleset is not the fix.
 
 ### Paths that give no error
 
@@ -215,13 +276,13 @@ Some handlers log an error and do not raise it. They are not paths to a consumer
 
 The next releases close the open gaps. Interface 2.3 already closes gaps 1 and 2 and the import
 path of "Paths that give no error", OGM 0.4 closes gap 3, and middleware 0.3 closes gaps 5 and 6
-and the Repair part of gap 4. Each change below is planned for the release that the table names.
+and the Repair part of gap 4. Middleware 0.3.1 closes gaps 7 and 9. Each change below is planned for the
+release that the table names.
 
 | Gap | The change | Planned for |
 |---|---|---|
 | 1 | The auth provider logs in again before the token expires, so a 401 after an expiry becomes rare. | interface 2.4.0 |
 | 4 | The built-ins that are Refresh or Retry: not decided. | — |
-| 7 | One HTTP status per action, and a raw error body (see below). | middleware 0.3.0 |
 | 8 | Not decided. | — |
 | no error: `triple_add`, the middleware's two reads | Not decided. | — |
 
@@ -232,25 +293,3 @@ safe for two reasons:
 - A checked write refuses a second application with `PreconditionFailedError`.
 - An insert or an import repeats as a no-op, because a graph is a set. The exceptions are blank
   nodes, which a second insert creates again, and a raw update that the caller writes itself.
-
-### The middleware's HTTP statuses
-
-The middleware's own routes, the parameter routes and the dashboard routes, will answer a typed error
-with the status of its action:
-
-| Action | Status |
-|---|---|
-| Repair | 500 |
-| Retry | 503 |
-| Refresh | 409, or 404 when the addressed instance does not exist |
-| Refused | 422 |
-| Fix the call | 400, also for a request that fails validation |
-
-The body of every error answer will have three fields: `error`, the type name; `detail`, the
-original message; and `report`, the raw store report or `null`. A bare built-in, such as a
-`ValueError`, will answer 500, because its type does not tell the action. No answer will carry a
-`Retry-After` header.
-
-The routes that the framework generates do not follow this map. Its read routes on the datamodel
-answer 400 with a message of their own, and its workflow routes answer 409 for any `RuntimeError`.
-The served datamodel mounts no write route, so a write verb on it answers 405.

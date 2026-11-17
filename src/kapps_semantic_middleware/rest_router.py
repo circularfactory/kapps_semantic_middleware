@@ -50,6 +50,7 @@ from transitional_sync_middleware.middleware.registries import ConnectionInfo
 from transitional_sync_middleware.middleware.rest_routers import RestRouter
 
 from kapps_semantic_middleware.connectors.semantic import ParameterBinding
+from kapps_semantic_middleware.http_errors import TypedErrorRoute
 
 logger = logging.getLogger(__name__)
 
@@ -106,29 +107,15 @@ def _make_get_handler(
     Only the one field returns. Every sibling stays untouched.
     """
     async def get_parameter():
-        try:
-            connection_info = ConnectionInfo(
-                data_model_name=data_model_name, model_id=root_id
-            )
-            connector = middleware.persistence_registry.get_connection(connection_info)
-            model = await connector.provide()
+        # No `except` here: an error goes on to the route class, `TypedErrorRoute`, which
+        # answers a typed error with the status of its action and anything else with 500.
+        connection_info = ConnectionInfo(data_model_name=data_model_name, model_id=root_id)
+        connector = middleware.persistence_registry.get_connection(connection_info)
+        model = await connector.provide()
 
-            if owner_id == root_id:
-                value = getattr(model, field_id)
-            else:
-                value = getattr(_owner_of(model, owner_id, field_id), field_id)
-
-            return value
-        except HTTPException:
-            # Already carries a considered status. Re-raising keeps it. Otherwise every
-            # failure below would flatten into a 400.
-            raise
-        except Exception as e:
-            # 500, not 400: the caller asked for a route this middleware generated and
-            # advertised, so a failure to serve it is ours. A 400 here would send an operator
-            # looking at their own request for a fault that is on this side.
-            logger.warning("GET %s failed: %s", field_id, e)
-            raise HTTPException(status_code=500, detail=str(e))
+        if owner_id == root_id:
+            return getattr(model, field_id)
+        return getattr(_owner_of(model, owner_id, field_id), field_id)
 
     # FastAPI reads `inspect.signature()` before it looks at `__annotations__`. This module
     # has `from __future__ import annotations`. A written-out annotation would reach it as an
@@ -275,7 +262,9 @@ def generate_recursive_rest_api(
         visited=set(),
     )
 
-    router = APIRouter()
+    # The parameter routes are KSM's own, so they answer an error by KSM's map. The framework's
+    # reads mounted above keep the framework's answers.
+    router = APIRouter(route_class=TypedErrorRoute)
 
     for path, binding, owner_id, field_annotation in route_specs:
         get_handler = _make_get_handler(

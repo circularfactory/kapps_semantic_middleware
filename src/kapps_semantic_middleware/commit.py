@@ -3,8 +3,11 @@ creation of a new instance, built on it.
 
 `SemanticMiddleware.commit()` and `SemanticMiddleware.create()` return the context managers
 defined here. They know no vocabulary of their own: the transitions they commit are kapps_ogm
-`Create` and `Update` changes, so they serve any datamodel and any state transition. Rules of a
-domain enter a creation through a `PredefinedScope`, which a module beside this one gives.
+`Create`, `Update` and `Append` changes, so they serve any datamodel and any state transition.
+A `Create` or an `Update` sets a property, replacing its values; an `Append` adds one value and
+replaces none. At the clean exit an `Append` is never merged with another change, and it
+overlaps a change that sets its property, but not another `Append`. Rules of a domain enter a
+creation through a `PredefinedScope`, which a module beside this one gives.
 """
 
 from __future__ import annotations
@@ -18,7 +21,7 @@ from dataclasses import replace
 from typing import Any, Callable, Iterator, Mapping, NamedTuple, Optional, Sequence, Union
 
 import anyio
-from kapps_ogm import Create, Update
+from kapps_ogm import Append, Create, Update
 from kapps_ogm.utils.class_scope import ClassScope
 from kapps_triplestore_interface import IRI
 from kapps_triplestore_interface.exceptions import InvalidIRIError, ShaclValidationError
@@ -26,7 +29,8 @@ from rdflib import URIRef
 
 logger = logging.getLogger(__name__)
 
-Change = Union[Create, Update]
+#: A change of the graph: the kinds that kapps_ogm's ``OGM.commit`` takes.
+Change = Union[Create, Update, Append]
 
 #: The exit transition: its changes, or a function that returns them at the clean exit.
 ExitTransition = Union[Sequence[Change], Callable[[], Sequence[Change]]]
@@ -48,12 +52,12 @@ _pending_write: ContextVar[Optional[Union["_Commit", "_Creation"]]] = ContextVar
 class _Commit:
     """What ``SemanticMiddleware.commit()`` returns, and what its body is given.
 
-    The body reads ``nodes`` (or ``node``) and changes the datamodel with ``update``. The
-    protocol itself is described on ``SemanticMiddleware.commit()``. One object serves ``with``
-    and ``async with``: the steps are the same functions, and the asynchronous form runs each of
-    them in a worker thread.
+    The body reads ``nodes`` (or ``node``) and changes the datamodel with ``update`` and
+    ``append``. The protocol itself is described on ``SemanticMiddleware.commit()``. One object
+    serves ``with`` and ``async with``: the steps are the same functions, and the asynchronous
+    form runs each of them in a worker thread.
 
-    Only ``update`` changes the graph. A change made to a fetched instance (``node``, its
+    Only ``update`` and ``append`` change the graph. A change made to a fetched instance (``node``, its
     ``.instance``) is not committed. Nothing set on the transition itself reaches the graph
     either, so an assignment to an attribute it does not have raises ``AttributeError``, instead
     of being lost without a word.
@@ -114,7 +118,8 @@ class _Commit:
             raise AttributeError(
                 f"a transition has no attribute {name!r}, and nothing set on it reaches the "
                 "graph. Change an instance with transition.update(instance_iri, "
-                "{property: [values]})."
+                "{property: [values]}), or add a value with transition.append(instance_iri, "
+                "property, value)."
             )
         object.__setattr__(self, name, value)
 
@@ -140,14 +145,36 @@ class _Commit:
         """
         self._stage(Update(instance_iri=IRI(instance_iri), data=dict(data)))
 
+    def append(self, instance_iri: str, property_iri: str, value: Any) -> None:
+        """Add one value to a property of a stored instance at the clean exit, in the same commit
+        as the exit transition.
+
+        Where ``update`` replaces the values of a property, ``append`` adds one, as a kapps_ogm
+        ``Append``: the property's other stored values stay, and nothing is read. A value that
+        is an IRI (an ``IRI`` or an rdflib ``URIRef``), or ``{"id": iri}``, is a reference to that
+        instance; any other value goes to the OGM as it is. Two appends to one property both
+        add their value. An append to a property that the exit transition sets, or an
+        ``update`` of a property that the exit transition appends to, skips the exit transition,
+        as an ``update`` of a property that it sets does. Nothing is written before the clean
+        exit, and an error drops every change.
+        """
+        self._stage(
+            Append(
+                instance_iri=IRI(instance_iri),
+                property_iri=IRI(property_iri),
+                value=_as_reference(value),
+            )
+        )
+
     def _stage(self, change: Change) -> None:
         """Register ``change`` with this open commit, for its clean exit.
 
-        This is the one way in for the body's changes: ``update`` uses it, and so can code that
-        runs inside the body and adds a ``Create`` that must be admitted together with the rest.
-        At the clean exit every staged change to one instance merges with the others and with
-        the exit transition's change to it. An error drops them all. A change that could never
-        be written correctly raises here, where it is made.
+        This is the one way in for the body's changes: ``update`` and ``append`` use it, and so
+        can code that runs inside the body and adds a ``Create`` that must be admitted together
+        with the rest. At the clean exit every staged ``Create`` or ``Update`` of one instance
+        merges with the others and with the exit transition's change to it; an ``Append`` is
+        committed as it is, beside them. An error drops them all. A change that could never be
+        written correctly raises here, where it is made.
         """
         _check(change)
         self._staged.append(change)
@@ -222,8 +249,11 @@ class _Commit:
     def _clean_exit(self) -> None:
         """Commit the staged changes and the exit transition as one ``OGM.commit``.
 
-        When a staged change sets a property that the exit transition also sets on the same
+        When a staged change writes a property that the exit transition also writes on the same
         instance, the exit transition is skipped as a whole, and the staged value is committed.
+        An ``Append`` writes a property as a ``Create`` or an ``Update`` that sets it does, except
+        beside another ``Append``: two values added to one property are both kept (see
+        ``_overlap``).
         """
         exit_changes = list(self._exit_changes())
         if _overlap(exit_changes, self._staged):
@@ -407,6 +437,45 @@ class _Creation:
         _check(change)
         self._staged.append(change)
 
+    def _stage_append(self, append: Append) -> None:
+        """Register ``append``, adding its value to a staged change that creates its instance.
+
+        kapps_ogm writes no ``Append`` of an instance that a ``Create`` of the same call makes:
+        the value goes into that ``Create``. So when a creation nested in this one creates the
+        instance, the value is added to the property's values there. It is added to the last
+        staged change of the instance that sets the property, so that a later ``Update`` of the
+        property does not replace it; else to the ``Create``. Any other ``Append`` is staged as
+        it is.
+        """
+        iri, prop = IRI(append.instance_iri), _property(append.property_iri)
+        creates: list[int] = []
+        setting: list[int] = []
+        for index, change in enumerate(self._staged):
+            if isinstance(change, Append) or change.instance_iri is None:
+                continue
+            if IRI(change.instance_iri) != iri:
+                continue
+            if isinstance(change, Create):
+                creates.append(index)
+            if any(_property(key) == prop for key in change.data):
+                setting.append(index)
+        if not creates:
+            self._stage(append)
+            return
+        index = setting[-1] if setting else creates[0]
+        target = self._staged[index]
+        if isinstance(target, Append):  # never: only a Create or an Update is chosen
+            raise AssertionError(target)
+        spelled = next((key for key in target.data if _property(key) == prop), None)
+        values = list(target.data[spelled]) if spelled is not None else []
+        added = {spelled if spelled is not None else append.property_iri: [*values, append.value]}
+        data = _merged_data(target.data, added)
+        if isinstance(target, Create):
+            scope = _scope_naming(target.class_scope, data)
+            self._staged[index] = replace(target, data=data, class_scope=scope)
+        else:
+            self._staged[index] = replace(target, data=data)
+
     def _prepare(self) -> None:
         """Check the scope's inputs and mint the IRI. Nothing is read or written."""
         if isinstance(self._scope, PredefinedScope):
@@ -508,8 +577,9 @@ class _Creation:
 def _nothing_to_join() -> Iterator[None]:
     """Mark a body in which a creation finds no pending write to join, so it commits on its own.
 
-    Two bodies need it. One is a body whose commit has already happened, such as that of
-    ``possession.handover()``: its clean exit writes nothing more. The other is a creation that
+    Two bodies need it. One is a body whose entry commit has already happened, such as that of
+    ``possession.handover()``: a creation in it must not wait for that commit's exit, which a
+    handover with an Operation uses for `done`. The other is a creation that
     must commit on its own although a write of its caller is still to come, such as the Operation
     of ``issue_operation()``, whose receiver reads it after the notification. A creation opened in
     a ``mw.commit()`` or a ``mw.create()`` inside the marked body still joins that one.
@@ -605,10 +675,18 @@ def _one_change_per_instance(changes: Sequence[Change]) -> list[Change]:
     lies outside the scope, which kapps_ogm refuses. Two equal ``Create``s of one instance are
     one, as when two new Workpieces create their possessor's state. Two different ``Create``s of
     one instance stay apart, so kapps_ogm refuses them.
+
+    An ``Append`` adds a value and replaces none, so it is never merged, and nothing merges into
+    it: each one stays in its place. Beside a ``Create`` or an ``Update`` of its instance it is
+    passed on as it is, and kapps_ogm refuses the call. Several ``Append``\\ s to one instance
+    stay several, as kapps_ogm allows.
     """
     merged: list[Change] = []
     position: dict[IRI, int] = {}
     for change in changes:
+        if isinstance(change, Append):
+            merged.append(change)
+            continue
         iri = None if change.instance_iri is None else IRI(change.instance_iri)
         index = position.get(iri) if iri is not None else None
         if index is None:
@@ -617,6 +695,8 @@ def _one_change_per_instance(changes: Sequence[Change]) -> list[Change]:
             merged.append(change)
             continue
         earlier = merged[index]
+        if isinstance(earlier, Append):  # never: only a Create or an Update takes a position
+            raise AssertionError(earlier)
         if isinstance(earlier, Create) and isinstance(change, Create):
             if change != earlier:
                 merged.append(change)
@@ -659,18 +739,36 @@ def _chains_of(path: list[Any], values: Any) -> list[list[Any]]:
 
 
 def _overlap(transition: Sequence[Change], staged: Sequence[Change]) -> bool:
-    """Whether ``staged`` sets a property of an instance that ``transition`` also sets."""
-    return not _properties_set(transition).isdisjoint(_properties_set(staged))
+    """Whether ``staged`` writes a property of an instance that ``transition`` also writes.
+
+    A ``Create`` or an ``Update`` sets a property: it replaces the property's values. An
+    ``Append`` adds a value and replaces none. A property that one side sets, and the other sets
+    or appends to, overlaps. Two ``Append``\\ s to one property do not: both values are kept.
+    """
+    set_by_transition, appended_by_transition = _properties_written(transition)
+    set_by_staged, appended_by_staged = _properties_written(staged)
+    return not (
+        set_by_transition.isdisjoint(set_by_staged | appended_by_staged)
+        and appended_by_transition.isdisjoint(set_by_staged)
+    )
 
 
-def _properties_set(changes: Sequence[Change]) -> set[tuple[IRI, Any]]:
-    """Each (instance, property) that ``changes`` set, for the instances that they name."""
-    return {
-        (IRI(change.instance_iri), _property(key))
-        for change in changes
-        if change.instance_iri is not None
-        for key in change.data
-    }
+def _properties_written(
+    changes: Sequence[Change],
+) -> tuple[set[tuple[IRI, Any]], set[tuple[IRI, Any]]]:
+    """Each (instance, property) that ``changes`` set, and each that they append to, for the
+    instances that they name."""
+    replaced: set[tuple[IRI, Any]] = set()
+    appended: set[tuple[IRI, Any]] = set()
+    for change in changes:
+        if change.instance_iri is None:
+            continue
+        iri = IRI(change.instance_iri)
+        if isinstance(change, Append):
+            appended.add((iri, _property(change.property_iri)))
+        else:
+            replaced.update((iri, _property(key)) for key in change.data)
+    return replaced, appended
 
 
 def _merged_data(earlier: dict, later: dict) -> dict:

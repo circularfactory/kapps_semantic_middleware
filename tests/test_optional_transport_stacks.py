@@ -117,10 +117,12 @@ class TestTheModulesImportWithoutTheirStack:
         one lazy would be a feature change, not a fix here.
 
         **The failing frame moved once already.** While ``__init__.py`` still re-exported the
-        upstream namespace, its first statement reached ``transitional_sync_middleware`` before
-        anything of ours, so the traceback named the upstream module. It names ``middleware.py``
-        now. The claim under test did not change; only the first eager import to run did, which
-        is why this assertion reads the frame rather than trusting the reason.
+        framework's namespace, its first statement reached ``transitional_sync_middleware`` before
+        anything of ours, so the traceback named the framework. It named ``middleware.py`` after
+        that. It names the framework again now, because the package init imports
+        the framework first, to undo what that import does to the root logger and the
+        event-loop policy. The claim under test did not change; only the first eager import to
+        run did, which is why this assertion reads the frame rather than trusting the reason.
 
         This test pins the *actual* state, so that making httpx genuinely optional upstream
         turns this red and sends the reader back to the claim rather than leaving one
@@ -140,9 +142,11 @@ class TestTheModulesImportWithoutTheirStack:
         assert "import httpx" in result.stderr, (
             f"expected the failure to be a bare httpx import, got:\n{result.stderr}"
         )
-        assert "kapps_semantic_middleware/middleware.py" in result.stderr.replace("\\", "/"), (
-            "the import no longer fails on this library's own eager `import httpx`, so the reason "
-            f"recorded in this test's docstring has changed:\n{result.stderr}"
+        stderr_with_slashes = result.stderr.replace("\\", "/")
+        assert "transitional_sync_middleware/" in stderr_with_slashes, (
+            "the import no longer fails on the framework's eager `import httpx`, which the package "
+            "init reaches first, so the reason recorded in this test's docstring has changed:\n"
+            f"{result.stderr}"
         )
 
     def test_the_rest_failure_is_deferred_and_actionable(self, monkeypatch):

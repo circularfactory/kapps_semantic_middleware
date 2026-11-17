@@ -6,8 +6,8 @@ the non-live half of that guarantee: they prove the name the caller passes wins,
 a triple store to prove it.
 
 The store comes from the interface's factory, ``connect()``. Here a stand-in takes its place and
-records what it was given, so no test reaches a store. The deprecated names and the deprecated
-variables each still work, and each use of one warns.
+records what it was given, so no test reaches a store. The old names and the old variables are
+removed: KSM reads only the ``TRIPLESTORE_*`` variables.
 """
 
 from __future__ import annotations
@@ -31,8 +31,8 @@ from kapps_semantic_middleware.errors import DeploymentValueError
 
 URL = "http://localhost:7200"
 
-# vendor-check: off -- the deprecated variables.
-# The deprecated variable that the interface reads for each variable that is not set.
+# vendor-check: off -- the old variables, which prove that KSM ignores them.
+# The old variable of each variable, which KSM no longer reads.
 OLD = {
     "TRIPLESTORE_URL": "GRAPHDB_URL",
     "TRIPLESTORE_USERNAME": "GRAPHDB_USERNAME",
@@ -44,7 +44,7 @@ OLD_DATASET = "GRAPHDB_REPOSITORY"
 
 @pytest.fixture
 def no_store_variables(monkeypatch):
-    """An environment with no store variable, new or deprecated."""
+    """An environment with no store variable, new or old."""
     for name in (*OLD, *OLD.values(), "TRIPLESTORE_DATASET", OLD_DATASET):
         monkeypatch.delenv(name, raising=False)
 
@@ -59,7 +59,7 @@ def store_env(no_store_variables, monkeypatch):
 
 @pytest.fixture
 def old_env(no_store_variables, monkeypatch):
-    """The deprecated variables alone."""
+    """The old variables alone."""
     monkeypatch.setenv(OLD["TRIPLESTORE_URL"], URL)
     monkeypatch.setenv(OLD["TRIPLESTORE_USERNAME"], "user")
     monkeypatch.setenv(OLD["TRIPLESTORE_PASSWORD"], "secret")
@@ -173,128 +173,45 @@ def test_the_demo_dataset_is_the_one_the_compose_file_creates():
     assert declared == [DEMO_DATASET]
 
 
-# vendor-check: off -- the deprecated variables and names, until they go.
-
-# -- The deprecated variables -------------------------------------------------------------- #
+# -- The old variables and names are gone -------------------------------------------------- #
 
 
-def test_with_only_the_deprecated_variables_set_it_connects_and_warns(old_env, connect):
-    """The fallback: the deprecated variables still reach the store, and each warns."""
+def test_with_only_the_old_variables_set_no_store_is_present(old_env, connect):
+    """KSM reads no old variable: with only those set, no store is reachable, and nothing warns."""
     with warnings.catch_warnings(record=True) as record:
         warnings.simplefilter("always")
         present = triplestore_env_present()
-        store = triplestore_for("Tests")
+        with pytest.raises(DeploymentValueError, match="TRIPLESTORE_URL"):
+            triplestore_for("Tests")
+        with pytest.raises(DeploymentValueError, match="TRIPLESTORE_URL"):
+            endpoint_for("Tests")
 
-    assert present
-    assert store is connect.store
-    [(endpoint, auth)] = connect.calls
-    assert endpoint == TripleStoreEndpoint(url=URL, dataset="Tests")
-    assert repr(auth) == "GDBTokenAuth(username='user')"
-    assert sorted(_deprecations(record)) == sorted(
-        f"{old} is deprecated; set {new}, which replaces it." for new, old in OLD.items()
-    )
+    assert not present
+    assert connect.calls == []
+    assert _deprecations(record) == []
 
 
-def test_a_new_variable_wins_over_its_deprecated_one(old_env, connect, monkeypatch):
-    monkeypatch.setenv("TRIPLESTORE_URL", "http://new:7200")
-
-    with warnings.catch_warnings(record=True) as record:
-        warnings.simplefilter("always")
-        triplestore_for("Tests")
-
-    [(endpoint, _)] = connect.calls
-    assert endpoint.url == "http://new:7200"
-    assert not any("GRAPHDB_URL" in message for message in _deprecations(record))
+def _own_public_names(module) -> set[str]:
+    """The public names that ``module`` defines itself, its imports left out."""
+    return {
+        name
+        for name, value in vars(module).items()
+        if not name.startswith("_")
+        and (name.isupper() or getattr(value, "__module__", None) == module.__name__)
+    }
 
 
-# -- The deprecated names ------------------------------------------------------------------ #
-
-
-def _one_use(call):
-    """Run ``call`` and return its result and the deprecation warnings of that one use."""
-    with warnings.catch_warnings(record=True) as record:
-        warnings.simplefilter("always")
-        result = call()
-    return result, _deprecations(record)
-
-
-def test_the_old_store_helper_warns_once_and_runs_its_successor(store_env, connect):
-    from kapps_semantic_middleware.credentials import graphdb_for
-
-    store, messages = _one_use(lambda: graphdb_for("Tests"))
-
-    assert store is connect.store
-    assert connect.calls[0][0] == TripleStoreEndpoint(url=URL, dataset="Tests")
-    assert messages == ["graphdb_for is deprecated; use triplestore_for, which replaces it."]
-
-
-def test_the_old_presence_check_warns_once_and_runs_its_successor(store_env, monkeypatch):
-    from kapps_semantic_middleware.credentials import graphdb_env_present
-
-    present, messages = _one_use(graphdb_env_present)
-    assert present
-    assert messages == [
-        "graphdb_env_present is deprecated; use triplestore_env_present, which replaces it."
-    ]
-
-    monkeypatch.delenv("TRIPLESTORE_URL")
-    absent, _ = _one_use(graphdb_env_present)
-    assert not absent
-
-
-def test_the_old_credentials_helper_warns_once_and_returns_the_old_credentials(store_env):
-    from kapps_semantic_middleware.credentials import credentials_for
-
-    old, messages = _one_use(lambda: credentials_for("Tests"))
-
-    assert messages == ["credentials_for is deprecated; use endpoint_for, which replaces it."]
-    assert (old.base_url, old.username, old.password, old.repository) == (
-        URL,
-        "user",
-        "secret",
-        "Tests",
-    )
-
-
-def test_the_old_credentials_helper_reads_the_deprecated_variables(old_env):
-    from kapps_semantic_middleware.credentials import credentials_for
-
-    old, messages = _one_use(lambda: credentials_for("Tests"))
-
-    assert (old.base_url, old.username, old.password) == (URL, "user", "secret")
-    assert messages[0] == "credentials_for is deprecated; use endpoint_for, which replaces it."
-
-
-def test_the_old_credentials_helper_reports_a_missing_variable(store_env, monkeypatch):
-    from kapps_semantic_middleware.credentials import credentials_for
-
-    monkeypatch.delenv("TRIPLESTORE_USERNAME")
-
-    with pytest.warns(DeprecationWarning), pytest.raises(DeploymentValueError, match="USERNAME"):
-        credentials_for("Tests")
-
-
-@pytest.mark.parametrize(
-    ("old", "new"),
-    [("REQUIRED_GRAPHDB_ENV", "REQUIRED_TRIPLESTORE_ENV"), ("DEMO_REPOSITORY", "DEMO_DATASET")],
-)
-def test_an_old_constant_warns_once_and_is_its_successor(old, new):
-    message = f"{old} is deprecated; use {new}, of which it is an alias."
-
-    namespace: dict = {}
-    _, on_import = _one_use(
-        lambda: exec(f"from kapps_semantic_middleware.credentials import {old}", namespace)
-    )
-    value, on_read = _one_use(lambda: getattr(credentials, old))
-
-    assert on_import == [message]
-    assert on_read == [message]
-    assert namespace[old] == value == getattr(credentials, new)
+def test_the_module_has_only_its_current_names():
+    """The old helpers and constants are removed, not kept as aliases."""
+    assert _own_public_names(credentials) == {
+        "REQUIRED_TRIPLESTORE_ENV",
+        "DEMO_DATASET",
+        "triplestore_env_present",
+        "endpoint_for",
+        "triplestore_for",
+    }
 
 
 def test_a_name_the_module_does_not_have_is_an_attribute_error():
     with pytest.raises(AttributeError, match="no attribute 'NOT_A_NAME'"):
         credentials.NOT_A_NAME  # noqa: B018
-
-
-# vendor-check: on

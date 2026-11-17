@@ -106,6 +106,10 @@ print(mw.graph_binding.last_error)
 
 A box of your own, and an exporter, read the records the same way.
 
+## The Reachability Box
+
+An instance whose advertised address is a loopback or an unspecified one (`127.0.0.1`, `localhost`, `::1`, `0.0.0.0`) gets one more box on the System tab: other machines cannot reach it. On a development page the box lists the machine's host name and addresses and the settings of a restart; with `dev=False` it shows the warning only. The machine's network is read once, when the dashboard is enabled. An instance with any other address has no such box. The box exists only for such an address, so `registry.hide("reachability")` raises `ValueError` on an instance that has none; hide it only after checking `registry.get("reachability")`. See {doc}`Host and address <02-workflow-registration>`.
+
 ## A Page Without Connection Metadata
 
 The dashboard is a development surface. By default it shows the connection metadata of the instance: the MQTT topic of each parameter in "Held data", the protocol properties that the northbound projection stripped from it, and the message of a last error, which may name a host, a port, a topic or a URL. That is what a laboratory deployment needs to see whether a value was fetched properly.
@@ -181,7 +185,7 @@ Content-Type: application/json
 
 The answer is the level now in force, `{"logger": "myplant.line", "level": "DEBUG"}`.
 
-- The level is one of `NOTSET`, `DEBUG`, `INFO`, `WARNING`, `ERROR` and `CRITICAL`, spelled so. Any other value, `debug` or `10` among them, is refused with 422 and the list of the names. `NOTSET` clears the logger's own level, and the answer is then the level it takes from its parent.
+- The level is one of `NOTSET`, `DEBUG`, `INFO`, `WARNING`, `ERROR` and `CRITICAL`, spelled so. Any other value, `debug` or `10` among them, is refused with 400 and the list of the names: `{"error": "Bad Request", "detail": "<the reason and the names>", "report": null}`. An empty logger name is refused so too, and a body without both fields answers 400 with `RequestValidationError` and FastAPI's list of errors. `NOTSET` clears the logger's own level, and the answer is then the level it takes from its parent.
 - The root logger is named `root`. An empty name is refused, rather than taken for the root logger.
 - A name the process has no logger for yet gets one, so a level can be set before the logger first writes. A misspelt name gets one too: check the name in the answer.
 - The page's own form gets its answer as HTML, and a refusal as a readable error in the box.

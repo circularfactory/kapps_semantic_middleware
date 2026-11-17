@@ -85,17 +85,45 @@ there and does not write over the old data. The error is a `TripleStoreResponseE
 `kapps_triplestore_interface.exceptions`, or a subclass of it. One cause is a loaded SHACL shape
 that makes the store fail on deletes.
 
-% vendor-check: off -- the deprecation note
-```{note}
-**Deprecated names.** The variables `GRAPHDB_URL`, `GRAPHDB_USERNAME` and `GRAPHDB_PASSWORD` are
-still read, each as the fallback of its `TRIPLESTORE_*` variable, and each use warns. The old names
-still work: `graphdb_for`, `graphdb_env_present`, `REQUIRED_GRAPHDB_ENV` and `credentials_for` in
-`kapps_semantic_middleware.credentials`, `DEMO_REPOSITORY` there too, and `clear_repository` in
-`kapps_semantic_middleware.seeding`. Each use warns once and runs its successor:
-`triplestore_for`, `triplestore_env_present`, `REQUIRED_TRIPLESTORE_ENV`, `endpoint_for`,
-`DEMO_DATASET` and `clear_dataset`. A later release removes the old variables and names.
-```
-% vendor-check: on
+## After a KSM Upgrade
+
+After a KSM upgrade, reload the shared graphs once with `load_shared_ontologies(db, reload=True)`.
+On a shared store, set `TRIPLESTORE_ALLOW_DESTRUCTIVE=1` for that one call. An older shared graph is
+skipped, not replaced, and `clear_dataset(db)` leaves it standing. So until the reload the store
+keeps the old terms and refuses the new ones.
+
+(interface-terms-a-deployment-must-hold)=
+## The Interface Terms a Deployment Must Hold
+
+The middleware reads and writes nine terms of the interface vocabulary, the `inf:` prefix, whose
+namespace IRI in full is `http://www.sfb1574.kit.edu/ontologies/CrcInterfaces#`. They belong to the
+deployed ontology of the factory. The middleware neither ships nor deploys them at runtime: the
+ontology that the deployment receives through its ontology pipeline must define each of them.
+
+| Term | Kind | Expected range | Direction | What the middleware does with it |
+|---|---|---|---|---|
+| `inf:isInterfaceAccessibleParameter` | object property | a class that restricts `inf:accessMode` | northbound | recognizes a parameter: a domain property that is `rdfs:subPropertyOf` it is bound by the REST connector |
+| `inf:isInterfaceAccessibleMQTTParameter` | object property | a class that restricts the five MQTT terms; a subproperty of the generic marker | southbound | recognizes a parameter that is wired to MQTT; a provision declares it, and the parameter property then resolves as if it were a subproperty of it |
+| `inf:hasValue` | datatype property | none globally; each parameter's restriction gives its datatype | northbound | holds the live value: the MQTT connector fills it from the device's readings and reads it to send a write |
+| `inf:accessMode` | datatype property | `xsd:string`, `"read"` or `"readwrite"` | northbound | decides whether a peer may write, and is written during provisioning; absent or unrecognized means read-only |
+| `inf:hasMQTTTopic` | datatype property | `xsd:string` | southbound | reads the topic that the device publishes readings on; written during provisioning |
+| `inf:hasMQTTSetTopic` | datatype property | `xsd:string` | southbound | reads the topic that a setpoint is published to; readwrite parameters only; written during provisioning |
+| `inf:hasMQTTBrokerIP` | datatype property | `xsd:string` | southbound | reads the address of the broker that carries the topics; written during provisioning |
+| `inf:hasMQTTBrokerPort` | datatype property | `xsd:integer` | southbound | reads the broker port; absent means 1883; written during provisioning |
+| `inf:hasMQTTValuePath` | datatype property | `xsd:string` | southbound | reads the dotted path to the value in a JSON envelope; absent means a raw scalar; written during provisioning |
+
+Northbound terms may appear in what the middleware serves. Southbound terms are connection
+metadata and are never served: a peer that learned them could reach the device without the
+middleware. The kinds and ranges follow the code. The ranges are the datatypes that the restrictions of the two markers give; no term needs a global range.
+
+If the deployed ontology lacks one of these terms, the fix is in the ontology, not around it:
+
+- A missing marker means the parameter is not recognized, so no connector is wired to it.
+- A missing metadata term means the OGM refuses the write when provisioning writes the term, and a
+  connector that needs it cannot read its connection.
+
+The vocabulary class that holds these terms is documented on the
+[vocabulary reference page](../reference/vocabulary.md).
 
 ## Getting the Domain Classes into the Ontology
 
@@ -124,10 +152,65 @@ test loads it as shown above, and a productive store already holds it.
 
 ## Seeding the Instance Data a Parameter Needs
 
-A {term}`Parameter` is recognized only if its individual already carries its connection metadata in
-the graph — for an MQTT parameter, properties such as `inf:hasMQTTTopic` and `inf:hasMQTTBrokerIP`.
-Nothing promotes a Parameter without them. You write that metadata as instance data through the OGM
-before the middleware starts. The pattern, from `examples/seed.py`:
+A {term}`Parameter` is recognized only if its individual carries its connection metadata in the graph —
+for an MQTT parameter, properties such as `inf:hasMQTTTopic` and `inf:hasMQTTBrokerIP`. Nothing
+promotes a Parameter without them. There are two ways to get the metadata there: let the middleware
+provision it at its first start, or write it yourself before the middleware starts.
+
+### Let the Middleware Provision It
+
+Declare each parameter's interface and metadata in the embedding code, and pass the declarations to
+the constructor. At construction the middleware writes what the stored parameter nodes lack, through
+one OGM commit, and then recognizes and wires the parameters from the graph. From `examples/seed.py`:
+
+```python
+from kapps_semantic_middleware.connectors.provisioning import Provision
+
+provisions = [
+    Provision(
+        holder_iri=CONVEYOR_BELT_LEFT,
+        property_iri=TU_HAS_CONVEYOR_SPEED,
+        interface_iri=INF_IS_INTERFACE_ACCESSIBLE_MQTT_PARAMETER,
+        metadata={
+            INF_ACCESS_MODE: ["readwrite"],
+            INF_HAS_MQTT_TOPIC: ["TransferUnit1/ConveyorBelt/left/speed"],
+            INF_HAS_MQTT_SET_TOPIC: ["TransferUnit1/ConveyorBelt/left/speed_set"],
+            INF_HAS_MQTT_BROKER_IP: ["127.0.0.1"],
+        },
+    ),
+    # ... one per parameter
+]
+
+mw = SemanticMiddleware(..., class_scope=unit_scope, provisions=provisions)
+```
+
+- **A restart writes nothing.** A node that already carries the declared values is left as it is,
+  and a write updates the stored node, never a second one beside it.
+- **The declaration gives the interface.** The parameter property resolves as if it were
+  `rdfs:subPropertyOf` the declared interface, also where the ontology does not say so.
+- **A contradiction is loud.** A stored value of a declared property that differs from the
+  declared one fails construction with a `DeploymentValueError`. Mark the declaration
+  `exclusive=True` to replace the stored values instead.
+- **Another interface merges.** The metadata of an interface the declaration does not select is
+  no contradiction: the node may be reached over two protocols, and a plain declaration leaves
+  that metadata as it is. An exclusive declaration removes it in the same commit. A property
+  that no interface restricts, such as an `rdfs:comment`, always stays.
+- **A monitor writes nothing.** With `autoregister_connectors=False` the middleware provisions
+  nothing, and still hides the declared interface's metadata northbound.
+- **It needs a `class_scope` that reaches each declared parameter.** Provisions without one fail
+  construction, and so does a declared parameter that the scope does not reach from the
+  resource: it would be written but never wired.
+- **Each value is a list, and each parameter is declared once.** A bare string such as
+  `"readwrite"`, an empty list, or a second declaration of one parameter of a holder fails
+  construction. So does a `kapps-ogm` before 0.4.0, which has no `Interface`.
+
+`seed_scenario3(db, ogm, metadata=False)` seeds a TransferUnit without any parameter node, and
+`scenario3_provisions()` is its declaration.
+
+### Write It Yourself
+
+Write the metadata as instance data through the OGM before the middleware starts. The pattern, from
+`examples/seed.py`:
 
 ```python
 from kapps_ogm.utils.class_scope import ClassScope

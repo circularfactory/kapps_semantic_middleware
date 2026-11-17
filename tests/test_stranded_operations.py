@@ -16,6 +16,7 @@ from rdflib.namespace import XSD
 
 from kapps_semantic_middleware.registration import (
     _sweep_stale_services,
+    deregister_service,
     find_stranded_operations,
 )
 from kapps_semantic_middleware.vocabulary import CFC, SVC, OperationStatus
@@ -253,3 +254,118 @@ def test_the_sweep_fails_what_the_stale_service_alone_could_finish(ogm):
     assert sorted(failed) == sorted([OPERATION, OTHER_OPERATION])
     assert ogm.status(OPERATION) == OperationStatus.FAILED
     assert ogm.status(OTHER_OPERATION) == OperationStatus.FAILED
+
+
+# The second pass: a Resource whose Services all stopped cleanly (no address) is found by its heartbeat.
+
+
+def _unserved(ogm: _Ogm) -> list[IRI]:
+    failed: list[IRI] = []
+    _sweep_stale_services(ogm, THRESHOLD, now=NOW, failed=failed.append)  # type: ignore[arg-type]
+    return failed
+
+
+def _stopped_resource_with_work(ogm: _Ogm, heartbeat: datetime) -> None:
+    ogm.service(CONTROLLER, heartbeat, address=False)
+    ogm.realizes(CONTROLLER_WORKFLOW, CONTROLLER)
+    ogm.operation(OPERATION, OperationStatus.QUEUED)
+    ogm.operation(OTHER_OPERATION, OperationStatus.RUNNING, executor=CONTROLLER_WORKFLOW)
+
+
+def test_the_sweep_fails_the_work_of_a_cleanly_stopped_resource_once_its_heartbeat_is_old(ogm):
+    _stopped_resource_with_work(ogm, STALE)
+
+    failed = _unserved(ogm)
+
+    assert sorted(failed) == sorted([OPERATION, OTHER_OPERATION])
+    assert ogm.status(OPERATION) == OperationStatus.FAILED
+    assert ogm.status(OTHER_OPERATION) == OperationStatus.FAILED
+    reason = str(ogm.graph.value(URIRef(OPERATION), URIRef(str(SVC.hasExecutionResult))))
+    assert "no live service of the resource will finish it" in reason
+
+
+def test_the_sweep_fails_nothing_of_a_stopped_resource_whose_heartbeat_is_inside_the_threshold(ogm):
+    _stopped_resource_with_work(ogm, FRESH)
+
+    failed = _unserved(ogm)
+
+    assert failed == []
+    assert ogm.status(OPERATION) == OperationStatus.QUEUED
+
+
+def test_the_sweep_fails_nothing_of_a_restarted_service(ogm):
+    ogm.service(CONTROLLER, FRESH)  # address and a fresh heartbeat again
+    ogm.realizes(CONTROLLER_WORKFLOW, CONTROLLER)
+    ogm.operation(OPERATION, OperationStatus.QUEUED)
+
+    failed = _unserved(ogm)
+
+    assert failed == []
+
+
+def test_the_new_pass_leaves_a_resource_with_a_live_sibling_alone(ogm):
+    ogm.service(CONTROLLER, STALE, address=False)
+    ogm.realizes(CONTROLLER_WORKFLOW, CONTROLLER)
+    ogm.service(MONITOR, FRESH)
+    ogm.operation(OPERATION, OperationStatus.QUEUED)
+    ogm.operation(OTHER_OPERATION, OperationStatus.RUNNING)  # no recorded executor
+
+    failed = _unserved(ogm)
+
+    assert failed == []
+    assert ogm.status(OTHER_OPERATION) == OperationStatus.RUNNING
+
+
+def test_the_newest_heartbeat_of_two_stopped_services_counts(ogm):
+    _stopped_resource_with_work(ogm, STALE)
+    ogm.service(MONITOR, FRESH, address=False)
+
+    failed = _unserved(ogm)
+
+    assert failed == []
+    assert ogm.status(OPERATION) == OperationStatus.QUEUED
+
+
+def test_a_store_error_on_one_resource_is_logged_and_the_pass_goes_on(ogm, caplog, monkeypatch):
+    other_resource = IRI("http://example.org/test#Other")
+    other_service = IRI("http://example.org/test#OtherService")
+    other_capability = IRI("http://example.org/test#Other_Cap")
+    other_operation = IRI("http://example.org/test#OtherOp")
+    _stopped_resource_with_work(ogm, STALE)
+    ogm.add(other_service, SVC.isServiceOf, other_resource)
+    ogm.add(other_service, SVC.hasLastHeartbeat, Literal(STALE.isoformat(), datatype=XSD.dateTime))
+    ogm.add(other_resource, CFC.hasCapability, other_capability)
+    ogm.operation(other_operation, OperationStatus.QUEUED, capability=other_capability)
+
+    from kapps_semantic_middleware import registration
+
+    real = registration.find_stranded_operations
+
+    def flaky(ogm_, resource_iri, *args, **kwargs):
+        if resource_iri == RESOURCE:
+            raise registration.TripleStoreUnavailableError("store down")
+        return real(ogm_, resource_iri, *args, **kwargs)
+
+    monkeypatch.setattr(registration, "find_stranded_operations", flaky)
+    failed: list[IRI] = []
+
+    with caplog.at_level("WARNING"):
+        _sweep_stale_services(ogm, THRESHOLD, now=NOW, failed=failed.append)  # type: ignore[arg-type]
+
+    assert failed == [other_operation]
+    assert ogm.status(OPERATION) == OperationStatus.QUEUED
+    warnings = [r.getMessage() for r in caplog.records if str(RESOURCE) in r.getMessage()]
+    assert len(warnings) == 1
+
+
+def test_a_real_clean_stop_leaves_the_heartbeat_that_the_second_pass_reads(ogm):
+    """Deregistration removes the address and keeps the heartbeat, so the stopped Resource is found."""
+    ogm.service(CONTROLLER, STALE)
+    ogm.realizes(CONTROLLER_WORKFLOW, CONTROLLER)
+    ogm.operation(OPERATION, OperationStatus.QUEUED)
+    ogm.operation(OTHER_OPERATION, OperationStatus.RUNNING, executor=CONTROLLER_WORKFLOW)
+    deregister_service(ogm, CONTROLLER)  # type: ignore[arg-type]
+
+    failed = _unserved(ogm)
+
+    assert sorted(failed) == sorted([OPERATION, OTHER_OPERATION])

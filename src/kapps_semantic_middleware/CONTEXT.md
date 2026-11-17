@@ -14,8 +14,8 @@ Interface-Layer component that lets a piece of Python code running on or next to
 resource (or as a standalone service) expose functionality through the knowledge graph, and
 lets other middleware instances discover and invoke that functionality via the graph rather
 than via hardcoded network references. This context owns the Service/Workflow/Capability/
-Operation/Mode registration and execution machinery. It delegates the actual generation and
-parsing of workflow precondition/outcome SHACL shapes to the SHACL Interop context.
+Operation/Mode registration and execution machinery. It does not write or read workflow precondition/outcome SHACL shapes: the
+domain's ontology owns them.
 
 Built on `transitional_sync_middleware` (the synchronization layer, whose `Middleware` class
 `SemanticMiddleware` extends), `kapps_ogm` (all knowledge graph reads/writes), and
@@ -88,8 +88,9 @@ which are northbound (`svc:hasAddress`, the recursive REST routes).
 An invokable function exposed by a Service, registered with `@mw.workflow(...)`. Realizes
 exactly one Capability. Typed via a domain-specific subclass of `svc:Workflow` that must
 pre-exist in the ontology, carrying a SHACL shape describing its arguments (precondition)
-and return value (outcome) — see the SHACL Interop context for how that shape is read/
-written.
+and return value (outcome). The ontology's authors write that shape, and the middleware
+neither writes nor reads it; the SHACL Interop context holds an authoring aid that drafts
+one from a signature.
 A Workflow corresponds to a **skill** of the capability–skill–service (CSS) model: an
 executable implementation of an encapsulated function that a capability specifies, reached
 through the skill interface (Köcher et al. 2023, arXiv 2209.09632, Sec. 3.4). KAPPS keeps the
@@ -122,6 +123,17 @@ also the deepest thing a binding can address: `ConnectionInfo` bottoms out at th
 value inside it.
 _Avoid_: StateProperty (retired term); Sensor value / Observation (those describe the
 data, not the graph node); Capability (states have none — there is no "light-barrier capability").
+
+**Provision**:
+The embedding code's declaration of one **Parameter**: its holder, its property, the **Interface
+property** that reaches it, and its connection metadata. On a cold start it is the only source of
+the interface. At construction a resource-mode instance writes what the stored node lacks,
+through one OGM commit, before it recognizes the Parameters. A node that carries the declared
+values is left as it is. A differing value of a declared property is a loud error unless the
+Provision is **exclusive**. The metadata of another interface merges, as every resolved
+interface does: only an exclusive Provision removes it as stale. A monitor writes nothing. The constructor input is `provisions`.
+_Avoid_: Seed (a seed is the test or demo setup that writes a whole scenario); authoritative
+(for the flag, which is `exclusive`).
 
 **Interface class** — _retired term, do not use_:
 A protocol-specific parameter *class* (`inf:MQTTParameter`, `inf:OPCUAParameter`) that a connector was
@@ -543,6 +555,18 @@ a restarting instance's reconstruction of its queue fails its own orphaned `runn
 `registration.find_stranded_operations`.
 _Avoid_: orphaned (that is a `running` Operation of this instance's own earlier run, as the
 reconstruction sees it), dead Operation.
+
+**Realizer** (of a Capability):
+The Service whose Workflow or StateProperty a Capability leads to now
+(`svc:realizedByWorkflow`, `svc:providedByStateProperty`): the Capability's **holder**. One
+Capability has at most one **live** realizer (live as for a Stranded Operation). A resource-mode
+instance that would realize a Capability whose holder is a live Service of another instance does
+not start, and raises `CapabilityAlreadyRealizedError` (Repair). It takes a Capability back from
+its own Service (a restart at the same address), and takes it over from a Service that is not
+live (a restart at another address once the old registration is stale). Several instances on one
+Resource stay allowed, each with its own Service, as long as they realize different Capabilities.
+_Avoid_: owner (a Capability belongs to its Resource), the instance that registered last (that
+was the rule before; the second live instance is refused now).
 
 **Deregistration**:
 The reverse of registration: on shutdown (or, for watchdog-mode-detected staleness), removing

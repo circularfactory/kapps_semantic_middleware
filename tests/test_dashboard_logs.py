@@ -229,7 +229,7 @@ def test_the_level_route_refuses_a_name_that_is_not_a_standard_level(
 
     response = _client().post("/dashboard/logs/level", json={"logger": name, "level": level})
 
-    assert response.status_code == 422
+    assert response.status_code == 400
     detail = response.json()["detail"]
     assert "DEBUG, INFO, WARNING, ERROR, CRITICAL" in detail
     assert logging.getLogger(name).level == logging.ERROR
@@ -243,7 +243,7 @@ def test_the_level_route_refuses_a_level_that_is_not_a_name(
 
     response = _client().post("/dashboard/logs/level", json={"logger": name, "level": 10})
 
-    assert response.status_code == 422
+    assert response.status_code == 400
     assert logging.getLogger(name).level == logging.NOTSET
 
 
@@ -253,7 +253,7 @@ def test_the_level_route_refuses_an_empty_logger_name() -> None:
 
     response = _client().post("/dashboard/logs/level", json={"logger": " ", "level": "DEBUG"})
 
-    assert response.status_code == 422
+    assert response.status_code == 400
     assert "root" in response.json()["detail"]
     assert logging.getLogger().level == root_level
 

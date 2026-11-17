@@ -80,6 +80,13 @@ there and does not write over the old data. The error is a `TripleStoreResponseE
 `kapps_triplestore_interface.exceptions`, or a subclass of it. One cause is a loaded SHACL shape
 that makes the store fail on deletes.
 
+## After a KSM Upgrade
+
+After a KSM upgrade, reload the shared graphs once with `load_shared_ontologies(db, reload=True)`.
+On a shared store, set `TRIPLESTORE_ALLOW_DESTRUCTIVE=1` for that one call. An older shared graph is
+skipped, not replaced, and `clear_dataset(db)` leaves it standing. So until the reload the store
+keeps the old terms and refuses the new ones.
+
 ## Getting the Domain Classes into the Ontology
 
 The middleware never creates ontology classes. Every Capability, Workflow, StateProperty and Service
@@ -106,10 +113,65 @@ loads it as shown above, and a productive store already holds it.
 
 ## Seeding the Instance Data a Parameter Needs
 
-A Parameter is recognized only if its individual already carries its connection metadata in the
-graph — for an MQTT parameter, properties such as `inf:hasMQTTTopic` and `inf:hasMQTTBrokerIP`.
-Nothing promotes a Parameter without them. You write that metadata as instance data through the OGM
-before the middleware starts. The pattern, from `examples/seed.py`:
+A Parameter is recognized only if its individual carries its connection metadata in the graph —
+for an MQTT parameter, properties such as `inf:hasMQTTTopic` and `inf:hasMQTTBrokerIP`. Nothing
+promotes a Parameter without them. There are two ways to get the metadata there: let the middleware
+provision it at its first start, or write it yourself before the middleware starts.
+
+### Let the Middleware Provision It
+
+Declare each parameter's interface and metadata in the embedding code, and pass the declarations to
+the constructor. At construction the middleware writes what the stored parameter nodes lack, through
+one OGM commit, and then recognizes and wires the parameters from the graph. From `examples/seed.py`:
+
+```python
+from kapps_semantic_middleware.connectors.provisioning import Provision
+
+provisions = [
+    Provision(
+        holder_iri=CONVEYOR_BELT_LEFT,
+        property_iri=TU_HAS_CONVEYOR_SPEED,
+        interface_iri=INF_IS_INTERFACE_ACCESSIBLE_MQTT_PARAMETER,
+        metadata={
+            INF_ACCESS_MODE: ["readwrite"],
+            INF_HAS_MQTT_TOPIC: ["TransferUnit1/ConveyorBelt/left/speed"],
+            INF_HAS_MQTT_SET_TOPIC: ["TransferUnit1/ConveyorBelt/left/speed_set"],
+            INF_HAS_MQTT_BROKER_IP: ["127.0.0.1"],
+        },
+    ),
+    # ... one per parameter
+]
+
+mw = SemanticMiddleware(..., class_scope=unit_scope, provisions=provisions)
+```
+
+- **A restart writes nothing.** A node that already carries the declared values is left as it is,
+  and a write updates the stored node, never a second one beside it.
+- **The declaration gives the interface.** The parameter property resolves as if it were
+  `rdfs:subPropertyOf` the declared interface, also where the ontology does not say so.
+- **A contradiction is loud.** A stored value of a declared property that differs from the
+  declared one fails construction with a `DeploymentValueError`. Mark the declaration
+  `exclusive=True` to replace the stored values instead.
+- **Another interface merges.** The metadata of an interface the declaration does not select is
+  no contradiction: the node may be reached over two protocols, and a plain declaration leaves
+  that metadata as it is. An exclusive declaration removes it in the same commit. A property
+  that no interface restricts, such as an `rdfs:comment`, always stays.
+- **A monitor writes nothing.** With `autoregister_connectors=False` the middleware provisions
+  nothing, and still hides the declared interface's metadata northbound.
+- **It needs a `class_scope` that reaches each declared parameter.** Provisions without one fail
+  construction, and so does a declared parameter that the scope does not reach from the
+  resource: it would be written but never wired.
+- **Each value is a list, and each parameter is declared once.** A bare string such as
+  `"readwrite"`, an empty list, or a second declaration of one parameter of a holder fails
+  construction. So does a `kapps-ogm` before 0.4.0, which has no `Interface`.
+
+`seed_scenario3(db, ogm, metadata=False)` seeds a TransferUnit without any parameter node, and
+`scenario3_provisions()` is its declaration.
+
+### Write It Yourself
+
+Write the metadata as instance data through the OGM before the middleware starts. The pattern, from
+`examples/seed.py`:
 
 ```python
 from kapps_ogm.utils.class_scope import ClassScope

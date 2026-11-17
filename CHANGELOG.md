@@ -12,6 +12,141 @@ work lands, not at release time.
 finding exactly one of it, and prose naming it is a second occurrence — which stopped a release
 the first time this file was written.)
 
+## 0.4.0 — 2026-11-17
+
+### Added
+
+- **A clean stop closes the middleware's store client.** The stop's last step, after the deregistration and the issuers' notifications (resource mode) or the sweep (watchdog mode), calls `close()` of the OGM's store client, so the interface removes the write receipts that the instance left behind. A failing close is logged as one WARNING and never fails the stop. The client stays usable for another instance that shares it.
+- The status page warns when the instance advertises a loopback or an unspecified address, which other machines cannot reach. A box on the System tab lists the machine's addresses and the settings of a restart, and the registration guide explains the server runner's listen host, `host` and `address`.
+- **A resource-mode middleware provisions its parameters' connection metadata.** Pass
+  `provisions=[Provision(...)]` with a `class_scope`: at construction the middleware writes the
+  declared metadata that the stored parameter nodes lack, through one OGM commit, and then wires
+  the parameters from the graph. A restart writes nothing; a stored value that contradicts a
+  declared one fails construction unless the declaration is `exclusive`; the metadata of
+  another interface merges, and only an exclusive declaration removes it; a monitor writes
+  nothing. A declaration with a bare string or an empty list as its values, a parameter declared
+  twice, or a parameter that the `class_scope` does not reach fails construction. A declared
+  interface also counts where the ontology has no `rdfs:subPropertyOf` marker, for recognition
+  and for the northbound projection.
+- **The body of `commit(...)` and the block of `issue_operation(...)` add one value to a property
+  with `append`.** `transition.append(instance_iri, property_iri, value)` and
+  `op.append(instance_iri, property_iri, value)` each stage one kapps_ogm `Append`: where
+  `update` replaces the values of a property, `append` adds one and reads nothing. An IRI value
+  is a reference, as in `update`. In `issue_operation(...)`, an append to an instance that a
+  creation in the block makes goes into that creation's `Create`.
+
+### Changed
+
+- **A handover with an Operation commits it `running` at entry, `done` after the move, and `failed` when the body raises.** `possession.handover(mw, ..., operation=op)` makes one more commit per handover: the entry commits `op` as `running` with the possession change (it committed `done` there), a clean exit commits `done`, and an error in the body commits `failed` with the exception's message as the execution result, and is raised as it is. The issuer hears `running` first, and `done` only after the move. A handover without `operation` is unchanged.
+- The pins are `kapps-triplestore-interface~=2.4.0` and `kapps-ogm~=0.4.1`, the versions this round released.
+- **The getting-started path calls the environment's interpreter directly, and works on a Windows machine that forbids scripts.** The README, the factory page and the README that `kapps-examples` writes name `.venv/bin/python` and `.venv\Scripts\python.exe` for each command, and no step needs `activate` or `Activate.ps1`. The `Next steps` of `kapps-examples` print the full path of the interpreter that runs it, not a bare `python`.
+- The docs state a guideline for reads: fetch with `mw.fetch()` what you work with through the middleware, and query through the access module for questions. It is a "should"; reads stay unconstrained. It is in the README, the docstrings of `SemanticMiddleware` and `fetch`, the writes guide page, the guide index and the agent instructions.
+- **The REST contract of the middleware's own routes changes: an error answers the HTTP status of
+  its action**. The parameter routes and the dashboard routes answer a typed error with
+  500 (Repair), 503 (Retry), 409 or 404 (Refresh), 422 (Refused) or 400 (Fix the call); the
+  parameter routes answered 500 for every error before. A bare built-in, such as a `ValueError`,
+  still answers 500. Every error answer of these routes has the body
+  `{"error": <type name>, "detail": <message>, "report": <raw store report or null>}`, in place of
+  FastAPI's `{"detail": ...}`; for the middleware's own HTTP errors, such as an unknown dashboard
+  box, `error` is the status's reason phrase. A request that fails validation answers 400 with
+  `error` `RequestValidationError` and FastAPI's list of errors as `detail`, on every route of the
+  instance, the framework's included; it answered 422 before. The dashboard's log-level route
+  answers a JSON call with a wrong level or an empty logger name with 400, not 422; its own form
+  still gets 200 with a fragment. No answer carries `Retry-After`. The framework's workflow routes
+  answer a raised error as before. The error map's page shows the statuses.
+- The error map lists a known issue: on a dataset whose ruleset is not `rdfsplus-optimized`, a resource-mode
+  instance does not start, and the refusal names an anonymous range, not the ruleset. The concepts
+  page links to it.
+- **A second live instance that would realize the same Capability is refused at startup.** One
+  Capability has at most one live realizer. A resource-mode instance reads the holder of each
+  Capability that it registers before its first write; when a live Service of another instance
+  realizes one, the instance does not start: it raises the new `CapabilityAlreadyRealizedError`
+  (Repair, a `DeploymentError`), whose message names the Resource, the
+  Capability, the other instance's address and last heartbeat, and the time from which that
+  registration counts as stale. Before, the newer instance silently replaced the Capability's link,
+  and the older one ran on without being reached. A restart at another address takes the
+  Capability over once the old registration is stale (its heartbeat older than the
+  `staleness_threshold`, swept by a watchdog, or deregistered by a clean stop), and logs one
+  WARNING that names the Service it took over from; a restart at the same address takes its
+  registration back as before. An instance now registers everything it exposes in one startup
+  step directly after its Service, before the datamodel is loaded, the queue is reconstructed and
+  the heartbeat starts. A controller and a monitor on one Resource, and two instances that expose
+  different names, start as before.
+
+### Removed
+
+- **Breaking: the connector write route is gone.** `POST /connectors/{connector_id}/value`, which the
+  framework mounts for a connector that can consume, wrote a device with no workflow, no commit and
+  no admission. A device changes only through a workflow of its service. A running instance now
+  answers every request under `/connectors/` other than GET, HEAD or OPTIONS with 405, and the
+  connector's `consume` is never called from HTTP. The read routes stay.
+
+- **Breaking: the deprecated vendor-named helpers are gone.** They were aliases since 0.2.1. A
+  caller that still uses one gets an `ImportError` or an `AttributeError`. Use its successor:
+
+  | Removed | Successor |
+  |---|---|
+  | `credentials.graphdb_for(repository)` | `credentials.triplestore_for(dataset)` |
+  | `credentials.graphdb_env_present()` | `credentials.triplestore_env_present()` |
+  | `credentials.REQUIRED_GRAPHDB_ENV` | `credentials.REQUIRED_TRIPLESTORE_ENV` |
+  | `credentials.credentials_for(repository)` | `credentials.endpoint_for(dataset)` |
+  | `credentials.DEMO_REPOSITORY` | `credentials.DEMO_DATASET` |
+  | `seeding.clear_repository(db)` | `seeding.clear_dataset(store)` |
+
+  With them go their `repository` parameters: each successor takes `dataset`.
+- **Breaking: KSM reads no `GRAPHDB_URL`, `GRAPHDB_USERNAME` or `GRAPHDB_PASSWORD`.** Set
+  `TRIPLESTORE_URL`, `TRIPLESTORE_USERNAME` and `TRIPLESTORE_PASSWORD`. With only the old
+  variables set, `triplestore_env_present()` is false and `triplestore_for` raises
+  `DeploymentValueError` naming the missing `TRIPLESTORE_*` variables. The factory demo still
+  keeps the old variables from its PLCs, because the triple store interface still reads them as
+  its own deprecated fallback.
+
+### Fixed
+
+- **Two handovers of one workpiece in one process no longer both move it.** `handover()` holds a
+  lock per workpiece from the read of its preconditions until its entry commit is admitted or
+  refused, and releases it before the body. The second handover reads the preconditions after the
+  first one's commit, so it raises `HandoverPreconditionError`, writes nothing and runs no body.
+  The lock is reentrant, so a handover of the same workpiece started on the same thread inside
+  the first one's commit does not wait on itself. Handovers of different workpieces do not wait on each other. Handovers of one workpiece from
+  different processes can still both succeed.
+- The watchdog's sweep fails the `queued` and `running` Operations of a Resource whose Services all stopped cleanly and whose newest heartbeat is older than the staleness threshold. The sweep started only from Services that still had an address, so a cleanly stopped Resource's work was never failed and its issuers waited for ever. A Service that restarts within the threshold keeps its queue; a Resource with a live Service is left to the first pass.
+- **A Workflow and its Capability are registered in one commit, so a reader never finds a
+  Workflow whose Capability does not resolve yet.** Before, a starting instance wrote the
+  Workflow, then its endpoint, then the Capability with its link to it: between those commits a
+  reader saw a live Service with a Workflow and an endpoint, while the resolution of the
+  Capability class raised "cannot be resolved to any reachable Service". Now each exposed
+  Workflow or StateProperty, its endpoint, its Capability with `svc:realizedByWorkflow` or
+  `svc:providedByStateProperty`, and the Resource's `cfc:hasCapability` link arrive in one
+  `OGM.commit`. A restart, and a start that finds only part of an exposure from an earlier run,
+  write each exposure in one commit too. `register_workflow` and `register_state_property` keep
+  their signatures and use the same one-commit writer.
+- **Importing KSM no longer configures the root logger, and no longer sets a process-wide
+  event-loop policy on Windows.** The framework that KSM imports did both at its import; KSM's
+  package init now undoes them, so the root logger and the event-loop policy are what the host
+  set up, before or after the import. A host configures logging itself to see KSM's INFO
+  records, for example with `logging.basicConfig(level=logging.INFO)`. A Windows host that runs
+  an MQTT binding inside its own `asyncio.run` picks a Selector loop itself, for example with
+  `asyncio.run(main(), loop_factory=asyncio.SelectorEventLoop)`; a host served by uvicorn is
+  unaffected, because uvicorn picks its loop itself. A program that imports the framework
+  itself before KSM keeps the framework's effects.
+- The northbound projection's query for an interface's metadata matched every restriction of the
+  ontology on a store that scopes a `BIND` inside a `UNION` branch strictly. It now binds the
+  range in each branch.
+- A resource-mode instance refuses to start on a dataset whose ruleset differs from
+  `TRIPLESTORE_REQUIRED_RULESET`, with one line that names the dataset, its ruleset and the
+  required one, before the OGM's refusal about an anonymous range.
+- The change type of `commit(...)`, and of the changes staged in `create(...)`, accepts
+  kapps_ogm's `Append` beside `Create` and `Update`, so mypy no longer refuses one. An `Append`
+  in the exit transition or among the staged changes is committed instead of raising
+  `AttributeError`: it is never merged with another change, and it overlaps a change that sets
+  its property, but not another `Append`.
+- **The documentation no longer says that the middleware generates the SHACL shapes of a Workflow's arguments and return value.** It never did. The shapes belong to the domain's ontology, and its authors write them; the running instance's API page shows the signature. `build_workflow_shape` stays, documented as an authoring aid for ontology authors that nothing in the middleware calls.
+
+### Documentation
+
+- The provisioning guide lists the nine `inf:` interface terms that a deployment's ontology must define, with kind, range, direction and use, and says that the middleware ships and deploys none of them. The vocabulary reference links to the list.
+
 ## 0.3.0 — 2026-10-30
 
 ### Changed

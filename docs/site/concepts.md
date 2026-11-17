@@ -18,7 +18,7 @@ Several packages work together:
 
 The triple store runs the ruleset `rdfsplus-optimized`, and the examples' store configuration sets it. A query reads the inferred statements as well as the asserted ones unless it asks otherwise, and both ontologies carry `owl:imports`. The reads that go through the OGM, such as `fetch`, see the inferred statements too, except that the OGM reads the data of an anonymous node as asserted only. The recognition of a parameter's wiring reads the asserted statements only: a parameter node's only types that recognition could find by inference are anonymous restriction nodes, and counting them would inflate every result. So the wiring does not depend on inference.
 
-A store without that ruleset returns fewer statements to the reads that are inferred. It does not make the projection leak: the projection fails closed. When the ontology cannot be read, or a protocol marker's range is not understood, it raises instead of serving.
+A store without that ruleset returns fewer statements to the reads that are inferred. It does not make the projection leak: the projection fails closed. When the ontology cannot be read, or a protocol marker's range is not understood, it raises instead of serving. KAPPS supports only `rdfsplus-optimized`: on another ruleset, a resource-mode instance does not start. When `TRIPLESTORE_REQUIRED_RULESET` is set, the refusal names the dataset, its ruleset and the required one. The error map lists it in its {ref}`gaps <error-map-gaps>`.
 
 ## Glossary
 
@@ -37,7 +37,7 @@ Mode
     A construction-time choice governing what the middleware instance is for: `"resource"` hosts the Services of the Resources it is bound to and exposes their Workflows and StateProperties; `"server"` is reserved and not built: constructing one raises; `"watchdog"` wraps no Resource and sweeps stale addresses from the graph.
 
 Workflow
-    An invokable function exposed by a Service, registered with a decorator. Realizes exactly one Capability. Typed via a domain-specific subclass that must pre-exist in the ontology, carrying a SHACL shape describing its arguments and return value.
+    An invokable function exposed by a Service, registered with a decorator. Realizes exactly one Capability. Typed via a domain-specific subclass that must pre-exist in the ontology, carrying a SHACL shape describing its arguments and return value. The ontology's authors write that shape; the middleware does not, and the running instance's API page shows the signature.
 
 Capability
     An ability a Resource currently has. Every Capability instance is created automatically by the middleware from a pre-existing Capability type the moment a matching Workflow or StateProperty is registered.

@@ -282,8 +282,8 @@ def test_a_handover_changes_only_the_workpieces_link_its_update_and_its_operatio
     """The possession change re-points the box, and writes no Resource's link.
 
     The giver and the counterpart keep their one ``cfc:hasPossessor`` each. The same commit
-    carries the box's transport state and the Operation that the handover completes, and nothing
-    else.
+    carries the box's transport state and the Operation's end (`running` at the entry, then `done`
+    after the body), and nothing else.
     """
     db = store
     seed.seed_handover(db, OGM(db=db))

@@ -94,8 +94,8 @@ class TestBrokerPort:
         assert seed.broker_port(17) == 18847
 
 
-# vendor-check: off -- the deprecated variables, until they go.
-# The deprecated variables, which the PLC must not receive either.
+# vendor-check: off -- the old variables, which a PLC must not receive.
+# The old variables, which the PLC must not receive either.
 OLD_STORE_ENV = {
     "GRAPHDB_URL": "http://localhost:7200",
     "GRAPHDB_USERNAME": "admin",
@@ -109,7 +109,7 @@ class TestEnvironmentHandling:
     """This class tests that _strip_store_env strips the store's credentials for PLC children."""
 
     def test_strip_store_env_removes_all_store_vars(self):
-        """_strip_store_env removes every TRIPLESTORE_* key, and every deprecated one, and keeps
+        """_strip_store_env removes every TRIPLESTORE_* key, and every old one, and keeps
         the rest."""
         env = {
             "TRIPLESTORE_URL": "http://localhost:7200",

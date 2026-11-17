@@ -8,7 +8,6 @@ returning `False`. The shared ontologies load with the Graph Store verbs.
 from __future__ import annotations
 
 import sys
-import warnings
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -197,26 +196,25 @@ def test_a_graph_that_holds_statements_is_not_loaded_again():
     assert store.added == []
 
 
-# vendor-check: off -- the deprecated name, until it goes.
+def test_the_module_has_only_its_current_public_functions():
+    """The old name of ``clear_dataset`` is removed, not kept as an alias."""
+    import kapps_semantic_middleware.seeding as seeding
 
+    own = {
+        name
+        for name, value in vars(seeding).items()
+        if callable(value)
+        and not name.startswith("_")
+        and getattr(value, "__module__", None) == seeding.__name__
+    }
 
-def test_the_old_clear_warns_once_and_runs_its_successor():
-    from kapps_semantic_middleware.seeding import clear_repository
-
-    store = _FakeStore("scenario-seeds", answer=False)
-
-    with warnings.catch_warnings(record=True) as record:
-        warnings.simplefilter("always")
-        with pytest.raises(TripleStoreResponseError, match="'scenario-seeds'"):
-            clear_repository(store)
-
-    assert [str(w.message) for w in record] == [
-        "clear_repository is deprecated; use clear_dataset, which replaces it."
-    ]
-    assert store.cleared == [()]
-
-
-# vendor-check: on
+    assert own == {
+        "is_disposable_target",
+        "read_service_shapes",
+        "set_service_shapes",
+        "clear_dataset",
+        "load_shared_ontologies",
+    }
 
 
 def test_a_scenario_seed_replaces_the_shared_ontology_graphs_before_it_adds_them():

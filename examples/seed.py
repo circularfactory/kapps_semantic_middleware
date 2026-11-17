@@ -89,6 +89,7 @@ TU_HAS_CONVEYOR_SPEED = IRI(f"{TU_NS}hasConveyorSpeed")
 TU_IS_OCCUPIED = IRI(f"{TU_NS}isOccupied")
 TU_HAS_UNIT = IRI(f"{TU_NS}hasUnit")
 
+INF_IS_INTERFACE_ACCESSIBLE_MQTT_PARAMETER = IRI(f"{INF_NS}isInterfaceAccessibleMQTTParameter")
 INF_HAS_VALUE = IRI(f"{INF_NS}hasValue")
 INF_ACCESS_MODE = IRI(f"{INF_NS}accessMode")
 INF_HAS_MQTT_TOPIC = IRI(f"{INF_NS}hasMQTTTopic")
@@ -154,7 +155,61 @@ def seed_scenario1(db) -> None:
     create_resource(db, PLANNER_RESOURCE, PLANNER_RESOURCE_CLASS)
 
 
-def seed_scenario3(db, ogm) -> None:
+def belt_metadata(position: str) -> dict:
+    """The unit and the MQTT connection metadata of one scenario 3 belt's speed parameter."""
+    return {
+        TU_HAS_UNIT: ["m/s"],
+        INF_ACCESS_MODE: ["readwrite"],
+        INF_HAS_MQTT_TOPIC: [f"TransferUnit1/ConveyorBelt/{position}/speed"],
+        INF_HAS_MQTT_SET_TOPIC: [f"TransferUnit1/ConveyorBelt/{position}/speed_set"],
+        INF_HAS_MQTT_BROKER_IP: [MQTT_BROKER_IP],
+    }
+
+
+def barrier_metadata(position: str) -> dict:
+    """The MQTT connection metadata of one scenario 3 light barrier's occupancy parameter."""
+    return {
+        INF_ACCESS_MODE: ["read"],
+        INF_HAS_MQTT_TOPIC: [f"TransferUnit1/LightBarrier/{position}/occupied"],
+        INF_HAS_MQTT_BROKER_IP: [MQTT_BROKER_IP],
+    }
+
+
+SCENARIO3_BELTS = ((CONVEYOR_BELT_LEFT, "left"), (CONVEYOR_BELT_RIGHT, "right"))
+SCENARIO3_BARRIERS = ((LIGHT_BARRIER_FRONT, "front"), (LIGHT_BARRIER_BACK, "back"))
+
+
+def scenario3_provisions(*, exclusive: bool = False) -> list:
+    """The embedding code's declaration of every scenario 3 parameter (``provisions=``).
+
+    With it, a middleware provisions a TransferUnit that :func:`seed_scenario3` created
+    with ``metadata=False``: the same metadata the default seed authors, written by the
+    middleware at its first start.
+    """
+    from kapps_semantic_middleware.connectors.provisioning import Provision
+
+    return [
+        Provision(
+            holder_iri=belt,
+            property_iri=TU_HAS_CONVEYOR_SPEED,
+            interface_iri=INF_IS_INTERFACE_ACCESSIBLE_MQTT_PARAMETER,
+            metadata=belt_metadata(position),
+            exclusive=exclusive,
+        )
+        for belt, position in SCENARIO3_BELTS
+    ] + [
+        Provision(
+            holder_iri=barrier,
+            property_iri=TU_IS_OCCUPIED,
+            interface_iri=INF_IS_INTERFACE_ACCESSIBLE_MQTT_PARAMETER,
+            metadata=barrier_metadata(position),
+            exclusive=exclusive,
+        )
+        for barrier, position in SCENARIO3_BARRIERS
+    ]
+
+
+def seed_scenario3(db, ogm, *, metadata: bool = True) -> None:
     """Full scenario 3 seed.
 
     Clears the graph, loads the shared modules and the TransferUnit classes,
@@ -167,55 +222,36 @@ def seed_scenario3(db, ogm) -> None:
     No ``inf:hasValue`` literals: scenario 3 is a locator. The
     graph records where each value lives. The live value exists only in the
     datamodel and over REST.
+
+    ``metadata=False`` is the cold start: no parameter node at all, so a middleware
+    constructed with :func:`scenario3_provisions` provisions the metadata itself.
     """
     clear_dataset(db)
     load_scenario3_ontologies(db)
     set_service_shapes(db)
+    create_scenario3_instances(ogm, metadata=metadata)
 
-    for belt, position in (
-        (CONVEYOR_BELT_LEFT, "left"),
-        (CONVEYOR_BELT_RIGHT, "right"),
-    ):
+
+def create_scenario3_instances(ogm, *, metadata: bool = True) -> None:
+    """Create the TransferUnit, its belts and its barriers through the OGM, without clearing."""
+    for belt, position in SCENARIO3_BELTS:
         ogm.create(
             class_iri=CONVEYOR_BELT_CLASS,
             instance_iri=belt,
             class_scope=ClassScope.from_property_chains([[TU_HAS_CONVEYOR_SPEED]]),
-            data={
-                TU_HAS_CONVEYOR_SPEED: [
-                    {
-                        TU_HAS_UNIT: ["m/s"],
-                        INF_ACCESS_MODE: ["readwrite"],
-                        INF_HAS_MQTT_TOPIC: [
-                            f"TransferUnit1/ConveyorBelt/{position}/speed"
-                        ],
-                        INF_HAS_MQTT_SET_TOPIC: [
-                            f"TransferUnit1/ConveyorBelt/{position}/speed_set"
-                        ],
-                        INF_HAS_MQTT_BROKER_IP: [MQTT_BROKER_IP],
-                    }
-                ]
-            },
+            data=(
+                {TU_HAS_CONVEYOR_SPEED: [belt_metadata(position)]}
+                if metadata
+                else {}
+            ),
         )
 
-    for barrier, position in (
-        (LIGHT_BARRIER_FRONT, "front"),
-        (LIGHT_BARRIER_BACK, "back"),
-    ):
+    for barrier, position in SCENARIO3_BARRIERS:
         ogm.create(
             class_iri=LIGHT_BARRIER_CLASS,
             instance_iri=barrier,
             class_scope=ClassScope.from_property_chains([[TU_IS_OCCUPIED]]),
-            data={
-                TU_IS_OCCUPIED: [
-                    {
-                        INF_ACCESS_MODE: ["read"],
-                        INF_HAS_MQTT_TOPIC: [
-                            f"TransferUnit1/LightBarrier/{position}/occupied"
-                        ],
-                        INF_HAS_MQTT_BROKER_IP: [MQTT_BROKER_IP],
-                    }
-                ]
-            },
+            data={TU_IS_OCCUPIED: [barrier_metadata(position)]} if metadata else {},
         )
 
     ogm.create(

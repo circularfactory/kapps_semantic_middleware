@@ -59,6 +59,7 @@ import anyio
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 
+from kapps_semantic_middleware.http_errors import TypedErrorRoute, install_validation_handler
 from kapps_semantic_middleware.vocabulary import RDFS
 
 logger = logging.getLogger(__name__)
@@ -808,6 +809,11 @@ def enable_dashboard(
     the graph binding's last error, which may name a host, a port or a URL. ``dev=False`` leaves
     all of that out, for a deployment that is not a laboratory one; the boxes then show counts,
     states, ages and the type of an error. The registry's ``dev`` says which the page is.
+
+    An instance that advertises a loopback or an unspecified address gets one more box on the
+    System tab, which says that other machines cannot reach it and shows the settings of a
+    restart. The machine's host name and addresses are read here, once, and reach the box only on
+    a ``dev`` page.
     """
     # `getattr(..., None) is not None` rather than `hasattr`: a middleware that declares
     # `self.dashboard = None` when the feature is off would otherwise satisfy `hasattr`
@@ -822,11 +828,20 @@ def enable_dashboard(
     if register_default_boxes:
         # Import inside the function to break the cycle: dashboard_boxes imports from this
         # module (the registry and helpers), so it cannot be imported at module top.
-        from kapps_semantic_middleware import dashboard_boxes
+        from kapps_semantic_middleware import _reachability, dashboard_boxes
+
+        # The box that warns of an address other machines cannot reach reads the machine's
+        # network once, here, as the name above is read; no render reads it again.
+        _reachability.register_if_unreachable(registry, middleware)
 
         dashboard_boxes.register(registry)
 
-    router = APIRouter()
+    # The dashboard's routes are KSM's own, so they answer an error by KSM's map, and a request
+    # that fails validation answers 400; see `http_errors`. `SemanticMiddleware.app` installs that
+    # handler already; it is installed here again for a host whose app is not built by it, as
+    # the log-level route's 400 depends on it. A second install replaces the first.
+    router = APIRouter(route_class=TypedErrorRoute)
+    install_validation_handler(middleware.app)
 
     # A typo in `first_tab` would open the first tab and report nothing. It cannot be checked
     # here, because the tabs are registered after this call, so the first render that cannot

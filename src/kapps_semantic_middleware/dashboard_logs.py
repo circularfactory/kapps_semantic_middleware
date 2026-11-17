@@ -431,10 +431,10 @@ def register(registry: DashboardRegistry, router: APIRouter) -> None:
         again. The root logger is named `root`. A name the process has no logger for yet
         gets one, so a level can be set before the logger first writes.
 
-        The answer is `{"logger": "<name>", "level": "<LEVEL in force>"}`, and 422 with the
-        reason for a level that is not one of those names or an empty logger name. The
-        dashboard's own form posts with htmx, which shows only a 2xx answer, so it gets its
-        answer, and a refusal, as 200 with an HTML fragment.
+        The answer is `{"logger": "<name>", "level": "<LEVEL in force>"}`, and 400 with the
+        reason for a level that is not one of those names or an empty logger name: the caller
+        fixes the call. The dashboard's own form posts with htmx, which shows only a 2xx
+        answer, so it gets its answer, and a refusal, as 200 with an HTML fragment.
         """
         if registry.get(BOX_ID) is None:
             raise HTTPException(status_code=404, detail=f"Unknown box: {BOX_ID}")
@@ -444,7 +444,7 @@ def register(registry: DashboardRegistry, router: APIRouter) -> None:
         except ValueError as refusal:
             if from_the_form:
                 return HTMLResponse(_refusal_html(str(refusal)))
-            raise HTTPException(status_code=422, detail=str(refusal)) from None
+            raise HTTPException(status_code=400, detail=str(refusal)) from None
         if from_the_form:
             return HTMLResponse(_answer_html(target))
         return JSONResponse(

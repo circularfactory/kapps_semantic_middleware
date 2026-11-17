@@ -54,6 +54,10 @@ READS = {
     "new_iri",
     "owl_get_classes_of_individual",
     "prefixes_get",
+    # Reports the dataset's reasoning ruleset; the check at the start reads it.
+    "ruleset_get",
+    # Reads the dataset's SHACL shapes graph back; it changes no statement.
+    "shapes_get",
     "triple_exists",
     "triples_get",
     # Checks content against shapes and answers; it changes no statement.

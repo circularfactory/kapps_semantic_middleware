@@ -43,6 +43,8 @@ with mw.issue_operation(capability_class=cap, operation_class=op_cls) as op:
     op.data[str(EX.hasPart)] = [{"id": str(part)}]
     # An existing instance, changed in the same commit: here the Part's back-link.
     op.update(part, {str(EX.hasOperation): [op.iri]})
+    # Or add the back-link as one more value, without reading the Part's other links.
+    op.append(part, str(EX.hasOperation), op.iri)
 # The exit creates the Operation in one commit, then notifies the receiver
 ```
 
@@ -59,6 +61,14 @@ Inside another `mw.commit()`, the updates land in the Operation's own commit, ne
 one, and a change that the outer commit makes to the same instance is written later, over them.
 An update that names the Operation itself raises `ValueError` (set its properties in `op.data`),
 and one after the block raises `RuntimeError`.
+
+**`op.append(instance_iri, property_iri, value)` adds one value to a property in the Operation's
+commit.** Where `op.update` replaces the values of a property, `op.append` adds one, as a kapps_ogm
+`Append`: the property's other stored values stay, and nothing is read. Its value is read as in
+`op.update`. The appends are staged with the updates, in the order of the calls. On an instance
+that a creation nested in the block makes, the value is added to that creation's `Create`, since
+kapps_ogm writes no `Append` of an instance its own call creates. An append to the Operation itself
+raises `ValueError`, and one after the block raises `RuntimeError`, as for `op.update`.
 
 ## The Issuer and the Issued Operation
 
@@ -274,7 +284,7 @@ with handover(mw, mode=MES.Put, workpiece=wp, counterpart=other, operation=op):
     # The store has admitted the possession change.
     # Physical transport and preparation
     # Coordinate with counterpart if needed
-# A clean exit writes nothing more
+# A clean exit commits `done`; an error in the body commits `failed`
 ```
 
 Possession is Core's reified `cfc:PossessionState`, with one state per Resource: a Resource gets
@@ -282,12 +292,12 @@ its state with its first possession and keeps it, and a Workpiece points at the 
 Possessor with `cfc:hasPossessedWorkpiece`. So the possession change is one commit that changes
 only the Workpiece's link, together with `workpiece_update` (more properties of the Workpiece that
 change with its possessor, such as its transport state) and `operation`, the Operation that the
-handover completes, which becomes `done`. When the counterpart has no state yet, the same commit
+handover completes, which becomes `running`. When the counterpart has no state yet, the same commit
 creates it and links the counterpart to it. Apart from that first link, a handover writes no
 Resource's `cfc:hasPossessor`: neither the giver's nor that of a counterpart that has a state.
 
 More changes that must be admitted together with the possession change go into `entry`, a list of
-kapps_ogm `Create` and `Update` changes that the caller builds. They are written in the same commit,
+kapps_ogm `Create`, `Update` and `Append` changes that the caller builds. They are written in the same commit,
 refused together with it, and before the body. A transport that carries a workpiece along a line of
 stations, for example, is reassigned to the next station at each hop, and that station is
 then notified:
@@ -311,9 +321,17 @@ The peer's intake then reads a transport that implements its own transport Capab
 runs the workflow that realizes it. A change of the Workpiece belongs in `workpiece_update`, and
 the completed Operation in `operation`: the OGM refuses two changes of one instance in one commit.
 
-An error in the body is raised and undoes nothing: the possession has already changed, so the caller
-records what really happened. For the same reason, a `mw.create()` in the body commits on its own:
-the handover's commit has already happened. Possession history is not in the graph: a handover
+With an `operation`, the handover writes three states of it around the move, in the order of
+decision and outcome: a decision is committed before the act, and the outcome after the act ends. The entry commits
+`running`, in the one commit with the possession change. A clean exit commits `done`, in its own
+commit, so the issuer hears `done` only after the Workpiece moved. An error in the body commits
+`failed`, with the exception's message as the Operation's execution result, in its own commit, and
+is raised as it is. The issuer is notified after each of these commits. Without an `operation`, a
+handover writes one commit at entry and none at exit.
+
+An error in the body undoes nothing: the possession has already changed, so the caller records
+what really happened. A `mw.create()` in the body commits on its own: the handover's entry
+commit has already happened. Possession history is not in the graph: a handover
 overwrites the Workpiece's link, and the store's history mechanism, such as a history plugin of
 the store when it is turned on, keeps the previous value. The middleware does not model the physical transport
 itself; that logic belongs in the context manager body.
@@ -345,7 +363,7 @@ possession with no move, each in one `OGM.commit`, and `find_possession_state` a
 ## Failure Recovery
 
 If a resource dies, its stranded `queued` and `running` Operations are handled centrally. A
-watchdog-mode instance sweeps stale resources, transitions their stranded Operations (queued ones
+watchdog-mode instance sweeps stale resources (and resources whose Services all stopped cleanly, once their newest heartbeat is older than the staleness threshold), transitions their stranded Operations (queued ones
 whose Capability no live Service of the resource realizes, running ones whose claimer is not live)
 to `failed`,
 and notifies the issuer of each one that has an issuer. The failed status

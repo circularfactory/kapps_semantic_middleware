@@ -1,4 +1,4 @@
-"""The middleware names no triple store vendor, outside its deprecated names.
+"""The middleware names no triple store vendor.
 
 The triple store border of the KAPPS family: no layer above the triple store interface names a
 vendor, not in its types, its errors, how it builds a store, or its texts. A new backend then
@@ -6,8 +6,8 @@ changes only the interface. This module checks the middleware's side of it, offl
 
 **The terms.** Each is matched in any case.
 
-- ``GraphDB``: the vendor's store. The match covers ``GRAPHDB_``, the prefix of the deprecated
-  variables, and every name built on it, such as ``graphdb_for``.
+- ``GraphDB``: the vendor's store. The match covers ``GRAPHDB_``, the prefix of the old
+  variables, and every name built on it.
 - ``Ontotext``: the vendor.
 - ``SHACLShapeGraph``: the local name of RDF4J's shapes-graph IRI, the graph in which a GraphDB
   dataset keeps its SHACL shapes. A caller sets the shapes with the store's ``shapes_set``.
@@ -32,15 +32,12 @@ changes only the interface. This module checks the middleware's side of it, offl
 - The paths in ``EXEMPT``: the store reports that the tests recorded (edited only to neutral IRIs
   and messages, so the store's own terms stay as it sent them),
   the local Docker store's compose file and configuration, the test that starts that stack, the
-  changelog (the record of each release, and the deprecation note), and this module, which names
-  the terms.
+  changelog (the record of each release, and of the names it removed), and this module, which
+  names the terms.
 - In the files of ``REGIONS``, the lines from a ``vendor-check: off`` marker to the next
-  ``vendor-check: on``: the deprecated names and variables, the deprecation note, and the texts
-  that start or describe the local Docker store. A marker in any other file fails.
-- In the importable names, the deprecated names in ``DEPRECATED`` and their parameters.
-
-The contract release removes the deprecated names and the deprecated variables, and with them
-most of the regions.
+  ``vendor-check: on``: the old variables that a PLC must not receive or that the tests prove
+  ignored, the older name of the store's error type, and the texts that start or describe the
+  local Docker store. A marker in any other file fails.
 """
 
 from __future__ import annotations
@@ -77,21 +74,17 @@ EXEMPT = {
     "tests/reports/": "recorded store reports, edited to neutral IRIs and messages; the store's own terms stay as it sent them",
     "examples/docker/": "the local Docker store: its compose file and its configuration",
     "tests/test_shipped_stack_validates_shapes.py": "starts the local Docker store and checks its configuration",
-    "CHANGELOG.md": "the record of each release, and the deprecation note",
+    "CHANGELOG.md": "the record of each release, and of the names it removed",
     "tests/test_names_no_vendor.py": "this check, which names the terms",
 }
 
 REGIONS = {
-    "src/kapps_semantic_middleware/credentials.py": "the deprecated names and variables",
-    "src/kapps_semantic_middleware/seeding.py": "the deprecated name",
     "src/kapps_semantic_middleware/observation.py": "the older name of the store's error type, which the released interface still has",
-    "tests/test_credentials.py": "the tests of the deprecated names and variables, and the local Docker store's configuration",
-    "tests/test_seeding.py": "the test of the deprecated name",
-    "demo/transferunits/launcher.py": "the deprecated variables, which a PLC must not receive",
-    "tests/test_launcher_seeding.py": "the deprecated variables, which a PLC must not receive",
+    "tests/test_credentials.py": "the old variables, which the tests prove ignored, and the local Docker store's configuration",
+    "demo/transferunits/launcher.py": "the old variables, which a PLC must not receive",
+    "tests/test_launcher_seeding.py": "the old variables, which a PLC must not receive",
     "src/kapps_semantic_middleware/examples_cli.py": "the texts that start and describe the local Docker store, and the name of its configuration",
-    "README.md": "the local Docker store's setup steps, and the deprecation note",
-    "docs/site/guide/08-provisioning-and-seeding.md": "the deprecation note",
+    "README.md": "the local Docker store's setup steps",
     "tests/test_examples_cli.py": "the local Docker store's compose file and its configuration",
     "examples/CONTEXT.md": (
         "a paragraph that a rewrite of release/edits.toml matches byte for byte; the release's "
@@ -143,18 +136,6 @@ does not ship. ``release/edits.toml`` holds them in the development tree."""
 
 RELEASE_EDITS = REPO_ROOT / "release" / "edits.toml"
 """The release's edits of the public tree. ``release/`` never ships, so a public tree has none."""
-
-DEPRECATED = {
-    "kapps_semantic_middleware.credentials": {
-        "graphdb_for",
-        "graphdb_env_present",
-        "credentials_for",
-    },
-    "kapps_semantic_middleware.seeding": {"clear_repository"},
-}
-"""The deprecated functions of the package, by module. The deprecated constants are not
-attributes of their module, so the scan of the names does not see them."""
-
 
 def _exempt(relative: str) -> bool:
     parts = relative.split("/")
@@ -260,11 +241,8 @@ def test_no_importable_name_or_parameter_names_the_vendor_or_its_unit():
     offences: list[str] = []
     for module_name in _modules():
         module = importlib.import_module(module_name)
-        deprecated = DEPRECATED.get(module_name, set())
         for name, obj in vars(module).items():
             if name.startswith("_") or inspect.ismodule(obj) or not _own(module_name, obj):
-                continue
-            if name in deprecated:
                 continue
             where = f"{module_name}.{name}"
             names = [(where, name)]

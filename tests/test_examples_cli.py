@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
+
+import pytest
 
 from kapps_semantic_middleware import examples_cli
 
@@ -94,6 +97,31 @@ class TestCopyExamples:
         assert "Jupyter" in readme or "notebook" in readme.lower()
 
 
+    def test_readme_names_the_interpreter_and_never_asks_to_activate(self, tmp_path: Path) -> None:
+        """Each command names the environment's interpreter in both forms; no activation."""
+        examples_cli.copy_examples(tmp_path)
+        readme = (tmp_path / "README.md").read_text(encoding="utf-8")
+
+        assert "../.venv/bin/python scenario1_hello_world.py" in readme
+        assert "..\\.venv\\Scripts\\python.exe scenario1_hello_world.py" in readme
+        assert "Activate.ps1" not in readme
+        assert "activate" not in readme.lower()
+        # no scenario command starts with a bare `python`
+        assert "``python " not in readme
+
+
+class TestQuote:
+    """The quoting of a path in a printed command."""
+
+    def test_windows_path_with_a_space_gets_the_call_operator(self) -> None:
+        assert examples_cli._quote(r"C:\My Env\Scripts\python.exe") == (
+            '& "C:\\My Env\\Scripts\\python.exe"'
+        )
+
+    def test_path_without_a_space_stays_bare(self) -> None:
+        assert examples_cli._quote("/v/bin/python") == "/v/bin/python"
+
+
 class TestMain:
     """Tests for the main() argparse entry point."""
 
@@ -105,6 +133,18 @@ class TestMain:
         assert result == 0
         assert (dest / "README.md").exists()
         assert (dest / "scenario1_hello_world.py").exists()
+
+    def test_hint_names_the_running_interpreter_not_a_bare_python(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The scenario command in the hint is the full path of sys.executable, quoted if spaced."""
+        monkeypatch.setattr(sys, "executable", "/opt/my env/bin/python")
+        examples_cli.main([str(tmp_path / "out")])
+        out = capsys.readouterr().out
+
+        assert '"/opt/my env/bin/python" scenario1_hello_world.py' in out
+        assert "  python " not in out
+        assert '"/opt/my env/bin/kapps-transferunit-factory" --units 2' in out
 
     def test_main_with_force_flag(self, tmp_path: Path) -> None:
         """main() honors --force."""

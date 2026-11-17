@@ -6,8 +6,9 @@
   It holds the Service/Workflow/Capability/Operation/Mode registration machinery and the
   execution machinery.
 - [SHACL Interop](./src/kapps_semantic_middleware/shacl_interop/CONTEXT.md) — the temporary SHACL
-  seam for workflow precondition shapes and outcome shapes. It generates and parses them. It is
-  explicit scaffolding, will move to `kapps_ogm`.
+  holder of an authoring aid for ontology authors: a helper that drafts the precondition shape and
+  outcome shape of a Workflow class from a Python signature. Nothing in the middleware calls it.
+  It is explicit scaffolding, will move to `kapps_ogm`.
 - [Example Scenarios](./examples/CONTEXT.md) — self-contained demonstration notebooks, plus the
   seed-data logic and the ontology-provisioning logic under them. That logic makes each notebook
   reproducible against a dummy dataset, and never against the production state.
@@ -19,10 +20,10 @@
 
 ## Relationships
 
-- **Core Middleware → SHACL Interop**: Core Middleware calls into SHACL Interop to read or write
-  a shape. The shape belongs to a Workflow class or a StateProperty class. The call happens when
-  `@mw.workflow` or `@mw.state` registers or resolves one. SHACL Interop has no dependency back
-  on Core Middleware. It operates on class IRIs and shapes, and not on types of the Core Middleware.
+- **Core Middleware → SHACL Interop**: none at runtime. Core Middleware does not call SHACL Interop;
+  registration neither reads nor writes a shape, because the domain's ontology owns the shapes of
+  its Workflow classes. SHACL Interop has no dependency on Core Middleware either. It operates on
+  class IRIs and shapes, and not on types of the Core Middleware.
 - **Example Scenarios → Core Middleware**: Example Scenarios instantiate and exercise Core
   Middleware end-to-end, against the ontology and the instance data they seed themselves. Core Middleware
   has no dependency on Example Scenarios.

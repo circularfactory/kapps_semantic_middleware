@@ -41,10 +41,17 @@ You need two things.
 
 ### 1. The package, with the `examples` extra
 
-A plain install brings the library alone. The demo needs the extra:
+A plain install brings the library alone. Install it into a virtual environment by calling the environment's interpreter, which needs no
+activation (so it works on a Windows machine that forbids scripts):
 
 ```bash
-pip install "kapps-semantic-middleware[examples]"
+python3 -m venv .venv
+.venv/bin/python -m pip install "kapps-semantic-middleware[examples]"
+```
+
+```powershell
+py -3.12 -m venv .venv
+.venv\Scripts\python.exe -m pip install "kapps-semantic-middleware[examples]"
 ```
 
 You do **not** need to install an MQTT broker. Each machine starts its own, inside its own process.
@@ -60,9 +67,18 @@ export TRIPLESTORE_USERNAME=your-username
 export TRIPLESTORE_PASSWORD=your-password
 ```
 
-There is no fourth value. The demo always uses the dataset named **`kapps-demo`**, which is the
+There is no fourth value to connect. The demo always uses the dataset named **`kapps-demo`**, which is the
 one `docker compose` creates for you, and it names that in code rather than reading it from your
 environment. A `TRIPLESTORE_DATASET` you happen to have set is ignored.
+
+Optionally, name the reasoning ruleset that your deployment requires:
+
+```bash
+export TRIPLESTORE_REQUIRED_RULESET=your-required-ruleset
+```
+
+When it is set, the start asks the store for the dataset's ruleset and refuses, in one line that
+names both, if the two differ. Unset, the ruleset is not checked.
 
 :::{warning}
 The demo **writes into** `kapps-demo`, and `--force` **deletes and rewrites** the demo's data in it.
@@ -72,8 +88,17 @@ server is not, and a `kapps-demo` on a shared server is still somebody's.
 
 ## Start it
 
+The paths below are relative to the folder that holds `.venv`; from another folder, give the path of
+the environment instead.
+
 ```bash
-kapps-transferunit-factory --units 2
+.venv/bin/kapps-transferunit-factory --units 2
+```
+
+On Windows:
+
+```powershell
+.venv\Scripts\kapps-transferunit-factory.exe --units 2
 ```
 
 Then open **<http://127.0.0.1:8080/>** in your browser.

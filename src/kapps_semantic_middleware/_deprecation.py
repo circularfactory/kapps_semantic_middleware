@@ -37,28 +37,6 @@ def renamed(successor: str) -> Callable[[_Function], _Function]:
     return mark
 
 
-def constant(module: str, aliases: Mapping[str, str], namespace: dict[str, Any], name: str) -> Any:
-    """The value of the deprecated constant `name` of `module`: its successor's value.
-
-    A module's `__getattr__` calls this, so the deprecated name is not an attribute of the
-    module and each use of it warns once, at the caller's line: an import of it and a read of it
-    as an attribute. `aliases` maps each deprecated name to its successor, and `namespace` is the
-    module's globals.
-
-    Raises:
-        AttributeError: If `name` is not a deprecated name of the module.
-    """
-    successor = aliases.get(name)
-    if successor is None:
-        raise AttributeError(f"module {module!r} has no attribute {name!r}")
-    warnings.warn(
-        f"{name} is deprecated; use {successor}, of which it is an alias.",
-        DeprecationWarning,
-        stacklevel=3,
-    )
-    return namespace[successor]
-
-
 def moved(module: str, homes: Mapping[str, str], name: str) -> Any:
     """The object that the deprecated name `name` of `module` names in its new home.
 

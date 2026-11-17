@@ -22,7 +22,6 @@ from kapps_triplestore_interface import (
     TripleStoreResponseError,
 )
 
-from kapps_semantic_middleware import _deprecation
 from kapps_semantic_middleware.errors import DeploymentValueError
 from kapps_semantic_middleware.vocabulary import CORE_ONTOLOGY, MES_ONTOLOGY, SVC_ONTOLOGY
 
@@ -223,15 +222,3 @@ def load_shared_ontologies(db, *, reload: bool = False) -> None:
         elif _graph_is_populated(db, graph):
             continue
         db.graph_add(turtle, graph_iri=graph, content_type="application/x-turtle")
-
-
-# vendor-check: off -- the deprecated alias, until it goes.
-
-
-@_deprecation.renamed("clear_dataset")
-def clear_repository(db: TripleStore) -> None:
-    """The deprecated name of :func:`clear_dataset`."""
-    clear_dataset(db)
-
-
-# vendor-check: on

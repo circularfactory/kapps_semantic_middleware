@@ -21,10 +21,11 @@ import pytest
 from kapps_ogm import Node
 from kapps_triplestore_interface import IRI
 
-from kapps_semantic_middleware import Mode, SemanticMiddleware, credentials, errors, examples_cli
+from kapps_semantic_middleware import Mode, SemanticMiddleware, errors, examples_cli
 from kapps_semantic_middleware.connectors.wiring import class_of
 from kapps_semantic_middleware.credentials import REQUIRED_TRIPLESTORE_ENV, endpoint_for
 from kapps_semantic_middleware.errors import (
+    CapabilityAlreadyRealizedError,
     CapabilityNotRealizedError,
     DeploymentError,
     DeploymentRuntimeError,
@@ -86,6 +87,12 @@ NEW_TYPES = [
         (NotificationUndelivered, DeploymentError),
         "Repair",
         id="NotificationReceiverAmbiguousError",
+    ),
+    pytest.param(
+        CapabilityAlreadyRealizedError,
+        (DeploymentError,),
+        "Repair",
+        id="CapabilityAlreadyRealizedError",
     ),
 ]
 
@@ -312,8 +319,7 @@ class _RowsOGM:
 
 
 def _missing_store_variable(monkeypatch) -> None:
-    # Each variable, and the deprecated fallback that would stand in for it.
-    for name in (*REQUIRED_TRIPLESTORE_ENV, *credentials._FALLBACKS.values()):
+    for name in REQUIRED_TRIPLESTORE_ENV:
         monkeypatch.delenv(name, raising=False)
     endpoint_for("Tests")
 

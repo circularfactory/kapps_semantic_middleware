@@ -2,7 +2,8 @@
 
 A Capability does not exist without its resource. So the Capability, its own link to its
 Workflow or StateProperty, and the resource's link (`cfc:hasCapability`, Resource -> Capability)
-go into one `OGM.commit`: a `Create` of the Capability, or an `Update` of the one an earlier run
+go into one `OGM.commit`, together with the Workflow or StateProperty itself and its endpoint:
+a `Create` of each individual the store does not hold, an `Update` of each one an earlier run
 left, and one `Append` of the link. No commit holds a Capability without its link. The link is a
 multi-valued property of the resource, and the `Append` adds it and removes none: the OGM reads
 the resource's class to check the property, and none of the property's stored values; and a
@@ -20,7 +21,7 @@ import re
 import sys
 import threading
 from pathlib import Path
-from unittest.mock import Mock, call
+from unittest.mock import Mock
 
 import pytest
 from _shapes import restore_shipped_shapes, with_shipped_shapes
@@ -34,7 +35,6 @@ from kapps_semantic_middleware.commit import _scope_naming
 from kapps_semantic_middleware.credentials import triplestore_for
 from kapps_semantic_middleware.registration import (
     _create,
-    _register_capability,
     deregister_service,
     mint_capability_iri,
     mint_service_iri,
@@ -145,13 +145,19 @@ def _writes_other_than_the_update(store: Mock) -> list[str]:
     return written
 
 
+SERVICE = IRI(f"{seed.DEMO_NS}test_service")
+
+
 def _capability_of_workflow(ogm: OGM, capability: IRI, named_graph=None) -> None:
-    _register_capability(
+    register_workflow(
         ogm,
         resource_iri=RESOURCE,
+        service_iri=SERVICE,
+        workflow_iri=WORKFLOW,
+        workflow_class=SVC.Workflow,
         capability_iri=capability,
         capability_class=CFC.Capability,
-        data={str(SVC.realizedByWorkflow): [{"id": str(WORKFLOW)}]},
+        endpoint=f"{ADDR_A}/workflows/test/execute",
         named_graph=named_graph,
     )
 
@@ -163,7 +169,7 @@ class TestOneCommitUnit:
         _capability_of_workflow(OGM(db=stand_in), CAP_NEW, GRAPH)
 
         (update,) = _updates(stand_in)
-        assert update.kwargs["absent_subjects"] == [CAP_NEW]
+        assert set(update.kwargs["absent_subjects"]) == {CAP_NEW, WORKFLOW}
         assert update.kwargs["named_graph"] == GRAPH
         assert not update.kwargs["old_triples"]
         # The OGM writes the type with its prefixed name, which the store expands.
@@ -171,26 +177,19 @@ class TestOneCommitUnit:
             (str(CAP_NEW), "rdf:type", str(CFC.Capability)),
             (str(CAP_NEW), str(SVC.realizedByWorkflow), str(WORKFLOW)),
             (str(RESOURCE), str(CFC.hasCapability), str(CAP_NEW)),
+            (str(WORKFLOW), str(SVC.isWorkflowOf), str(SERVICE)),
         } <= _strings(update.kwargs["new_triples"])
         assert _writes_other_than_the_update(stand_in) == []
 
     def test_a_capability_an_earlier_run_left_is_adopted_in_the_commit_of_its_link(
         self, stand_in
     ):
-        """The store refuses the create, because it holds the Capability. The adoption that
-        follows is one request again: the Capability's data and the link."""
-
-        def update(**kwargs):
-            if CAP_A in kwargs["absent_subjects"]:
-                raise _Refused()
-
-        stand_in.triples_update.side_effect = update
-
+        """The store holds the Capability, read before the commit: the commit updates it, and
+        carries the new Workflow and the link in the same request."""
         _capability_of_workflow(OGM(db=stand_in), CAP_A)
 
-        refused, adopted = _updates(stand_in)
-        assert refused.kwargs["absent_subjects"] == [CAP_A]
-        assert not adopted.kwargs["absent_subjects"]
+        (adopted,) = _updates(stand_in)
+        assert adopted.kwargs["absent_subjects"] == [WORKFLOW]
         assert {
             (str(CAP_A), str(SVC.realizedByWorkflow), str(WORKFLOW)),
             (str(RESOURCE), str(CFC.hasCapability), str(CAP_A)),
@@ -254,80 +253,75 @@ def _register(kind: str, ogm) -> tuple[IRI, IRI, dict]:
     return capability_iri, seed.DOOR_STATUS_CAPABILITY_CLASS, data
 
 
-def _writes_about(ogm: Mock, capability: IRI) -> list:
-    """The calls of ``ogm`` that write about ``capability`` or link to it, in their order."""
-
-    def names(c) -> bool:
-        if c.kwargs.get("instance_iri") == capability:
-            return True
-        return any(
-            change.instance_iri == capability
-            or (isinstance(change, Append) and change.value == capability)
-            for change in c.kwargs.get("changes") or []
-        )
-
-    return [c for c in ogm.method_calls if names(c)]
-
-
-def _create_and_link(capability: IRI, capability_class: IRI, data: dict):
-    return call.commit(
-        changes=[
-            Create(
-                class_iri=capability_class,
-                data=data,
-                instance_iri=capability,
-                class_scope=_scope_naming(None, data),
-            ),
-            Append(
-                instance_iri=seed.DOOR_RESOURCE, property_iri=CFC.hasCapability, value=capability
-            ),
-        ],
-        named_graph=None,
-    )
+def _commits(ogm: Mock) -> list:
+    """The ``commit`` calls of ``ogm``, in their order."""
+    return [c for c in ogm.method_calls if c[0] == "commit"]
 
 
 class TestRegistrationOneCommitUnit:
     """At no commit of a registration, a first one or a restart, does the Capability go without
-    the link from its resource."""
+    the link from its resource, nor its Workflow or StateProperty without the Capability."""
 
     @pytest.mark.parametrize("kind", ["workflow", "state property"])
     def test_a_first_registration_writes_the_capability_and_its_link_in_one_commit(self, kind):
         ogm = Mock()
+        ogm.db.triples_get.return_value = []
 
         capability, capability_class, data = _register(kind, ogm)
 
-        assert _writes_about(ogm, capability) == [
-            _create_and_link(capability, capability_class, data)
-        ]
+        (commit,) = _commits(ogm)
+        item, created, link = commit.kwargs["changes"]
+        assert isinstance(item, Create)
+        assert created == Create(
+            class_iri=capability_class,
+            data=data,
+            instance_iri=capability,
+            class_scope=_scope_naming(None, data),
+        )
+        assert link == Append(
+            instance_iri=seed.DOOR_RESOURCE, property_iri=CFC.hasCapability, value=capability
+        )
+        assert not ogm.create.called
 
     @pytest.mark.parametrize("kind", ["workflow", "state property"])
     def test_a_restart_adopts_the_capability_in_the_commit_of_its_link(self, kind):
-        """The store holds every individual of the earlier run, so it refuses each create."""
+        """The store holds every individual of the earlier run, read before the commit: the
+        one commit updates them."""
         ogm = Mock()
-        ogm.create.side_effect = _Refused()
+        ogm.db.triples_get.return_value = [("a statement",)]
 
-        def commit(**kwargs):
-            if any(isinstance(change, Create) for change in kwargs.get("changes") or []):
-                raise _Refused()
+        capability, _, data = _register(kind, ogm)
 
-        ogm.commit.side_effect = commit
+        (commit,) = _commits(ogm)
+        item, updated, link = commit.kwargs["changes"]
+        assert isinstance(item, Update)
+        assert updated == Update(instance_iri=capability, data=data)
+        assert link == Append(
+            instance_iri=seed.DOOR_RESOURCE, property_iri=CFC.hasCapability, value=capability
+        )
 
-        capability, capability_class, data = _register(kind, ogm)
+    def test_a_create_that_another_writer_beat_is_read_again_and_written_once_more(self):
+        ogm = Mock()
+        ogm.db.triples_get.side_effect = [[], [], [("a statement",)], [("a statement",)]]
+        ogm.commit.side_effect = [_Refused(), None]
 
-        assert _writes_about(ogm, capability) == [
-            _create_and_link(capability, capability_class, data),
-            call.commit(
-                changes=[
-                    Update(instance_iri=capability, data=data),
-                    Append(
-                        instance_iri=seed.DOOR_RESOURCE,
-                        property_iri=CFC.hasCapability,
-                        value=capability,
-                    ),
-                ],
-                named_graph=None,
-            ),
-        ]
+        _register("workflow", ogm)
+
+        first, second = _commits(ogm)
+        assert [type(c) for c in first.kwargs["changes"]] == [Create, Create, Append]
+        assert [type(c) for c in second.kwargs["changes"]] == [Update, Update, Append]
+
+    def test_a_second_refusal_propagates_unchanged(self):
+        ogm = Mock()
+        ogm.db.triples_get.return_value = []
+        refusal = _Refused()
+        ogm.commit.side_effect = [_Refused(), refusal]
+
+        with pytest.raises(PreconditionFailedError) as raised:
+            _register("workflow", ogm)
+
+        assert raised.value is refusal
+        assert len(_commits(ogm)) == 2
 
 
 def _capabilities(store, resource: IRI) -> set[str]:
